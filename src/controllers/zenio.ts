@@ -295,8 +295,8 @@ async function validateCategory(categoryName: string, type: string, availableCat
         });
         return {
           valid: false,
-          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.map(c => c.name).join(', ')}`,
-          suggestions: suggestions.map(c => c.name)
+          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.map((c: any) => c.name).join(', ')}`,
+          suggestions: suggestions.map((c: any) => c.name)
         };
       }
     }
@@ -315,7 +315,7 @@ async function getValidCategories(type: 'EXPENSE' | 'INCOME'): Promise<string> {
       where: { type },
       select: { name: true }
     });
-    return categories.map(cat => cat.name).join(', ');
+    return categories.map((cat: any) => cat.name).join(', ');
   } catch (error) {
     return 'Error al obtener categorías';
   }
@@ -567,7 +567,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
       throw new Error(`Estado de run inesperado: ${run.status}`);
 
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 429) {
+      if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError && (error as any).response?.status === 429) {
         // Rate limit, esperar más tiempo
         console.log('[Zenio] Rate limit detectado, esperando...');
         await sleep(backoffMs * 2);
@@ -1850,22 +1850,22 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     console.error('[Zenio] Error:', error);
 
     // Manejo específico de errores
-    if (axios.isAxiosError(error)) {
-      if (error.code === 'ECONNRESET') {
+    if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError) {
+      if ((error as any).code === 'ECONNRESET') {
         return res.status(503).json({
           message: 'No se pudo conectar con Zenio (OpenAI). Por favor, intenta de nuevo en unos segundos.',
           threadId
         });
       }
 
-      if (error.response?.status === 429) {
+      if ((error as any).response?.status === 429) {
         return res.status(429).json({
           message: 'Zenio está procesando muchos mensajes. Por favor, espera un momento antes de continuar.',
           threadId
         });
       }
 
-      if (error.response?.data?.error?.message?.includes('while a run')) {
+      if ((error as any).response?.data?.error?.message?.includes('while a run')) {
         return res.status(429).json({
           message: 'Zenio está terminando de procesar tu mensaje anterior. Por favor, espera un momento antes de continuar.',
           threadId
