@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Router } from 'express';
 import { 
   getBudgets, 
   createBudget, 
@@ -8,7 +8,7 @@ import {
 } from '../controllers/budgets';
 import { authenticateToken } from '../middlewares/auth';
 
-const router = express.Router();
+const router: Router = express.Router();
 
 // Todas las rutas requieren autenticación
 router.use(authenticateToken);

@@ -1872,7 +1872,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         });
       }
 
-      if (error.response) {
+      if (error && typeof error === 'object' && 'response' in error && error.response && typeof error.response === 'object' && 'data' in error.response) {
         console.error('❌ OpenAI API error:', error.response.data);
         return res.status(500).json({ 
           error: 'Error al comunicarse con Zenio.', 

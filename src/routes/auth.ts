@@ -1,8 +1,8 @@
-import express from 'express';
+import express, { Router } from 'express';
 import { register, login, verifyEmail, forgotPassword, resetPassword, getProfile, updateProfile, changePassword } from '../controllers/auth';
 import { authenticateToken } from '../middlewares/auth';
 
-const router = express.Router();
+const router: Router = express.Router();
 
 // Rutas de autenticación
 router.post('/register', register);

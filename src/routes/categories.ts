@@ -1,8 +1,8 @@
-import express from 'express';
+import express, { Router } from 'express';
 import { getCategories } from '../controllers/categories';
 import { authenticateToken } from '../middlewares/auth';
 
-const router = express.Router();
+const router: Router = express.Router();
 
 // Todas las rutas requieren autenticación
 router.use(authenticateToken);
