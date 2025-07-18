@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String        @id @default(cuid())
+  name                String
+  lastName            String
+  email               String        @unique
+  password            String
+  phone               String
+  birthDate           DateTime
+  country             String
+  state               String
+  city                String
+  currency            String
+  preferredLanguage   String
+  occupation          String
+  company             String?
+  verified            Boolean       @default(false)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  onboarding          Boolean       @default(false)
+  onboardingCompleted Boolean       @default(false)
+  onboardingData      Onboarding?
+  budgets             Budget[]
+  transactions        Transaction[]
+  goals               Goal[]
+
+  @@map("users")
+}
+
+model Transaction {
+  id          String          @id @default(cuid())
+  userId      String
+  amount      Float
+  type        TransactionType
+  description String?
+  date        DateTime        @default(now())
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  category_id String
+  category    Category        @relation(fields: [category_id], references: [id])
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}
+
+model Budget {
+  id               String   @id @default(uuid())
+  amount           Float
+  alert_percentage Float    @default(80)
+  category_id      String
+  created_at       DateTime @default(now())
+  end_date         DateTime
+  is_active        Boolean  @default(true)
+  name             String
+  period           String
+  spent            Float    @default(0)
+  start_date       DateTime
+  updated_at       DateTime @updatedAt
+  user_id          String
+  category         Category @relation(fields: [category_id], references: [id])
+  user             User     @relation(fields: [user_id], references: [id])
+
+  @@map("budgets")
+}
+
+model Onboarding {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  mainGoals          Json
+  mainChallenge      String
+  mainChallengeOther String?
+  savingHabit        String
+  emergencyFund      String
+  financialFeeling   String
+  incomeRange        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id])
+}
+
+model Category {
+  id           String          @id @default(cuid())
+  name         String
+  type         TransactionType
+  icon         String
+  isDefault    Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  budgets      Budget[]
+  transactions Transaction[]
+  goals        Goal[]
+
+  @@map("categories")
+}
+
+model Goal {
+  id                        String    @id @default(uuid())
+  userId                    String
+  name                      String
+  description               String?
+  targetAmount              Float
+  currentAmount             Float     @default(0)
+  targetDate                DateTime?
+  categoryId                String
+  priority                  String    @default("medium")
+  isCompleted               Boolean   @default(false)
+  isActive                  Boolean   @default(true)
+  monthlyTargetPercentage   Float?
+  monthlyContributionAmount Float?
+  contributionsCount        Int       @default(0)
+  lastContributionDate      DateTime?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+  user                      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category                  Category  @relation(fields: [categoryId], references: [id])
+
+  @@map("goals")
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
