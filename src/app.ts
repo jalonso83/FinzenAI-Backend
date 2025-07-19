@@ -44,7 +44,7 @@ app.use('/api/goals', goalRoutes);
 app.get('/api/health', (req, res) => {
   return res.json({
     status: 'OK',
-    message: 'FinZen AI Backend is running',
+    message: 'FinZen AI Backend is running - Updated for Railway',
     timestamp: new Date().toISOString(),
     version: process.env.APP_VERSION || '1.0.0'
   });
