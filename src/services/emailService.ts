@@ -214,7 +214,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
                 <strong>Para comenzar tu viaje hacia la libertad financiera, confirma tu cuenta:</strong>
             </p>
 
-            <a href="http://localhost:5173/verify-email?token=${token}&email=${email}" class="confirm-button">
+            <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${token}&email=${email}" class="confirm-button">
                 🎯 Confirmar Cuenta y Comenzar
             </a>
 
