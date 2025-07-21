@@ -263,8 +263,11 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
   try {
     console.log('🔍 Verificando configuración de SendGrid...');
     console.log('SENDGRID_API_KEY existe:', !!process.env.SENDGRID_API_KEY);
+    console.log('SENDGRID_API_KEY longitud:', process.env.SENDGRID_API_KEY?.length || 0);
+    console.log('SENDGRID_API_KEY empieza con SG:', process.env.SENDGRID_API_KEY?.startsWith('SG.') || false);
     console.log('SENDGRID_API_KEY es placeholder:', process.env.SENDGRID_API_KEY === 'SG.placeholder_key_for_development');
     console.log('FROM_EMAIL existe:', !!process.env.FROM_EMAIL);
+    console.log('FROM_EMAIL valor:', process.env.FROM_EMAIL);
     
     // Verificar si SendGrid está configurado
     if (!process.env.SENDGRID_API_KEY || process.env.SENDGRID_API_KEY === 'SG.placeholder_key_for_development') {
@@ -286,9 +289,22 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
 
     console.log('📤 Enviando email a:', email);
     console.log('📤 Desde:', process.env.FROM_EMAIL);
+    console.log('📤 Asunto:', msg.subject);
+    console.log('📤 HTML length:', htmlContent.length);
     
-    await sgMail.send(msg);
-    console.log(`✅ Verification email sent to ${email}`);
+    try {
+      await sgMail.send(msg);
+      console.log(`✅ Verification email sent to ${email}`);
+    } catch (sendError: any) {
+      console.error('❌ Error detallado de SendGrid:');
+      console.error('Código:', sendError.code);
+      console.error('Mensaje:', sendError.message);
+      if (sendError.response) {
+        console.error('Response body:', sendError.response.body);
+        console.error('Response headers:', sendError.response.headers);
+      }
+      throw sendError;
+    }
   } catch (error) {
     console.error('❌ Error sending verification email:', error);
     // No fallar en ningún entorno, solo simular
