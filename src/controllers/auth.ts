@@ -101,8 +101,14 @@ export const register = async (req: Request, res: Response) => {
         createdAt: true
       }
     });
-    // Enviar email de verificación
-    await sendVerificationEmail(user.email, user.id, name);
+    // Enviar email de verificación (no bloquear el registro si falla)
+    try {
+      await sendVerificationEmail(user.email, user.id, name);
+    } catch (emailError) {
+      console.error('❌ Error enviando email de verificación:', emailError);
+      // No fallar el registro por error de email
+    }
+    
     return res.status(201).json({
       message: 'Usuario registrado exitosamente. Por favor revisa tu email para verificar tu cuenta.',
       user: {

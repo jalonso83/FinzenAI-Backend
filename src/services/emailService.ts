@@ -261,15 +261,21 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
 
 export const sendVerificationEmail = async (email: string, userId: string, name: string) => {
   try {
+    console.log('🔍 Verificando configuración de SendGrid...');
+    console.log('SENDGRID_API_KEY existe:', !!process.env.SENDGRID_API_KEY);
+    console.log('SENDGRID_API_KEY es placeholder:', process.env.SENDGRID_API_KEY === 'SG.placeholder_key_for_development');
+    console.log('FROM_EMAIL existe:', !!process.env.FROM_EMAIL);
+    
     // Verificar si SendGrid está configurado
     if (!process.env.SENDGRID_API_KEY || process.env.SENDGRID_API_KEY === 'SG.placeholder_key_for_development') {
-      // Modo simulación para desarrollo
+      // Modo simulación para desarrollo y producción sin SendGrid
       console.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-      console.log(`[SIMULACIÓN] Enlace: http://localhost:5173/verify-email?token=${userId}&email=${email}`);
+      console.log(`[SIMULACIÓN] Enlace: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${userId}&email=${email}`);
       return;
     }
 
     // Envío real con SendGrid
+    console.log('📧 Intentando enviar email real con SendGrid...');
     const htmlContent = getEmailTemplate(name, userId, email);
     const msg = {
       to: email,
@@ -278,17 +284,16 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
       html: htmlContent
     };
 
+    console.log('📤 Enviando email a:', email);
+    console.log('📤 Desde:', process.env.FROM_EMAIL);
+    
     await sgMail.send(msg);
     console.log(`✅ Verification email sent to ${email}`);
   } catch (error) {
     console.error('❌ Error sending verification email:', error);
-    // En desarrollo, no fallar si SendGrid no está configurado
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-      console.log(`[SIMULACIÓN] Enlace: http://localhost:5173/verify-email?token=${userId}&email=${email}`);
-    } else {
-      throw new Error('Failed to send verification email');
-    }
+    // No fallar en ningún entorno, solo simular
+    console.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
+    console.log(`[SIMULACIÓN] Enlace: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${userId}&email=${email}`);
   }
 };
 
