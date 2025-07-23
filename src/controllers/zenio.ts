@@ -308,14 +308,80 @@ async function validateCategory(categoryName: string, type: string, availableCat
     return { valid: false, error: 'Categoría no válida' };
   }
 
-// Función para obtener categorías válidas
-async function getValidCategories(type: 'EXPENSE' | 'INCOME'): Promise<string> {
+// Función para obtener categorías válidas usando las proporcionadas
+function getValidCategoriesFromList(categories: any[], type: 'EXPENSE' | 'INCOME'): string {
+  try {
+    // Verificar si las categorías tienen información completa
+    const hasFullInfo = categories.length > 0 && typeof categories[0] === 'object' && categories[0].name;
+    
+    if (hasFullInfo) {
+      // Filtrar por tipo y formatear con iconos
+      const filteredCategories = categories.filter(cat => cat.type === type);
+      return filteredCategories.map(cat => `${cat.icon} ${cat.name}`).join(', ');
+    } else {
+      // Categorías simples (solo nombres)
+      return categories.join(', ');
+    }
+  } catch (error) {
+    return 'Error al procesar categorías';
+  }
+}
+
+// Función para obtener categorías específicas para metas usando las proporcionadas
+function getGoalCategoriesFromList(categories: any[], goalType?: string): string {
+  try {
+    // Verificar si las categorías tienen información completa
+    const hasFullInfo = categories.length > 0 && typeof categories[0] === 'object' && categories[0].name;
+    
+    let goalCategories: string;
+    let relevantExamples: string;
+    
+    if (hasFullInfo) {
+      // Para metas, usar TODAS las categorías disponibles (EXPENSE e INCOME)
+      // Las metas pueden ser para ahorrar para gastos futuros (EXPENSE) o para acumular ingresos (INCOME)
+      goalCategories = categories.map(cat => `${cat.icon} ${cat.name}`).join(', ');
+    } else {
+      // Categorías simples (solo nombres)
+      goalCategories = categories.join(', ');
+    }
+    
+    // Determinar ejemplos relevantes según el tipo de meta
+    if (goalType) {
+      const lowerGoalType = goalType.toLowerCase();
+      
+      if (lowerGoalType.includes('inversión') || lowerGoalType.includes('inversion') || lowerGoalType.includes('invertir')) {
+        relevantExamples = `💼 Inversiones (categoría de ingresos)\n📈 Fondos de inversión\n🏦 Certificados financieros\n💎 Metales preciosos\n🏢 Bienes raíces\n💰 Acumular capital para invertir`;
+      } else if (lowerGoalType.includes('vivienda') || lowerGoalType.includes('casa') || lowerGoalType.includes('apartamento')) {
+        relevantExamples = `🏠 Compra de vivienda\n🏡 Pago de hipoteca\n🔧 Renovaciones\n🏗️ Construcción`;
+      } else if (lowerGoalType.includes('vehículo') || lowerGoalType.includes('carro') || lowerGoalType.includes('auto')) {
+        relevantExamples = `🚗 Compra de vehículo\n🚙 Pago de préstamo\n⛽ Combustible y mantenimiento\n🛣️ Viajes en carro`;
+      } else if (lowerGoalType.includes('vacación') || lowerGoalType.includes('viaje') || lowerGoalType.includes('turismo')) {
+        relevantExamples = `✈️ Vacaciones internacionales\n🏖️ Viajes nacionales\n🎫 Pasajes y hospedaje\n🎪 Actividades turísticas`;
+      } else if (lowerGoalType.includes('educación') || lowerGoalType.includes('estudio') || lowerGoalType.includes('universidad')) {
+        relevantExamples = `🎓 Educación universitaria\n📚 Cursos especializados\n💻 Certificaciones\n📖 Material educativo`;
+      } else {
+        // Ejemplos generales para otros tipos de metas
+        relevantExamples = `🏠 Compra de vivienda\n🚗 Compra de vehículo\n✈️ Vacaciones\n🎓 Educación\n💍 Eventos especiales\n🏥 Emergencias\n💼 Inversiones`;
+      }
+    } else {
+      // Ejemplos generales si no se especifica tipo
+      relevantExamples = `🏠 Compra de vivienda\n🚗 Compra de vehículo\n✈️ Vacaciones\n🎓 Educación\n💍 Eventos especiales\n🏥 Emergencias\n💼 Inversiones`;
+    }
+    
+    return `Categorías disponibles para metas de ahorro:\n${goalCategories}\n\nEjemplos de metas comunes:\n${relevantExamples}`;
+  } catch (error) {
+    return 'Error al procesar categorías para metas';
+  }
+}
+
+// Función de respaldo para obtener categorías de la BD (solo si no se proporcionan)
+async function getValidCategoriesFromDB(type: 'EXPENSE' | 'INCOME'): Promise<string> {
   try {
     const categories = await prisma.category.findMany({
       where: { type },
-      select: { name: true }
+      select: { name: true, icon: true }
     });
-    return categories.map((cat: any) => cat.name).join(', ');
+    return categories.map((cat: any) => `${cat.icon} ${cat.name}`).join(', ');
   } catch (error) {
     return 'Error al obtener categorías';
   }
@@ -1696,6 +1762,28 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     // 3. Obtener datos de la petición
     let { message, threadId: incomingThreadId, isOnboarding, categories } = req.body;
     threadId = incomingThreadId;
+
+    // 3.1. Obtener categorías de la base de datos SOLO si no se proporcionaron desde el frontend
+    if (!categories || categories.length === 0) {
+      try {
+        const dbCategories = await prisma.category.findMany({
+          select: { name: true, type: true, icon: true }
+        });
+        categories = dbCategories.map(cat => cat.name);
+        console.log('[Zenio] Categorías obtenidas de la BD (respaldo):', categories);
+      } catch (error) {
+        console.error('[Zenio] Error obteniendo categorías de la BD:', error);
+        categories = [];
+      }
+    } else {
+      // Verificar si las categorías vienen con información completa o solo nombres
+      const hasFullInfo = categories.length > 0 && typeof categories[0] === 'object' && categories[0].name;
+      if (hasFullInfo) {
+        console.log('[Zenio] Usando categorías completas del frontend:', categories.length, 'categorías');
+      } else {
+        console.log('[Zenio] Usando categorías simples del frontend:', categories);
+      }
+    }
 
     // 4. Procesar expresiones temporales
     if (typeof message === 'string') {
