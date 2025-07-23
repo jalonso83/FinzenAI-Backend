@@ -591,9 +591,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 // Función para hacer polling del run con backoff exponencial
-async function pollRunStatus(threadId: string, runId: string, maxRetries: number = 30): Promise<any> {
+async function pollRunStatus(threadId: string, runId: string, maxRetries: number = 15): Promise<any> {
   let retries = 0;
-  let backoffMs = 1000; // 1 segundo inicial
+  let backoffMs = 500; // 0.5 segundos inicial
 
   while (retries < maxRetries) {
     try {
@@ -607,11 +607,13 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
 
       // Si el run está completado, devolver
       if (run.status === 'completed') {
+        console.log('[Zenio] Run completado exitosamente');
         return run;
       }
 
       // Si requiere acción (tool calls), devolver
       if (run.status === 'requires_action') {
+        console.log('[Zenio] Run requiere acción (tool calls)');
         return run;
       }
 
@@ -624,8 +626,8 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
       if (run.status === 'in_progress' || run.status === 'queued') {
         await sleep(backoffMs);
         retries++;
-        // Backoff exponencial con máximo de 5 segundos
-        backoffMs = Math.min(backoffMs * 1.5, 5000);
+        // Backoff exponencial con máximo de 3 segundos
+        backoffMs = Math.min(backoffMs * 1.2, 3000);
         continue;
       }
 
@@ -633,27 +635,30 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
       throw new Error(`Estado de run inesperado: ${run.status}`);
 
     } catch (error) {
-      if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError && (error as any).response?.status === 429) {
-        // Rate limit, esperar más tiempo
-        console.log('[Zenio] Rate limit detectado, esperando...');
-        await sleep(backoffMs * 2);
-        retries++;
-        backoffMs = Math.min(backoffMs * 2, 10000);
-        continue;
-      }
-      
+      // Si es el último intento, lanzar error
       if (retries === maxRetries - 1) {
+        console.error('[Zenio] Error final en polling:', error);
         throw error;
       }
       
+      // Si es rate limit, esperar más tiempo
+      if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError && (error as any).response?.status === 429) {
+        console.log('[Zenio] Rate limit detectado, esperando...');
+        await sleep(backoffMs * 2);
+        retries++;
+        backoffMs = Math.min(backoffMs * 2, 5000);
+        continue;
+      }
+      
+      // Otros errores, reintentar con backoff
       console.log(`[Zenio] Error en polling, reintentando... (${retries + 1}/${maxRetries})`);
       await sleep(backoffMs);
       retries++;
-      backoffMs = Math.min(backoffMs * 1.5, 5000);
+      backoffMs = Math.min(backoffMs * 1.2, 3000);
     }
   }
 
-  throw new Error(`Timeout: El run no se completó después de ${maxRetries} intentos`);
+  throw new Error(`Timeout: El run no se completó después de ${maxRetries} intentos (${maxRetries * 2} segundos máximo)`);
 }
 
 // Función para ejecutar tool calls y enviar resultados
@@ -683,6 +688,9 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
           break;
         case 'manage_goal_record':
           result = await executeManageGoalRecord(functionArgs, userId, categories);
+          break;
+        case 'list_categories':
+          result = await executeListCategories(functionArgs, categories);
           break;
         default:
           throw new Error(`Función no soportada: ${functionName}`);
@@ -870,51 +878,85 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
 
 // Función para ejecutar manage_goal_record
 async function executeManageGoalRecord(args: any, userId: string, categories?: string[]): Promise<any> {
-  const { operation, module, goal_data, criterios_identificacion } = args;
+  const { action, data, criterios } = args;
 
-  // Validaciones
-  if (!['insert', 'update', 'delete', 'list'].includes(operation)) {
-    throw new Error('Operación inválida: debe ser insert, update, delete o list');
-  }
-
-  if (module !== 'metas') {
-    throw new Error('Solo se soporta el módulo "metas"');
-  }
-
-  // Validaciones por operación
-  if (operation === 'insert' || operation === 'update') {
-    if (!goal_data) {
-      throw new Error('Goal_data es requerido para insert y update');
-    }
-    const validation = validateGoalData(goal_data);
-    if (!validation.valid) {
-      throw new Error(`Datos de meta inválidos: ${validation.errors.join(', ')}`);
-    }
-  }
-
-  if (operation === 'update' || operation === 'delete') {
-    if (!criterios_identificacion) {
-      throw new Error('Criterios_identificacion es requerido para update y delete');
-    }
-    const criteriosValidation = validateGoalCriterios(criterios_identificacion);
-    if (!criteriosValidation.valid) {
-      throw new Error(`Criterios de identificación inválidos: ${criteriosValidation.errors.join(', ')}`);
-    }
-  }
-
-  // Ejecutar operación
-  switch (operation) {
+  switch (action) {
     case 'insert':
-      return await insertGoal(goal_data, userId, categories);
+      return await insertGoal(data, userId, categories);
     case 'update':
-      return await updateGoal(goal_data, criterios_identificacion, userId, categories);
+      return await updateGoal(data, criterios, userId, categories);
     case 'delete':
-      return await deleteGoal(criterios_identificacion, userId, categories);
+      return await deleteGoal(criterios, userId, categories);
     case 'list':
-      return await listGoals(goal_data, userId, categories);
+      return await listGoals(data, userId, categories);
     default:
-      throw new Error('Operación no soportada');
+      throw new Error(`Acción no soportada para metas: ${action}`);
   }
+}
+
+// Función para ejecutar list_categories
+async function executeListCategories(args: any, categories?: any[]): Promise<any> {
+  const { module } = args;
+  
+  console.log(`[Zenio] Listando categorías para módulo: ${module}`);
+  
+  if (!categories || categories.length === 0) {
+    // Si no hay categorías del frontend, obtener de la BD
+    try {
+      const dbCategories = await prisma.category.findMany({
+        select: { name: true, type: true, icon: true }
+      });
+      categories = dbCategories;
+      console.log('[Zenio] Categorías obtenidas de la BD:', categories.length);
+    } catch (error) {
+      console.error('[Zenio] Error obteniendo categorías de la BD:', error);
+      return {
+        error: true,
+        message: 'Error al obtener categorías de la base de datos'
+      };
+    }
+  }
+
+  // Filtrar categorías según el módulo
+  let filteredCategories: any[] = [];
+  
+  switch (module) {
+    case 'presupuestos':
+      // Para presupuestos solo categorías de gastos
+      filteredCategories = categories!.filter((cat: any) => 
+        typeof cat === 'object' ? cat.type === 'EXPENSE' : true
+      );
+      break;
+    case 'transacciones':
+      // Para transacciones todas las categorías (gastos e ingresos)
+      filteredCategories = categories!;
+      break;
+    case 'metas':
+      // Para metas todas las categorías (gastos e ingresos)
+      filteredCategories = categories!;
+      break;
+    default:
+      return {
+        error: true,
+        message: `Módulo no válido: ${module}. Módulos válidos: presupuestos, transacciones, metas`
+      };
+  }
+
+  // Formatear respuesta con iconos
+  const formattedCategories = filteredCategories.map((cat: any) => {
+    if (typeof cat === 'object' && cat.name) {
+      return `${cat.icon} ${cat.name}`;
+    }
+    return cat;
+  });
+
+  console.log(`[Zenio] Categorías para ${module}:`, formattedCategories);
+
+  return {
+    categories: formattedCategories,
+    count: formattedCategories.length,
+    module: module
+  };
 }
 
 // Funciones auxiliares para transacciones
@@ -1785,6 +1827,8 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       }
     }
 
+
+
     // 4. Procesar expresiones temporales
     if (typeof message === 'string') {
       const mensajeOriginal = message;
@@ -1938,45 +1982,27 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     console.error('[Zenio] Error:', error);
 
     // Manejo específico de errores
-    if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError) {
-      if ((error as any).code === 'ECONNRESET') {
-        return res.status(503).json({
-          message: 'No se pudo conectar con Zenio (OpenAI). Por favor, intenta de nuevo en unos segundos.',
-          threadId
-        });
-      }
-
-      if ((error as any).response?.status === 429) {
-        return res.status(429).json({
-          message: 'Zenio está procesando muchos mensajes. Por favor, espera un momento antes de continuar.',
-          threadId
-        });
-      }
-
-      if ((error as any).response?.data?.error?.message?.includes('while a run')) {
-        return res.status(429).json({
-          message: 'Zenio está terminando de procesar tu mensaje anterior. Por favor, espera un momento antes de continuar.',
-          threadId
-        });
-      }
-
-      if (error && typeof error === 'object' && 'response' in error && error.response && typeof error.response === 'object' && 'data' in error.response) {
-        console.error('❌ OpenAI API error:', error.response.data);
-        return res.status(500).json({ 
-          error: 'Error al comunicarse con Zenio.', 
-          openai: error.response.data 
-        });
-      }
+    if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError && (error as any).response?.status === 429) {
+      // Rate limit, esperar más tiempo
+      console.log('[Zenio] Rate limit detectado, esperando...');
+      await sleep(backoffMs * 2);
+      retries++;
+      backoffMs = Math.min(backoffMs * 2, 10000);
+      continue;
     }
-
-    // Error general
-    console.error('❌ Error general:', error);
-    return res.status(500).json({ 
-      error: 'Error al comunicarse con Zenio.',
-      message: error instanceof Error ? error.message : 'Error desconocido'
-    });
+    
+    if (retries === maxRetries - 1) {
+      throw error;
+    }
+    
+    console.log(`[Zenio] Error en polling, reintentando... (${retries + 1}/${maxRetries})`);
+    await sleep(backoffMs);
+    retries++;
+    backoffMs = Math.min(backoffMs * 1.5, 5000);
   }
-};
+
+  throw new Error(`Timeout: El run no se completó después de ${maxRetries} intentos`);
+}
 
 export const getChatHistory = async (req: Request, res: Response) => {
   try {
