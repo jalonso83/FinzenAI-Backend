@@ -245,22 +245,28 @@ function validateCriterios(criterios: any): { valid: boolean; errors: string[] }
 }
 
 // Función para validar categoría contra la base de datos o lista proporcionada
-async function validateCategory(categoryName: string, type: string, availableCategories?: string[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
+async function validateCategory(categoryName: string, type: string, availableCategories?: any[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
   try {
     if (availableCategories && availableCategories.length > 0) {
       // Usar la lista proporcionada por el frontend
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      
-      // Buscar la categoría en la lista proporcionada (case insensitive)
-      const foundCategory = availableCategories.find(cat => 
-        cat.toLowerCase() === categoryName.toLowerCase()
-      );
+      // Buscar la categoría en la lista proporcionada (case insensitive, soporta objetos o strings)
+      const foundCategory = availableCategories.find(cat => {
+        if (typeof cat === 'object' && cat.name) {
+          return cat.name.trim().toLowerCase() === categoryName.trim().toLowerCase();
+        } else if (typeof cat === 'string') {
+          return cat.trim().toLowerCase() === categoryName.trim().toLowerCase();
+        }
+        return false;
+      });
       
       if (foundCategory) {
+        // Obtener el nombre limpio para buscar en la BD
+        const cleanName = typeof foundCategory === 'object' && foundCategory.name ? foundCategory.name : foundCategory;
         // Obtener el ID de la categoría de la base de datos
         const category = await prisma.category.findFirst({
           where: {
-            name: { equals: foundCategory, mode: 'insensitive' },
+            name: { equals: cleanName, mode: 'insensitive' },
             type: dbType
           }
         });
@@ -268,8 +274,8 @@ async function validateCategory(categoryName: string, type: string, availableCat
           return { valid: true, categoryId: category.id };
         }
       } else {
-        // Filtrar categorías por tipo (asumiendo que las categorías del frontend son de gastos)
-        const suggestions = availableCategories;
+        // Filtrar categorías por tipo y devolver solo los nombres
+        const suggestions = availableCategories.map(cat => typeof cat === 'object' && cat.name ? cat.name : cat);
         return {
           valid: false,
           error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.join(', ')}`,
@@ -300,13 +306,12 @@ async function validateCategory(categoryName: string, type: string, availableCat
         };
       }
     }
-      } catch (error) {
-      return { valid: false, error: 'Error al validar la categoría' };
-    }
-    
-    // Return por defecto
-    return { valid: false, error: 'Categoría no válida' };
+  } catch (error) {
+    return { valid: false, error: 'Error al validar la categoría' };
   }
+  // Return por defecto
+  return { valid: false, error: 'Categoría no válida' };
+}
 
 // Función para obtener categorías válidas usando las proporcionadas
 function getValidCategoriesFromList(categories: any[], type: 'EXPENSE' | 'INCOME'): string {
@@ -877,20 +882,51 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
 }
 
 // Función para ejecutar manage_goal_record
-async function executeManageGoalRecord(args: any, userId: string, categories?: string[]): Promise<any> {
-  const { action, data, criterios } = args;
+async function executeManageGoalRecord(args: any, userId: string, categories?: any[]): Promise<any> {
+  const { operation, module, goal_data, criterios_identificacion } = args;
 
-  switch (action) {
+  // Validaciones
+  if (!['insert', 'update', 'delete', 'list'].includes(operation)) {
+    throw new Error('Operación inválida: debe ser insert, update, delete o list');
+  }
+
+  if (module !== 'metas') {
+    throw new Error('Solo se soporta el módulo "metas"');
+  }
+
+  // Validaciones por operación
+  if (operation === 'insert' || operation === 'update') {
+    if (!goal_data) {
+      throw new Error('Goal_data es requerido para insert y update');
+    }
+    const validation = validateGoalData(goal_data);
+    if (!validation.valid) {
+      throw new Error(`Datos de meta inválidos: ${validation.errors.join(', ')}`);
+    }
+  }
+
+  if (operation === 'update' || operation === 'delete') {
+    if (!criterios_identificacion) {
+      throw new Error('Criterios_identificacion es requerido para update y delete');
+    }
+    const criteriosValidation = validateGoalCriterios(criterios_identificacion);
+    if (!criteriosValidation.valid) {
+      throw new Error(`Criterios de identificación inválidos: ${criteriosValidation.errors.join(', ')}`);
+    }
+  }
+
+  // Ejecutar operación
+  switch (operation) {
     case 'insert':
-      return await insertGoal(data, userId, categories);
+      return await insertGoal(goal_data, userId, categories);
     case 'update':
-      return await updateGoal(data, criterios, userId, categories);
+      return await updateGoal(goal_data, criterios_identificacion, userId, categories);
     case 'delete':
-      return await deleteGoal(criterios, userId, categories);
+      return await deleteGoal(criterios_identificacion, userId, categories);
     case 'list':
-      return await listGoals(data, userId, categories);
+      return await listGoals(goal_data, userId, categories);
     default:
-      throw new Error(`Acción no soportada para metas: ${action}`);
+      throw new Error('Operación no soportada');
   }
 }
 
