@@ -930,64 +930,53 @@ async function executeManageGoalRecord(args: any, userId: string, categories?: a
   }
 }
 
-// Función para ejecutar list_categories
+// Función para ejecutar list_categories - FORZAR DEPLOY
 async function executeListCategories(args: any, categories?: any[]): Promise<any> {
   const { module } = args;
   
-  console.log(`[Zenio] Listando categorías para módulo: ${module}`);
+  console.log(`[Zenio] executeListCategories llamado con módulo: ${module}`);
+  console.log(`[Zenio] Categorías disponibles:`, categories?.length || 0);
   
   if (!categories || categories.length === 0) {
-    // Si no hay categorías del frontend, obtener de la BD
+    // Fallback: obtener categorías de la base de datos
     try {
       const dbCategories = await prisma.category.findMany({
         select: { name: true, type: true, icon: true }
       });
       categories = dbCategories;
-      console.log('[Zenio] Categorías obtenidas de la BD:', categories.length);
+      console.log('[Zenio] Categorías obtenidas de BD como fallback:', categories.length);
     } catch (error) {
-      console.error('[Zenio] Error obteniendo categorías de la BD:', error);
-      return {
-        error: true,
-        message: 'Error al obtener categorías de la base de datos'
-      };
+      console.error('[Zenio] Error obteniendo categorías de BD:', error);
+      return { error: true, message: 'Error obteniendo categorías de la base de datos' };
     }
   }
 
-  // Filtrar categorías según el módulo
   let filteredCategories: any[] = [];
   
   switch (module) {
     case 'presupuestos':
-      // Para presupuestos solo categorías de gastos
-      filteredCategories = categories!.filter((cat: any) => 
-        typeof cat === 'object' ? cat.type === 'EXPENSE' : true
-      );
+      filteredCategories = categories!.filter(cat => cat.type === 'EXPENSE');
       break;
     case 'transacciones':
-      // Para transacciones todas las categorías (gastos e ingresos)
       filteredCategories = categories!;
       break;
     case 'metas':
-      // Para metas todas las categorías (gastos e ingresos)
       filteredCategories = categories!;
       break;
     default:
-      return {
-        error: true,
-        message: `Módulo no válido: ${module}. Módulos válidos: presupuestos, transacciones, metas`
-      };
+      return { error: true, message: `Módulo no válido: ${module}` };
   }
 
-  // Formatear respuesta con iconos
-  const formattedCategories = filteredCategories.map((cat: any) => {
+  // Formatear categorías con iconos si están disponibles
+  const formattedCategories = filteredCategories.map(cat => {
     if (typeof cat === 'object' && cat.name) {
-      return `${cat.icon} ${cat.name}`;
+      return `${cat.icon || '📁'} ${cat.name}`;
     }
     return cat;
   });
 
-  console.log(`[Zenio] Categorías para ${module}:`, formattedCategories);
-
+  console.log(`[Zenio] Categorías filtradas para ${module}:`, formattedCategories.length);
+  
   return {
     categories: formattedCategories,
     count: formattedCategories.length,
