@@ -930,7 +930,7 @@ async function executeManageGoalRecord(args: any, userId: string, categories?: a
   }
 }
 
-// Función para ejecutar list_categories - FORZAR DEPLOY
+// Función para ejecutar list_categories - FORZAR DEPLOY RAILWAY
 async function executeListCategories(args: any, categories?: any[]): Promise<any> {
   const { module } = args;
   
