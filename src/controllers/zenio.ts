@@ -799,10 +799,16 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 
 // Función para ejecutar manage_transaction_record
 async function executeManageTransactionRecord(args: any, userId: string, categories?: string[]): Promise<any> {
+  console.log(`[Zenio] executeManageTransactionRecord - args completos:`, JSON.stringify(args, null, 2));
+  
   let transactionData = args.transaction_data;
   const operation = args.operation;
   const module = args.module;
   let criterios = args.criterios_identificacion || {};
+
+  console.log(`[Zenio] executeManageTransactionRecord - operation: "${operation}"`);
+  console.log(`[Zenio] executeManageTransactionRecord - module: "${module}"`);
+  console.log(`[Zenio] executeManageTransactionRecord - transactionData:`, transactionData);
 
   // Procesar fechas en los datos de transacción
   if (transactionData) {
@@ -819,9 +825,11 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
   }
 
-  if (module !== 'transacciones') {
-    throw new Error('Solo se soporta el módulo "transacciones"');
-  }
+  // La función manage_transaction_record siempre es para transacciones, no necesita validar módulo
+  // if (module !== 'transacciones') {
+  //   console.log(`[Zenio] ERROR: module "${module}" !== "transacciones"`);
+  //   throw new Error('Solo se soporta el módulo "transacciones"');
+  // }
 
   // Validaciones por operación
   if (operation === 'insert') {
