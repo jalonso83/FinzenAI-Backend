@@ -2032,24 +2032,14 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError && (error as any).response?.status === 429) {
       // Rate limit, esperar más tiempo
       console.log('[Zenio] Rate limit detectado, esperando...');
-      await sleep(backoffMs * 2);
-      retries++;
-      backoffMs = Math.min(backoffMs * 2, 10000);
-      continue;
+      await sleep(2000);
     }
     
-    if (retries === maxRetries - 1) {
-      throw error;
-    }
-    
-    console.log(`[Zenio] Error en polling, reintentando... (${retries + 1}/${maxRetries})`);
-    await sleep(backoffMs);
-    retries++;
-    backoffMs = Math.min(backoffMs * 1.5, 5000);
+    return res.status(500).json({
+      error: 'Error interno del servidor',
+      message: error instanceof Error ? error.message : 'Error desconocido'
+    });
   }
-
-  throw new Error(`Timeout: El run no se completó después de ${maxRetries} intentos`);
-}
 
 export const getChatHistory = async (req: Request, res: Response) => {
   try {
