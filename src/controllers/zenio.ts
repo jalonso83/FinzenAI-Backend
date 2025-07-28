@@ -2040,6 +2040,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       message: error instanceof Error ? error.message : 'Error desconocido'
     });
   }
+}
 
 export const getChatHistory = async (req: Request, res: Response) => {
   try {
