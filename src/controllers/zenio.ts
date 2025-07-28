@@ -870,9 +870,10 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
   }
 
-  if (module !== 'presupuestos') {
-    throw new Error('Solo se soporta el módulo "presupuestos"');
-  }
+  // La función manage_budget_record siempre es para presupuestos, no necesita validar módulo
+  // if (module !== 'presupuestos') {
+  //   throw new Error('Solo se soporta el módulo "presupuestos"');
+  // }
 
   if (!category) {
     throw new Error('La categoría es requerida');
@@ -910,9 +911,10 @@ async function executeManageGoalRecord(args: any, userId: string, categories?: a
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
   }
 
-  if (module !== 'metas') {
-    throw new Error('Solo se soporta el módulo "metas"');
-  }
+  // La función manage_goal_record siempre es para metas, no necesita validar módulo
+  // if (module !== 'metas') {
+  //   throw new Error('Solo se soporta el módulo "metas"');
+  // }
 
   // Validaciones por operación
   if (operation === 'insert' || operation === 'update') {
