@@ -676,6 +676,16 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
     const functionArgs = JSON.parse(toolCall.function.arguments);
 
     console.log(`[Zenio] Ejecutando función: ${functionName}`, functionArgs);
+    
+    // LOGS DE DIAGNÓSTICO
+    console.log(`[Zenio] functionName recibido: "${functionName}"`);
+    console.log(`[Zenio] functionName.length: ${functionName.length}`);
+    console.log(`[Zenio] functionName === 'list_categories': ${functionName === 'list_categories'}`);
+    console.log(`[Zenio] functionName.charCodeAt(0): ${functionName.charCodeAt(0)}`);
+    console.log(`[Zenio] functionName.charCodeAt(1): ${functionName.charCodeAt(1)}`);
+    console.log(`[Zenio] functionName.charCodeAt(2): ${functionName.charCodeAt(2)}`);
+    console.log(`[Zenio] functionName.charCodeAt(3): ${functionName.charCodeAt(3)}`);
+    console.log(`[Zenio] functionName.charCodeAt(4): ${functionName.charCodeAt(4)}`);
 
     try {
       let result: any = null;
@@ -695,9 +705,11 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
           result = await executeManageGoalRecord(functionArgs, userId, categories);
           break;
         case 'list_categories':
+          console.log(`[Zenio] CASO list_categories EJECUTADO`);
           result = await executeListCategories(functionArgs, categories);
           break;
         default:
+          console.log(`[Zenio] LLEGÓ AL DEFAULT - functionName: "${functionName}"`);
           throw new Error(`Función no soportada: ${functionName}`);
       }
 
