@@ -728,7 +728,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
 }
 
 // Función para ejecutar tool calls y enviar resultados
-async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: string[], timezone?: string): Promise<any> {
+async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: any[], timezone?: string): Promise<any> {
   const executedActions: any[] = [];
   const toolOutputs: any[] = [];
 
@@ -811,7 +811,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
 }
 
 // Función para ejecutar onboarding_financiero
-async function executeOnboardingFinanciero(args: any, userId: string, userName: string, categories?: string[]): Promise<any> {
+async function executeOnboardingFinanciero(args: any, userId: string, userName: string, categories?: any[]): Promise<any> {
   // Guardar en la base de datos
   await prisma.onboarding.upsert({
     where: { userId },
@@ -849,7 +849,7 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 }
 
 // Función para ejecutar manage_transaction_record
-async function executeManageTransactionRecord(args: any, userId: string, categories?: string[], timezone?: string): Promise<any> {
+async function executeManageTransactionRecord(args: any, userId: string, categories?: any[], timezone?: string): Promise<any> {
   console.log(`[Zenio] executeManageTransactionRecord - args completos:`, JSON.stringify(args, null, 2));
   
   let transactionData = args.transaction_data;
@@ -913,7 +913,7 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 }
 
 // Función para ejecutar manage_budget_record
-async function executeManageBudgetRecord(args: any, userId: string, categories?: string[]): Promise<any> {
+async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
   const { operation, module, category, amount, previous_amount, recurrence } = args;
 
   // Validaciones
@@ -1014,7 +1014,7 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
     // Fallback: obtener categorías de la base de datos
     try {
       const dbCategories = await prisma.category.findMany({
-        select: { name: true, type: true, icon: true }
+        select: { id: true, name: true, type: true, icon: true }
       });
       categories = dbCategories;
       console.log('[Zenio] Categorías obtenidas de BD como fallback:', categories.length);
@@ -1058,7 +1058,7 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
 }
 
 // Funciones auxiliares para transacciones
-async function insertTransaction(transactionData: any, userId: string, categories?: string[]): Promise<any> {
+async function insertTransaction(transactionData: any, userId: string, categories?: any[]): Promise<any> {
   const type = transactionData.type === 'gasto' ? 'EXPENSE' : 'INCOME';
   const amount = parseFloat(transactionData.amount);
   const categoryName = transactionData.category;
@@ -1142,7 +1142,7 @@ async function insertTransaction(transactionData: any, userId: string, categorie
   };
 }
 
-async function updateTransaction(transactionData: any, criterios: any, userId: string, categories?: string[]): Promise<any> {
+async function updateTransaction(transactionData: any, criterios: any, userId: string, categories?: any[]): Promise<any> {
   let where: any = { userId };
   
   for (const [key, value] of Object.entries(criterios)) {
@@ -1249,7 +1249,7 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
   };
 }
 
-async function deleteTransaction(criterios: any, userId: string, categories?: string[]): Promise<any> {
+async function deleteTransaction(criterios: any, userId: string, categories?: any[]): Promise<any> {
   let where: any = { userId };
   
   for (const [key, value] of Object.entries(criterios)) {
@@ -1305,7 +1305,7 @@ async function deleteTransaction(criterios: any, userId: string, categories?: st
   };
 }
 
-async function listTransactions(transactionData: any, userId: string, categories?: string[]): Promise<any> {
+async function listTransactions(transactionData: any, userId: string, categories?: any[]): Promise<any> {
   let where: any = { userId };
   
   if (transactionData) {
@@ -1369,7 +1369,7 @@ async function listTransactions(transactionData: any, userId: string, categories
 }
 
 // Funciones auxiliares para presupuestos
-async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: string[]): Promise<any> {
+async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[]): Promise<any> {
   const periodMap: { [key: string]: string } = {
     'semanal': 'weekly',
     'mensual': 'monthly',
@@ -1446,7 +1446,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
   };
 }
 
-async function updateBudget(category: string, previous_amount: string, amount: string, userId: string, categories?: string[]): Promise<any> {
+async function updateBudget(category: string, previous_amount: string, amount: string, userId: string, categories?: any[]): Promise<any> {
   const where: any = { 
     user_id: userId,
     amount: parseFloat(previous_amount)
@@ -1878,7 +1878,6 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // Obtener categorías del usuario
     const categories = await prisma.category.findMany({
-      where: { userId },
       select: { id: true, name: true, type: true, icon: true }
     });
 
