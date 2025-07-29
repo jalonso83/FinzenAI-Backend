@@ -1,8 +1,12 @@
 import axios from 'axios';
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import OpenAI from 'openai';
 
 const prisma = new PrismaClient();
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 const API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID;
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
@@ -1989,7 +1993,7 @@ export const getChatHistory = async (req: Request, res: Response) => {
     const messages = await openai.beta.threads.messages.list(threadId);
     
     return res.json({
-      messages: messages.data.map(msg => ({
+      messages: messages.data.map((msg: any) => ({
         id: msg.id,
         role: msg.role,
         content: msg.content[0].type === 'text' ? msg.content[0].text.value : 'Contenido no disponible',
@@ -1999,6 +2003,69 @@ export const getChatHistory = async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error(`[Zenio] Error obteniendo historial:`, error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    });
+  }
+};
+
+export const createTransactionFromZenio = async (req: Request, res: Response) => {
+  try {
+    const { transactionData } = req.body;
+    const userId = (req.user as any)?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Usuario no autenticado' });
+    }
+
+    const result = await insertTransaction(transactionData, userId);
+    return res.json(result);
+
+  } catch (error) {
+    console.error(`[Zenio] Error creando transacción:`, error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    });
+  }
+};
+
+export const createBudgetFromZenio = async (req: Request, res: Response) => {
+  try {
+    const { category, amount, recurrence } = req.body;
+    const userId = (req.user as any)?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Usuario no autenticado' });
+    }
+
+    const result = await insertBudget(category, amount, recurrence, userId);
+    return res.json(result);
+
+  } catch (error) {
+    console.error(`[Zenio] Error creando presupuesto:`, error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    });
+  }
+};
+
+export const createGoalFromZenio = async (req: Request, res: Response) => {
+  try {
+    const { goalData } = req.body;
+    const userId = (req.user as any)?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Usuario no autenticado' });
+    }
+
+    const result = await insertGoal(goalData, userId);
+    return res.json(result);
+
+  } catch (error) {
+    console.error(`[Zenio] Error creando meta:`, error);
     return res.status(500).json({ 
       error: 'Error interno del servidor',
       details: error instanceof Error ? error.message : 'Error desconocido'
