@@ -31,6 +31,51 @@ function formatearFechaYYYYMMDD(date: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+// Función para obtener offset de timezone
+function obtenerOffsetDeTimezone(timezone: string): number {
+  // Mapeo de timezones comunes
+  const timezoneOffsets: { [key: string]: number } = {
+    'America/Santo_Domingo': -4,
+    'America/New_York': -5,
+    'America/Chicago': -6,
+    'America/Denver': -7,
+    'America/Los_Angeles': -8,
+    'America/Anchorage': -9,
+    'Pacific/Honolulu': -10,
+    'Europe/London': 0,
+    'Europe/Paris': 1,
+    'Europe/Berlin': 1,
+    'Europe/Madrid': 1,
+    'Europe/Rome': 1,
+    'Europe/Moscow': 3,
+    'Asia/Dubai': 4,
+    'Asia/Tokyo': 9,
+    'Asia/Shanghai': 8,
+    'Asia/Seoul': 9,
+    'Australia/Sydney': 10,
+    'Pacific/Auckland': 12,
+    'UTC': 0
+  };
+  
+  return timezoneOffsets[timezone] || 0; // Default a UTC si no se encuentra
+}
+
+// Función para procesar fecha con zona horaria del usuario
+function procesarFechaConZonaHoraria(fecha: string, timezone: string = 'UTC'): Date {
+  // Crear fecha base
+  const fechaBase = new Date(fecha + 'T00:00:00');
+  
+  // Si es UTC, usar fecha base
+  if (timezone === 'UTC') {
+    return fechaBase;
+  }
+  
+  // Para otras zonas horarias, aplicar offset
+  const offset = obtenerOffsetDeTimezone(timezone);
+  const utc = fechaBase.getTime() + (fechaBase.getTimezoneOffset() * 60000);
+  return new Date(utc + (offset * 60 * 60 * 1000));
+}
+
 // Función para reemplazar expresiones temporales por la fecha real
 function reemplazarExpresionesTemporalesPorFecha(texto: string): string {
   // Obtener fecha actual en zona horaria de República Dominicana
@@ -141,7 +186,7 @@ function normalizarFecha(fecha: string): string | null {
 }
 
 // Función para procesar fechas en datos de transacción
-function procesarFechasEnDatosTransaccion(data: any): any {
+function procesarFechasEnDatosTransaccion(data: any, timezone?: string): any {
   if (!data) return data;
   
   const datosProcesados = { ...data };
@@ -163,6 +208,12 @@ function procesarFechasEnDatosTransaccion(data: any): any {
     if (fechaNormalizada) {
       console.log(`[Zenio] Fecha procesada: "${datosProcesados.date}" -> "${fechaNormalizada}"`);
       datosProcesados.date = fechaNormalizada;
+      
+      // Si se proporciona timezone, procesar la fecha con zona horaria
+      if (timezone) {
+        datosProcesados._processedDate = procesarFechaConZonaHoraria(fechaNormalizada, timezone);
+        console.log(`[Zenio] Fecha con zona horaria ${timezone}:`, datosProcesados._processedDate);
+      }
     }
   }
   
@@ -667,36 +718,27 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
 }
 
 // Función para ejecutar tool calls y enviar resultados
-async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: string[]): Promise<any> {
-  const toolOutputs = [];
+async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: string[], timezone?: string): Promise<any> {
   const executedActions: any[] = [];
+  const toolOutputs: any[] = [];
 
   for (const toolCall of toolCalls) {
     const functionName = toolCall.function.name;
     const functionArgs = JSON.parse(toolCall.function.arguments);
+    const toolCallId = toolCall.id;
 
-    console.log(`[Zenio] Ejecutando función: ${functionName}`, functionArgs);
-    
-    // LOGS DE DIAGNÓSTICO
-    console.log(`[Zenio] functionName recibido: "${functionName}"`);
-    console.log(`[Zenio] functionName.length: ${functionName.length}`);
-    console.log(`[Zenio] functionName === 'list_categories': ${functionName === 'list_categories'}`);
-    console.log(`[Zenio] functionName.charCodeAt(0): ${functionName.charCodeAt(0)}`);
-    console.log(`[Zenio] functionName.charCodeAt(1): ${functionName.charCodeAt(1)}`);
-    console.log(`[Zenio] functionName.charCodeAt(2): ${functionName.charCodeAt(2)}`);
-    console.log(`[Zenio] functionName.charCodeAt(3): ${functionName.charCodeAt(3)}`);
-    console.log(`[Zenio] functionName.charCodeAt(4): ${functionName.charCodeAt(4)}`);
+    console.log(`[Zenio] Ejecutando tool call: ${functionName}`);
+    console.log(`[Zenio] Argumentos:`, functionArgs);
+
+    let result: any;
 
     try {
-      let result: any = null;
-
-      // Ejecutar la función correspondiente
       switch (functionName) {
         case 'onboarding_financiero':
           result = await executeOnboardingFinanciero(functionArgs, userId, userName, categories);
           break;
         case 'manage_transaction_record':
-          result = await executeManageTransactionRecord(functionArgs, userId, categories);
+          result = await executeManageTransactionRecord(functionArgs, userId, categories, timezone);
           break;
         case 'manage_budget_record':
           result = await executeManageBudgetRecord(functionArgs, userId, categories);
@@ -705,15 +747,13 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
           result = await executeManageGoalRecord(functionArgs, userId, categories);
           break;
         case 'list_categories':
-          console.log(`[Zenio] CASO list_categories EJECUTADO`);
           result = await executeListCategories(functionArgs, categories);
           break;
         default:
-          console.log(`[Zenio] LLEGÓ AL DEFAULT - functionName: "${functionName}"`);
           throw new Error(`Función no soportada: ${functionName}`);
       }
 
-      // Guardar la acción ejecutada para el frontend
+      // Registrar la acción ejecutada
       if (result && result.action) {
         executedActions.push({
           action: result.action,
@@ -722,31 +762,32 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
       }
 
       toolOutputs.push({
-        tool_call_id: toolCall.id,
+        tool_call_id: toolCallId,
         output: JSON.stringify(result)
       });
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(`[Zenio] Error ejecutando ${functionName}:`, error);
+      
       toolOutputs.push({
-        tool_call_id: toolCall.id,
+        tool_call_id: toolCallId,
         output: JSON.stringify({
-          error: true,
-          message: error instanceof Error ? error.message : 'Error desconocido'
+          success: false,
+          error: error.message || 'Error desconocido'
         })
       });
     }
   }
 
-  // Enviar resultados a OpenAI
-  console.log('[Zenio] Enviando tool outputs a OpenAI...');
-  await axios.post(
-    `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
-    {
-      tool_outputs: toolOutputs
-    },
-    { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
-  );
+  // Enviar outputs a OpenAI
+  if (toolOutputs.length > 0) {
+    console.log('[Zenio] Enviando tool outputs a OpenAI...');
+    await axios.post(
+      `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
+      { tool_outputs: toolOutputs },
+      { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+    );
+  }
 
   // Hacer polling hasta que el run termine
   console.log('[Zenio] Haciendo polling después de submit_tool_outputs...');
@@ -798,7 +839,7 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 }
 
 // Función para ejecutar manage_transaction_record
-async function executeManageTransactionRecord(args: any, userId: string, categories?: string[]): Promise<any> {
+async function executeManageTransactionRecord(args: any, userId: string, categories?: string[], timezone?: string): Promise<any> {
   console.log(`[Zenio] executeManageTransactionRecord - args completos:`, JSON.stringify(args, null, 2));
   
   let transactionData = args.transaction_data;
@@ -812,12 +853,12 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 
   // Procesar fechas en los datos de transacción
   if (transactionData) {
-    transactionData = procesarFechasEnDatosTransaccion(transactionData);
+    transactionData = procesarFechasEnDatosTransaccion(transactionData, timezone);
   }
 
   // Procesar fechas en los criterios
   if (criterios && Object.keys(criterios).length > 0) {
-    criterios = procesarFechasEnDatosTransaccion(criterios);
+    criterios = procesarFechasEnDatosTransaccion(criterios, timezone);
   }
 
   // Validaciones estructurales
@@ -1021,14 +1062,22 @@ async function insertTransaction(transactionData: any, userId: string, categorie
   let date = fechaRD;
   if (transactionData.date) {
     // Si se proporciona una fecha, validar que sea razonable (no muy antigua)
-    const fechaProporcionada = new Date(transactionData.date + 'T00:00:00');
     const fechaMinima = new Date('2020-01-01'); // Fecha mínima razonable
     
-    if (fechaProporcionada < fechaMinima) {
-      console.log(`[Zenio] Fecha proporcionada (${transactionData.date}) es muy antigua, usando fecha actual`);
-      date = fechaRD;
+    // Usar la fecha procesada con zona horaria si está disponible
+    if (transactionData._processedDate) {
+      console.log(`[Zenio] Usando fecha procesada con zona horaria: ${transactionData._processedDate}`);
+      date = transactionData._processedDate;
     } else {
-      date = fechaProporcionada;
+      // Fallback al método anterior
+      const fechaProporcionada = new Date(transactionData.date + 'T00:00:00');
+      
+      if (fechaProporcionada < fechaMinima) {
+        console.log(`[Zenio] Fecha proporcionada (${transactionData.date}) es muy antigua, usando fecha actual`);
+        date = fechaRD;
+      } else {
+        date = fechaProporcionada;
+      }
     }
   }
   
@@ -1849,8 +1898,12 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // 3. Obtener datos de la petición
-    let { message, threadId: incomingThreadId, isOnboarding, categories } = req.body;
+    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone } = req.body;
     threadId = incomingThreadId;
+    
+    // Usar zona horaria del usuario o default a UTC
+    const userTimezone = timezone || 'UTC';
+    console.log(`[Zenio] Zona horaria del usuario: ${userTimezone}`);
 
     // 3.1. Obtener categorías de la base de datos SOLO si no se proporcionaron desde el frontend
     if (!categories || categories.length === 0) {
@@ -1978,7 +2031,8 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         run.required_action.submit_tool_outputs.tool_calls,
         userId,
         userName,
-        categories // Pasar las categorías disponibles
+        categories, // Pasar las categorías disponibles
+        userTimezone // Pasar la zona horaria del usuario
       );
 
       // Extraer las acciones ejecutadas
