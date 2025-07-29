@@ -1612,4 +1612,396 @@ async function insertGoal(goalData: any, userId: string, categories?: string[]):
     // En vez de lanzar error, responder de forma conversacional
     return {
       success: false,
-      message: `🤔 **Categoría no encontrada**\n\nNo encontré la categoría "${category}" en tu lista de categorías.\n\n**Categorías disponibles para metas:**\n${categoryValidation.suggestions?.map(cat => `• ${cat}`
+      message: `🤔 **Categoría no encontrada**\n\nNo encontré la categoría "${category}" en tu lista de categorías.\n\n**Categorías disponibles para metas:**\n${categoryValidation.suggestions?.map(cat => `• ${cat}`).join('\n')}\n\n¿Podrías elegir una de estas categorías o especificar una nueva?`,
+      suggestions: categoryValidation.suggestions,
+      action: 'category_not_found'
+    };
+  }
+
+  const newGoal = await prisma.goal.create({
+    data: {
+      userId,
+      name,
+      targetAmount: parseFloat(target_amount),
+      currentAmount: 0,
+      categoryId: categoryValidation.categoryId!,
+      monthlyTargetPercentage: monthly_type === 'porcentaje' ? parseFloat(monthly_value) : null,
+      monthlyContributionAmount: monthly_type === 'fijo' ? parseFloat(monthly_value) : null,
+      targetDate: due_date ? new Date(due_date) : null,
+      priority: priority || 'Media',
+      description: description || '',
+      isCompleted: false,
+      isActive: true,
+      contributionsCount: 0
+    },
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true
+        }
+      }
+    }
+  });
+
+  const categoryRecord = await prisma.category.findUnique({
+    where: { id: categoryValidation.categoryId! }
+  });
+
+  const mensajeFecha = due_date 
+    ? `📅 **Fecha objetivo:** ${new Date(due_date).toLocaleDateString('es-ES')}`
+    : '📅 **Fecha objetivo:** Sin fecha límite';
+
+  const mensajeMensual = monthly_type === 'porcentaje' 
+    ? `📊 **Objetivo mensual:** ${monthly_value}% de tus ingresos`
+    : monthly_type === 'fijo'
+    ? `📊 **Objetivo mensual:** RD$${parseFloat(monthly_value).toLocaleString('es-DO')} fijos`
+    : '📊 **Objetivo mensual:** No definido';
+
+  return {
+    success: true,
+    message: `✅ **Meta creada exitosamente**\n\n🎯 **Meta:** ${name}\n💰 **Monto objetivo:** RD$${parseFloat(target_amount).toLocaleString('es-DO')}\n🏷️ **Categoría:** ${categoryRecord ? categoryRecord.name : category}\n${mensajeFecha}\n${mensajeMensual}\n📈 **Prioridad:** ${priority || 'Media'}\n\nLa meta ha sido guardada. ¡Puedes verla en la sección de Metas!`,
+    goal: newGoal,
+    action: 'goal_created'
+  };
+}
+
+async function updateGoal(goalData: any, criterios: any, userId: string, categories?: string[]): Promise<any> {
+  let where: any = { userId };
+  
+  // Construir criterios de búsqueda
+  for (const [key, value] of Object.entries(criterios)) {
+    if (key === 'name') where.name = { contains: value as string, mode: 'insensitive' };
+    else if (key === 'target_amount') where.targetAmount = parseFloat(value as string);
+    else if (key === 'due_date') {
+      const fechaNormalizada = normalizarFecha(value as string);
+      if (fechaNormalizada) {
+        const start = new Date(fechaNormalizada + 'T00:00:00.000Z');
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 1);
+        where.targetDate = { gte: start, lt: end };
+      }
+    }
+    else if (key === 'category') {
+      const cat = await prisma.category.findFirst({
+        where: { name: { equals: value as string, mode: 'insensitive' } }
+      });
+      if (cat) {
+        where.categoryId = cat.id;
+      } else {
+        where.categoryId = '___NO_MATCH___';
+      }
+    }
+  }
+
+  const candidates = await prisma.goal.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true
+        }
+      }
+    }
+  });
+
+  if (candidates.length === 0) {
+    throw new Error('No se encontró ninguna meta con los criterios proporcionados');
+  }
+
+  if (candidates.length > 1) {
+    throw new Error('Se encontraron varias metas. Por favor, proporciona más detalles para identificar la correcta');
+  }
+
+  const goal = candidates[0];
+  
+  // Actualizar la meta
+  const updatedGoal = await prisma.goal.update({
+    where: { id: goal.id },
+    data: {
+      name: goalData.name || goal.name,
+      targetAmount: goalData.target_amount ? parseFloat(goalData.target_amount) : goal.targetAmount,
+      targetDate: goalData.due_date ? new Date(goalData.due_date) : goal.targetDate,
+      priority: goalData.priority || goal.priority,
+      description: goalData.description || goal.description,
+      monthlyTargetPercentage: goalData.monthly_type === 'porcentaje' ? parseFloat(goalData.monthly_value) : goal.monthlyTargetPercentage,
+      monthlyContributionAmount: goalData.monthly_type === 'fijo' ? parseFloat(goalData.monthly_value) : goal.monthlyContributionAmount
+    },
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true
+        }
+      }
+    }
+  });
+  
+  return {
+    success: true,
+    message: `✅ **Meta actualizada exitosamente**\n\n🎯 **Meta:** ${updatedGoal.name}\n💰 **Monto objetivo:** RD$${updatedGoal.targetAmount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${updatedGoal.category.name}\n\nLa meta ha sido actualizada.`,
+    goal: updatedGoal,
+    action: 'goal_updated'
+  };
+}
+
+async function deleteGoal(criterios: any, userId: string, categories?: string[]): Promise<any> {
+  let where: any = { userId };
+  
+  // Construir criterios de búsqueda
+  for (const [key, value] of Object.entries(criterios)) {
+    if (key === 'name') where.name = { contains: value as string, mode: 'insensitive' };
+    else if (key === 'target_amount') where.targetAmount = parseFloat(value as string);
+    else if (key === 'due_date') {
+      const fechaNormalizada = normalizarFecha(value as string);
+      if (fechaNormalizada) {
+        const start = new Date(fechaNormalizada + 'T00:00:00.000Z');
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 1);
+        where.targetDate = { gte: start, lt: end };
+      }
+    }
+    else if (key === 'category') {
+      const cat = await prisma.category.findFirst({
+        where: { name: { equals: value as string, mode: 'insensitive' } }
+      });
+      if (cat) {
+        where.categoryId = cat.id;
+      } else {
+        where.categoryId = '___NO_MATCH___';
+      }
+    }
+  }
+
+  const candidates = await prisma.goal.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true
+        }
+      }
+    }
+  });
+
+  if (candidates.length === 0) {
+    throw new Error('No se encontró ninguna meta con los criterios proporcionados');
+  }
+
+  if (candidates.length > 1) {
+    throw new Error('Se encontraron varias metas. Por favor, proporciona más detalles para identificar la correcta');
+  }
+
+  const goal = candidates[0];
+  
+  await prisma.goal.delete({ where: { id: goal.id } });
+  
+  return {
+    success: true,
+    message: `✅ **Meta eliminada exitosamente**\n\n🎯 **Meta:** ${goal.name}\n💰 **Monto objetivo:** RD$${goal.targetAmount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${goal.category.name}\n\nLa meta ha sido eliminada de tu lista.`,
+    goal: goal,
+    action: 'goal_deleted'
+  };
+}
+
+async function listGoals(goalData: any, userId: string, categories?: string[]): Promise<any> {
+  let where: any = { userId };
+  
+  // Si se proporciona categoría específica
+  if (goalData && goalData.category) {
+    const cat = await prisma.category.findFirst({
+      where: { name: { equals: goalData.category, mode: 'insensitive' } }
+    });
+    if (cat) {
+      where.categoryId = cat.id;
+    }
+  }
+
+  const goalList = await prisma.goal.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true
+        }
+      }
+    }
+  });
+  
+  return {
+    success: true,
+    message: goalData && goalData.category 
+      ? `Se encontraron ${goalList.length} metas para ${goalData.category}`
+      : `Se encontraron ${goalList.length} metas en total`,
+    goals: goalList,
+    action: 'goal_list'
+  };
+}
+
+export const chatWithZenio = async (req: Request, res: Response) => {
+  try {
+    const { message, threadId } = req.body;
+    const userId = (req.user as any)?.id;
+    const userName = (req.user as any)?.name;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Usuario no autenticado' });
+    }
+
+    if (!message) {
+      return res.status(400).json({ error: 'Mensaje requerido' });
+    }
+
+    console.log(`[Zenio] Chat iniciado - Usuario: ${userName} (${userId})`);
+    console.log(`[Zenio] Mensaje: "${message}"`);
+    console.log(`[Zenio] Thread ID: ${threadId || 'Nuevo thread'}`);
+
+    // Obtener categorías del usuario
+    const categories = await prisma.category.findMany({
+      where: { userId },
+      select: { id: true, name: true, type: true, icon: true }
+    });
+
+    console.log(`[Zenio] Categorías encontradas: ${categories.length}`);
+
+    // Obtener timezone del usuario
+    const timezone = req.body.timezone || 'UTC';
+
+    let currentThreadId = threadId;
+
+    // Si no hay threadId, crear uno nuevo
+    if (!currentThreadId) {
+      const thread = await openai.beta.threads.create();
+      currentThreadId = thread.id;
+      console.log(`[Zenio] Nuevo thread creado: ${currentThreadId}`);
+    }
+
+    // Agregar mensaje al thread
+    await openai.beta.threads.messages.create(currentThreadId, {
+      role: 'user',
+      content: message
+    });
+
+    console.log(`[Zenio] Mensaje agregado al thread`);
+
+    // Ejecutar el asistente
+    const run = await openai.beta.threads.runs.create(currentThreadId, {
+      assistant_id: process.env.OPENAI_ASSISTANT_ID!
+    });
+
+    console.log(`[Zenio] Run iniciado: ${run.id}`);
+
+    // Hacer polling del estado del run
+    const runResult = await pollRunStatus(currentThreadId, run.id);
+
+    if (runResult.status === 'failed') {
+      console.error(`[Zenio] Run falló:`, runResult);
+      return res.status(500).json({ 
+        error: 'Error en el procesamiento del mensaje',
+        details: runResult.last_error
+      });
+    }
+
+    if (runResult.status === 'requires_action' && runResult.required_action?.type === 'submit_tool_outputs') {
+      console.log(`[Zenio] Ejecutando tool calls...`);
+      
+      const toolCalls = runResult.required_action.submit_tool_outputs.tool_calls;
+      const result = await executeToolCalls(currentThreadId, run.id, toolCalls, userId, userName, categories, timezone);
+      
+      console.log(`[Zenio] Tool calls ejecutados, resultado:`, result);
+      
+      // Hacer polling nuevamente después de enviar tool outputs
+      console.log(`[Zenio] Haciendo polling después de submit_tool_outputs...`);
+      const finalRunResult = await pollRunStatus(currentThreadId, run.id);
+      
+      if (finalRunResult.status === 'completed') {
+        // Obtener el último mensaje del asistente
+        const messages = await openai.beta.threads.messages.list(currentThreadId);
+        const lastMessage = messages.data[0]; // El más reciente
+        
+        console.log(`[Zenio] Respuesta final del asistente:`, lastMessage.content[0]);
+        
+        return res.json({
+          message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
+          threadId: currentThreadId,
+          messageId: lastMessage.id,
+          action: result?.action || null
+        });
+      } else {
+        console.error(`[Zenio] Run no completado después de tool calls:`, finalRunResult.status);
+        return res.status(500).json({ error: 'Error en el procesamiento final' });
+      }
+    } else if (runResult.status === 'completed') {
+      // Obtener el último mensaje del asistente
+      const messages = await openai.beta.threads.messages.list(currentThreadId);
+      const lastMessage = messages.data[0]; // El más reciente
+      
+      console.log(`[Zenio] Respuesta del asistente:`, lastMessage.content[0]);
+      
+      return res.json({
+        message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
+        threadId: currentThreadId,
+        messageId: lastMessage.id
+      });
+    } else {
+      console.error(`[Zenio] Estado inesperado del run:`, runResult.status);
+      return res.status(500).json({ error: 'Estado inesperado del procesamiento' });
+    }
+
+  } catch (error) {
+    console.error(`[Zenio] Error en chatWithZenio:`, error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    });
+  }
+};
+
+export const getChatHistory = async (req: Request, res: Response) => {
+  try {
+    const { threadId } = req.params;
+    const userId = (req.user as any)?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Usuario no autenticado' });
+    }
+
+    if (!threadId) {
+      return res.status(400).json({ error: 'Thread ID requerido' });
+    }
+
+    const messages = await openai.beta.threads.messages.list(threadId);
+    
+    return res.json({
+      messages: messages.data.map(msg => ({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content[0].type === 'text' ? msg.content[0].text.value : 'Contenido no disponible',
+        createdAt: msg.created_at
+      }))
+    });
+
+  } catch (error) {
+    console.error(`[Zenio] Error obteniendo historial:`, error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    });
+  }
+};
