@@ -62,7 +62,7 @@ function obtenerOffsetDeTimezone(timezone: string): number {
 
 // Función para procesar fecha con zona horaria del usuario
 function procesarFechaConZonaHoraria(fecha: string, timezone: string = 'UTC'): Date {
-  // Crear fecha base
+  // Crear fecha base en la zona horaria especificada
   const fechaBase = new Date(fecha + 'T00:00:00');
   
   // Si es UTC, usar fecha base
@@ -70,10 +70,14 @@ function procesarFechaConZonaHoraria(fecha: string, timezone: string = 'UTC'): D
     return fechaBase;
   }
   
-  // Para otras zonas horarias, aplicar offset
+  // Para otras zonas horarias, crear la fecha directamente en esa zona
   const offset = obtenerOffsetDeTimezone(timezone);
-  const utc = fechaBase.getTime() + (fechaBase.getTimezoneOffset() * 60000);
-  return new Date(utc + (offset * 60 * 60 * 1000));
+  
+  // Crear fecha en la zona horaria especificada
+  // No usar getTimezoneOffset() porque ya estamos creando la fecha en la zona correcta
+  const fechaEnZonaHoraria = new Date(fecha + `T00:00:00${offset >= 0 ? '+' : ''}${offset.toString().padStart(2, '0')}:00`);
+  
+  return fechaEnZonaHoraria;
 }
 
 // Función para reemplazar expresiones temporales por la fecha real
