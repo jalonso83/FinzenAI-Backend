@@ -36,6 +36,7 @@ function obtenerOffsetDeTimezone(timezone: string): number {
   // Mapeo de timezones comunes
   const timezoneOffsets: { [key: string]: number } = {
     'America/Santo_Domingo': -4,
+    'America/Caracas': -4,
     'America/New_York': -5,
     'America/Chicago': -6,
     'America/Denver': -7,
@@ -73,7 +74,10 @@ function procesarFechaConZonaHoraria(fecha: string, timezone: string = 'UTC'): D
   // Crear fecha en UTC que represente el día correcto en la zona horaria del usuario
   // Si el usuario está en UTC-4 y quiere el 20 de julio, necesitamos crear 2025-07-20T04:00:00Z
   // para que cuando se convierta a UTC-4 sea 2025-07-20T00:00:00
-  const fechaUTC = new Date(fecha + `T${Math.abs(offset).toString().padStart(2, '0')}:00:00Z`);
+  // Para zonas horarias negativas (UTC-4), sumamos las horas
+  // Para zonas horarias positivas (UTC+1), restamos las horas
+  const horasOffset = offset < 0 ? Math.abs(offset) : 0;
+  const fechaUTC = new Date(fecha + `T${horasOffset.toString().padStart(2, '0')}:00:00Z`);
   
   return fechaUTC;
 }
