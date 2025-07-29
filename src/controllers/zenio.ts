@@ -864,7 +864,7 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 
   // Procesar fechas en los criterios (sin _processedDate para delete/update)
   if (criterios && Object.keys(criterios).length > 0) {
-    criterios = procesarFechasEnDatosTransaccion(criterios, timezone, false); // Sin _processedDate
+    criterios = procesarFechasEnDatosTransaccion(criterios, timezone, false); // Sin _processedDate - FIXED
   }
 
   // Validaciones estructurales
