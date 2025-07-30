@@ -1893,6 +1893,26 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       const thread = await openai.beta.threads.create();
       currentThreadId = thread.id;
       console.log(`[Zenio] Nuevo thread creado: ${currentThreadId}`);
+    } else {
+      // Verificar si hay un run activo en el thread existente
+      try {
+        const runs = await openai.beta.threads.runs.list(currentThreadId);
+        const activeRun = runs.data.find(run => 
+          run.status === 'queued' || 
+          run.status === 'in_progress' || 
+          run.status === 'requires_action'
+        );
+        
+        if (activeRun) {
+          console.log(`[Zenio] Run activo encontrado: ${activeRun.id} con estado: ${activeRun.status}`);
+          // Crear un nuevo thread para evitar conflictos
+          const newThread = await openai.beta.threads.create();
+          currentThreadId = newThread.id;
+          console.log(`[Zenio] Nuevo thread creado para evitar conflicto: ${currentThreadId}`);
+        }
+      } catch (error) {
+        console.log(`[Zenio] Error verificando runs activos:`, error);
+      }
     }
 
     // Agregar mensaje al thread
