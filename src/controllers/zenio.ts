@@ -778,12 +778,14 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
 
     } catch (error: any) {
       console.error(`[Zenio] Error ejecutando ${functionName}:`, error);
+      console.error(`[Zenio] Error details:`, error.message || 'Error desconocido');
       
       toolOutputs.push({
         tool_call_id: toolCallId,
         output: JSON.stringify({
           success: false,
-          error: error.message || 'Error desconocido'
+          error: error.message || 'Error desconocido',
+          function: functionName
         })
       });
     }
@@ -850,16 +852,12 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 
 // Función para ejecutar manage_transaction_record
 async function executeManageTransactionRecord(args: any, userId: string, categories?: any[], timezone?: string): Promise<any> {
-  console.log(`[Zenio] executeManageTransactionRecord - args completos:`, JSON.stringify(args, null, 2));
+  console.log(`[Zenio] executeManageTransactionRecord - operation: "${args.operation}"`);
   
   let transactionData = args.transaction_data;
   const operation = args.operation;
   const module = args.module;
   let criterios = args.criterios_identificacion || {};
-
-  console.log(`[Zenio] executeManageTransactionRecord - operation: "${operation}"`);
-  console.log(`[Zenio] executeManageTransactionRecord - module: "${module}"`);
-  console.log(`[Zenio] executeManageTransactionRecord - transactionData:`, transactionData);
 
   // Procesar fechas en los datos de transacción
   if (transactionData) {
@@ -1989,6 +1987,13 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error(`[Zenio] Error en chatWithZenio:`, error);
+    
+    // Log más detallado para debugging
+    if (error instanceof Error) {
+      console.error(`[Zenio] Error message: ${error.message}`);
+      console.error(`[Zenio] Error stack: ${error.stack}`);
+    }
+    
     return res.status(500).json({ 
       error: 'Error interno del servidor',
       details: error instanceof Error ? error.message : 'Error desconocido'
