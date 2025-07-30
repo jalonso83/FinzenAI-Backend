@@ -311,12 +311,12 @@ async function validateCategory(categoryName: string, type: string, availableCat
     if (availableCategories && availableCategories.length > 0) {
       // Usar la lista proporcionada por el frontend
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      // Buscar la categoría en la lista proporcionada (case insensitive, soporta objetos o strings)
+      // Buscar la categoría en la lista proporcionada (case insensitive, sin acentos, soporta objetos o strings)
       const foundCategory = availableCategories.find(cat => {
         if (typeof cat === 'object' && cat.name) {
-          return cat.name.trim().toLowerCase() === categoryName.trim().toLowerCase();
+          return normalizarTexto(cat.name) === normalizarTexto(categoryName);
         } else if (typeof cat === 'string') {
-          return cat.trim().toLowerCase() === categoryName.trim().toLowerCase();
+          return normalizarTexto(cat) === normalizarTexto(categoryName);
         }
         return false;
       });
@@ -1151,9 +1151,18 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
         where: { name: { equals: value as string, mode: 'insensitive' } }
       });
       if (cat) {
-        where.category = cat.id;
+        where.category_id = cat.id;
       } else {
-        where.category = '___NO_MATCH___';
+        // Búsqueda alternativa sin acentos
+        const allCategories = await prisma.category.findMany();
+        const foundCategory = allCategories.find(cat => 
+          normalizarTexto(cat.name) === normalizarTexto(value as string)
+        );
+        if (foundCategory) {
+          where.category_id = foundCategory.id;
+        } else {
+          where.category_id = '___NO_MATCH___';
+        }
       }
     }
     else if (key === 'date') {
@@ -1213,7 +1222,7 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
         action: 'category_not_found'
       };
     }
-    updateData.category = categoryValidation.categoryId;
+    updateData.category_id = categoryValidation.categoryId;
   }
   
   if (transactionData.date) {
@@ -1258,9 +1267,18 @@ async function deleteTransaction(criterios: any, userId: string, categories?: an
         where: { name: { equals: value as string, mode: 'insensitive' } }
       });
       if (cat) {
-        where.category = cat.id;
+        where.category_id = cat.id;
       } else {
-        where.category = '___NO_MATCH___';
+        // Búsqueda alternativa sin acentos
+        const allCategories = await prisma.category.findMany();
+        const foundCategory = allCategories.find(cat => 
+          normalizarTexto(cat.name) === normalizarTexto(value as string)
+        );
+        if (foundCategory) {
+          where.category_id = foundCategory.id;
+        } else {
+          where.category_id = '___NO_MATCH___';
+        }
       }
     }
     else if (key === 'date') {
@@ -1324,10 +1342,24 @@ async function listTransactions(transactionData: any, userId: string, categories
     
     if (transactionData.category) {
       const cat = await prisma.category.findFirst({
-        where: { name: { equals: transactionData.category, mode: 'insensitive' } }
+        where: { 
+          name: { 
+            equals: transactionData.category, 
+            mode: 'insensitive' 
+          }
+        }
       });
       if (cat) {
         where.category_id = cat.id;
+      } else {
+        // Búsqueda alternativa sin acentos
+        const allCategories = await prisma.category.findMany();
+        const foundCategory = allCategories.find(cat => 
+          normalizarTexto(cat.name) === normalizarTexto(transactionData.category)
+        );
+        if (foundCategory) {
+          where.category_id = foundCategory.id;
+        }
       }
     }
     
@@ -1457,14 +1489,23 @@ async function updateBudget(category: string, previous_amount: string, amount: s
   if (cat) {
     where.category_id = cat.id;
   } else {
-    // Sugerencias conversacionales
-    const categoryValidation = await validateCategory(category, 'gasto', categories);
-    return {
-      success: false,
-      message: `🤔 **Categoría no encontrada**\n\nNo encontré la categoría "${category}" en tu lista de categorías.\n\n**Categorías disponibles para presupuestos:**\n${categoryValidation.suggestions?.map(cat => `• ${cat}`).join('\n')}\n\n¿Podrías elegir una de estas categorías o especificar una nueva?`,
-      suggestions: categoryValidation.suggestions,
-      action: 'category_not_found'
-    };
+    // Búsqueda alternativa sin acentos
+    const allCategories = await prisma.category.findMany();
+    const foundCategory = allCategories.find(cat => 
+      normalizarTexto(cat.name) === normalizarTexto(category)
+    );
+    if (foundCategory) {
+      where.category_id = foundCategory.id;
+    } else {
+      // Sugerencias conversacionales
+      const categoryValidation = await validateCategory(category, 'gasto', categories);
+      return {
+        success: false,
+        message: `🤔 **Categoría no encontrada**\n\nNo encontré la categoría "${category}" en tu lista de categorías.\n\n**Categorías disponibles para presupuestos:**\n${categoryValidation.suggestions?.map(cat => `• ${cat}`).join('\n')}\n\n¿Podrías elegir una de estas categorías o especificar una nueva?`,
+        suggestions: categoryValidation.suggestions,
+        action: 'category_not_found'
+      };
+    }
   }
 
   const budget = await prisma.budget.findFirst({
@@ -1524,7 +1565,16 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
   if (cat) {
     where.category_id = cat.id;
   } else {
-    throw new Error(`No encontré la categoría "${category}"`);
+    // Búsqueda alternativa sin acentos
+    const allCategories = await prisma.category.findMany();
+    const foundCategory = allCategories.find(cat => 
+      normalizarTexto(cat.name) === normalizarTexto(category)
+    );
+    if (foundCategory) {
+      where.category_id = foundCategory.id;
+    } else {
+      throw new Error(`No encontré la categoría "${category}"`);
+    }
   }
 
   const budget = await prisma.budget.findFirst({
@@ -1566,6 +1616,15 @@ async function listBudgets(category: string | undefined, userId: string, categor
     });
     if (cat) {
       where.category_id = cat.id;
+    } else {
+      // Búsqueda alternativa sin acentos
+      const allCategories = await prisma.category.findMany();
+      const foundCategory = allCategories.find(cat => 
+        normalizarTexto(cat.name) === normalizarTexto(category)
+      );
+      if (foundCategory) {
+        where.category_id = foundCategory.id;
+      }
     }
   }
 
@@ -1693,7 +1752,16 @@ async function updateGoal(goalData: any, criterios: any, userId: string, categor
       if (cat) {
         where.categoryId = cat.id;
       } else {
-        where.categoryId = '___NO_MATCH___';
+        // Búsqueda alternativa sin acentos
+        const allCategories = await prisma.category.findMany();
+        const foundCategory = allCategories.find(cat => 
+          normalizarTexto(cat.name) === normalizarTexto(value as string)
+        );
+        if (foundCategory) {
+          where.categoryId = foundCategory.id;
+        } else {
+          where.categoryId = '___NO_MATCH___';
+        }
       }
     }
   }
@@ -1778,7 +1846,16 @@ async function deleteGoal(criterios: any, userId: string, categories?: string[])
       if (cat) {
         where.categoryId = cat.id;
       } else {
-        where.categoryId = '___NO_MATCH___';
+        // Búsqueda alternativa sin acentos
+        const allCategories = await prisma.category.findMany();
+        const foundCategory = allCategories.find(cat => 
+          normalizarTexto(cat.name) === normalizarTexto(value as string)
+        );
+        if (foundCategory) {
+          where.categoryId = foundCategory.id;
+        } else {
+          where.categoryId = '___NO_MATCH___';
+        }
       }
     }
   }
@@ -1828,6 +1905,15 @@ async function listGoals(goalData: any, userId: string, categories?: string[]): 
     });
     if (cat) {
       where.categoryId = cat.id;
+    } else {
+      // Búsqueda alternativa sin acentos
+      const allCategories = await prisma.category.findMany();
+      const foundCategory = allCategories.find(cat => 
+        normalizarTexto(cat.name) === normalizarTexto(goalData.category)
+      );
+      if (foundCategory) {
+        where.categoryId = foundCategory.id;
+      }
     }
   }
 
@@ -1854,6 +1940,15 @@ async function listGoals(goalData: any, userId: string, categories?: string[]): 
     goals: goalList,
     action: 'goal_list'
   };
+}
+
+// Función auxiliar para normalizar texto sin acentos
+function normalizarTexto(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Eliminar diacríticos (acentos)
+    .toLowerCase()
+    .trim();
 }
 
 export const chatWithZenio = async (req: Request, res: Response) => {
