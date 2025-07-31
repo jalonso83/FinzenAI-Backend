@@ -1176,7 +1176,10 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
     else if (key === 'date') {
       const fechaNormalizada = normalizarFecha(value as string);
       if (fechaNormalizada) {
-        const start = new Date(fechaNormalizada + 'T00:00:00.000Z');
+        // Usar la misma lógica de zona horaria que en insertTransaction
+        const fechaLocal = new Date(fechaNormalizada + 'T00:00:00');
+        const fechaUTC = new Date(fechaLocal.getTime() - (fechaLocal.getTimezoneOffset() * 60000));
+        const start = fechaUTC;
         const end = new Date(start);
         end.setUTCDate(end.getUTCDate() + 1);
         where.date = { gte: start, lt: end };
@@ -1333,7 +1336,10 @@ async function deleteTransaction(criterios: any, userId: string, categories?: an
     else if (key === 'date') {
       const fechaNormalizada = normalizarFecha(value as string);
       if (fechaNormalizada) {
-        const start = new Date(fechaNormalizada + 'T00:00:00.000Z');
+        // Usar la misma lógica de zona horaria que en insertTransaction
+        const fechaLocal = new Date(fechaNormalizada + 'T00:00:00');
+        const fechaUTC = new Date(fechaLocal.getTime() - (fechaLocal.getTimezoneOffset() * 60000));
+        const start = fechaUTC;
         const end = new Date(start);
         end.setUTCDate(end.getUTCDate() + 1);
         where.date = { gte: start, lt: end };
