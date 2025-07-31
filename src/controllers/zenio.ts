@@ -1073,17 +1073,16 @@ async function insertTransaction(transactionData: any, userId: string, categorie
     
     // Usar la fecha procesada con zona horaria si está disponible
     if (transactionData._processedDate) {
-      console.log(`[Zenio] Usando fecha procesada con zona horaria: ${transactionData._processedDate}`);
       date = transactionData._processedDate;
     } else {
-      // Fallback al método anterior
-      const fechaProporcionada = new Date(transactionData.date + 'T00:00:00');
+      // Fallback al método anterior - aplicar zona horaria correctamente
+      const fechaLocal = new Date(transactionData.date + 'T00:00:00');
+      const fechaUTC = new Date(fechaLocal.getTime() - (fechaLocal.getTimezoneOffset() * 60000));
       
-      if (fechaProporcionada < fechaMinima) {
-        console.log(`[Zenio] Fecha proporcionada (${transactionData.date}) es muy antigua, usando fecha actual`);
+      if (fechaUTC < fechaMinima) {
         date = fechaRD;
       } else {
-        date = fechaProporcionada;
+        date = fechaUTC;
       }
     }
   }
@@ -1142,33 +1141,26 @@ async function insertTransaction(transactionData: any, userId: string, categorie
 async function updateTransaction(transactionData: any, criterios: any, userId: string, categories?: any[]): Promise<any> {
   let where: any = { userId };
   
-  console.log(`[Zenio] updateTransaction - criterios:`, criterios);
-  console.log(`[Zenio] updateTransaction - transactionData:`, transactionData);
+  // Logs removidos para evitar mostrar información sensible
   
   for (const [key, value] of Object.entries(criterios)) {
     if (key === 'amount' || key === 'oldAmount') where.amount = parseFloat(value as string);
     else if (key === 'type') where.type = value === 'gasto' ? 'EXPENSE' : 'INCOME';
     else if (key === 'category') {
-      console.log(`[Zenio] Buscando categoría: "${value}"`);
       const cat = await prisma.category.findFirst({
         where: { name: { equals: value as string, mode: 'insensitive' } }
       });
       if (cat) {
-        console.log(`[Zenio] Categoría encontrada: ${cat.name} (ID: ${cat.id})`);
         where.category_id = cat.id;
       } else {
-        console.log(`[Zenio] Categoría no encontrada, buscando sin acentos...`);
         // Búsqueda alternativa sin acentos
         const allCategories = await prisma.category.findMany();
         const foundCategory = allCategories.find(cat => 
           normalizarTexto(cat.name) === normalizarTexto(value as string)
         );
         if (foundCategory) {
-          console.log(`[Zenio] Categoría encontrada sin acentos: ${foundCategory.name} (ID: ${foundCategory.id})`);
           where.category_id = foundCategory.id;
         } else {
-          console.log(`[Zenio] Categoría no encontrada: ${value}`);
-          console.log(`[Zenio] Categorías disponibles:`, allCategories.map(c => c.name));
           where.category_id = '___NO_MATCH___';
         }
       }
@@ -1189,7 +1181,7 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
     else if (key === 'id') where.id = value;
   }
 
-  console.log('[Zenio] updateTransaction - where construido:', JSON.stringify(where, null, 2));
+  // Log removido para evitar mostrar información sensible
 
   const candidates = await prisma.transaction.findMany({
     where,
@@ -1207,30 +1199,7 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
   });
 
   if (candidates.length === 0) {
-    // Log todas las transacciones del usuario para debug
-    const allUserTransactions = await prisma.transaction.findMany({
-      where: { userId },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            icon: true,
-            type: true
-          }
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-    
-    console.log('[Zenio] updateTransaction - Todas las transacciones del usuario:', JSON.stringify(allUserTransactions.map(t => ({
-      id: t.id,
-      amount: t.amount,
-      type: t.type,
-      category: t.category.name,
-      date: t.date,
-      description: t.description
-    })), null, 2));
+    // Log removido para evitar mostrar información sensible
     
     throw new Error('No se encontró ninguna transacción con los criterios proporcionados');
   }
