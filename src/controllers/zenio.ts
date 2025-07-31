@@ -1019,6 +1019,19 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
       console.error('[Zenio] Error obteniendo categorías de BD:', error);
       return { error: true, message: 'Error obteniendo categorías de la base de datos' };
     }
+  } else {
+    // Verificar si las categorías vienen con información completa o solo nombres
+    const hasFullInfo = categories.length > 0 && typeof categories[0] === 'object' && categories[0].name;
+    if (hasFullInfo) {
+      console.log('[Zenio] Usando categorías completas del frontend:', categories.length, 'categorías');
+      // Extraer solo los nombres para las funciones que los necesitan
+      const categoryNames = categories.map((cat: any) => cat.name);
+      console.log('[Zenio] Nombres de categorías extraídos:', categoryNames);
+      // Mantener las categorías originales para el contexto, pero usar los nombres para las funciones
+      categories = categoryNames;
+    } else {
+      console.log('[Zenio] Usando categorías simples del frontend:', categories);
+    }
   }
 
   let filteredCategories: any[] = [];
@@ -2001,11 +2014,25 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     console.log(`[Zenio] Thread ID: ${threadId || 'Nuevo thread'}`);
 
     // Obtener categorías del usuario
-    const categories = await prisma.category.findMany({
+    let categories = await prisma.category.findMany({
       select: { id: true, name: true, type: true, icon: true }
     });
 
     console.log(`[Zenio] Categorías encontradas: ${categories.length}`);
+
+    // Verificar si las categorías vienen del frontend con información completa
+    const hasFullInfo = categories.length > 0 && categories[0].hasOwnProperty('id') && categories[0].hasOwnProperty('name');
+    
+    if (hasFullInfo) {
+      console.log('[Zenio] Usando categorías completas del frontend:', categories.length, 'categorías');
+      // Extraer solo los nombres para las funciones que los necesitan
+      const categoryNames = categories.map((cat: any) => cat.name);
+      console.log('[Zenio] Nombres de categorías extraídos:', categoryNames);
+      // Mantener las categorías originales para el contexto, pero usar los nombres para las funciones
+      categories = categoryNames;
+    } else {
+      console.log('[Zenio] Usando categorías simples del frontend:', categories);
+    }
 
     // Obtener timezone del usuario
     const timezone = req.body.timezone || 'UTC';
@@ -2084,6 +2111,22 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         
         console.log(`[Zenio] Respuesta final del asistente:`, lastMessage.content[0]);
         
+        // Incluir la última acción ejecutada para el frontend
+        if (result?.executedActions.length > 0) {
+          const lastAction = result.executedActions[result.executedActions.length - 1];
+          const response = {
+            message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
+            threadId: currentThreadId,
+            messageId: lastMessage.id,
+            action: lastAction.action,
+            transaction: lastAction.data.transaction,
+            budget: lastAction.data.budget,
+            goal: lastAction.data.goal // Incluir la meta si es una acción de meta
+          };
+          console.log(`[Zenio] Incluyendo acción en respuesta: ${lastAction.action}`);
+          console.log(`[Zenio] Respuesta completa que se envía al frontend:`, JSON.stringify(response, null, 2));
+          return res.json(response);
+        }
         return res.json({
           message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
           threadId: currentThreadId,
@@ -2101,6 +2144,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       
       console.log(`[Zenio] Respuesta del asistente:`, lastMessage.content[0]);
       
+
       return res.json({
         message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
         threadId: currentThreadId,
