@@ -738,7 +738,6 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
     const toolCallId = toolCall.id;
 
     console.log(`[Zenio] Ejecutando tool call: ${functionName}`);
-    console.log(`[Zenio] Argumentos:`, functionArgs);
 
     let result: any;
 
@@ -1143,24 +1142,33 @@ async function insertTransaction(transactionData: any, userId: string, categorie
 async function updateTransaction(transactionData: any, criterios: any, userId: string, categories?: any[]): Promise<any> {
   let where: any = { userId };
   
+  console.log(`[Zenio] updateTransaction - criterios:`, criterios);
+  console.log(`[Zenio] updateTransaction - transactionData:`, transactionData);
+  
   for (const [key, value] of Object.entries(criterios)) {
     if (key === 'amount' || key === 'oldAmount') where.amount = parseFloat(value as string);
     else if (key === 'type') where.type = value === 'gasto' ? 'EXPENSE' : 'INCOME';
     else if (key === 'category') {
+      console.log(`[Zenio] Buscando categoría: "${value}"`);
       const cat = await prisma.category.findFirst({
         where: { name: { equals: value as string, mode: 'insensitive' } }
       });
       if (cat) {
+        console.log(`[Zenio] Categoría encontrada: ${cat.name} (ID: ${cat.id})`);
         where.category_id = cat.id;
       } else {
+        console.log(`[Zenio] Categoría no encontrada, buscando sin acentos...`);
         // Búsqueda alternativa sin acentos
         const allCategories = await prisma.category.findMany();
         const foundCategory = allCategories.find(cat => 
           normalizarTexto(cat.name) === normalizarTexto(value as string)
         );
         if (foundCategory) {
+          console.log(`[Zenio] Categoría encontrada sin acentos: ${foundCategory.name} (ID: ${foundCategory.id})`);
           where.category_id = foundCategory.id;
         } else {
+          console.log(`[Zenio] Categoría no encontrada: ${value}`);
+          console.log(`[Zenio] Categorías disponibles:`, allCategories.map(c => c.name));
           where.category_id = '___NO_MATCH___';
         }
       }
@@ -1181,8 +1189,15 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
   const candidates = await prisma.transaction.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    select: {
-      id: true, amount: true, type: true, category: true, description: true, date: true, createdAt: true, updatedAt: true
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true
+        }
+      }
     }
   });
 
@@ -1243,8 +1258,15 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
   const updated = await prisma.transaction.update({
     where: { id: trans.id },
     data: updateData,
-    select: {
-      id: true, amount: true, type: true, category: true, description: true, date: true, createdAt: true, updatedAt: true
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true
+        }
+      }
     }
   });
 
@@ -1297,8 +1319,15 @@ async function deleteTransaction(criterios: any, userId: string, categories?: an
   const candidates = await prisma.transaction.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    select: {
-      id: true, amount: true, type: true, category: true, description: true, date: true, createdAt: true, updatedAt: true
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true
+        }
+      }
     }
   });
 
