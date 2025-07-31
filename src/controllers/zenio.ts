@@ -1186,6 +1186,8 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
     else if (key === 'id') where.id = value;
   }
 
+  console.log('[Zenio] updateTransaction - where construido:', JSON.stringify(where, null, 2));
+
   const candidates = await prisma.transaction.findMany({
     where,
     orderBy: { createdAt: 'desc' },
@@ -1202,6 +1204,31 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
   });
 
   if (candidates.length === 0) {
+    // Log todas las transacciones del usuario para debug
+    const allUserTransactions = await prisma.transaction.findMany({
+      where: { userId },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            icon: true,
+            type: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    console.log('[Zenio] updateTransaction - Todas las transacciones del usuario:', JSON.stringify(allUserTransactions.map(t => ({
+      id: t.id,
+      amount: t.amount,
+      type: t.type,
+      category: t.category.name,
+      date: t.date,
+      description: t.description
+    })), null, 2));
+    
     throw new Error('No se encontró ninguna transacción con los criterios proporcionados');
   }
 
