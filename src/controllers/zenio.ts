@@ -908,7 +908,7 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 }
 
 // Función para ejecutar manage_budget_record
-async function executeManageBudgetRecord(args: any, userId: string, categories?: string[]): Promise<any> {
+async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
   const { operation, module, category, amount, previous_amount, recurrence } = args;
 
   // Validaciones
@@ -916,8 +916,10 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
   }
 
-  if (module !== 'presupuestos') {
-    throw new Error('Solo se soporta el módulo "presupuestos"');
+  // Validar módulo (permitir variaciones comunes)
+  const validModules = ['presupuestos', 'presupuesto', 'budget', 'budgets'];
+  if (!validModules.includes(module?.toLowerCase())) {
+    throw new Error(`Módulo no válido: ${module}. Módulos válidos: ${validModules.join(', ')}`);
   }
 
   if (!category) {
@@ -1417,7 +1419,7 @@ async function listTransactions(transactionData: any, userId: string, categories
 }
 
 // Funciones auxiliares para presupuestos
-async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: string[]): Promise<any> {
+async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[]): Promise<any> {
   const periodMap: { [key: string]: string } = {
     'semanal': 'weekly',
     'mensual': 'monthly',
@@ -1494,7 +1496,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
   };
 }
 
-async function updateBudget(category: string, previous_amount: string, amount: string, userId: string, categories?: string[]): Promise<any> {
+async function updateBudget(category: string, previous_amount: string, amount: string, userId: string, categories?: any[]): Promise<any> {
   const where: any = { 
     user_id: userId,
     amount: parseFloat(previous_amount)
@@ -1561,7 +1563,7 @@ async function updateBudget(category: string, previous_amount: string, amount: s
   };
 }
 
-async function deleteBudget(category: string, previous_amount: string, userId: string, categories?: string[]): Promise<any> {
+async function deleteBudget(category: string, previous_amount: string, userId: string, categories?: any[]): Promise<any> {
   const where: any = { 
     user_id: userId,
     amount: parseFloat(previous_amount)
@@ -1607,7 +1609,7 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
   };
 }
 
-async function listBudgets(category: string | undefined, userId: string, categories?: string[]): Promise<any> {
+async function listBudgets(category: string | undefined, userId: string, categories?: any[]): Promise<any> {
   let where: any = { user_id: userId };
   
   if (category) {
