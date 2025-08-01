@@ -2015,12 +2015,10 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     console.log(`[Zenio] Mensaje: "${message}"`);
     console.log(`[Zenio] Thread ID: ${threadId || 'Nuevo thread'}`);
 
-    // Obtener categorías del usuario
-    let categories = await prisma.category.findMany({
-      select: { id: true, name: true, type: true, icon: true }
-    });
+    // Usar categorías que vienen del frontend
+    let categories = req.body.categories || [];
 
-    console.log(`[Zenio] Categorías encontradas: ${categories.length}`);
+    console.log(`[Zenio] Categorías recibidas del frontend: ${categories.length}`);
 
     // Verificar si las categorías vienen del frontend con información completa
     const hasFullInfo = categories.length > 0 && categories[0].hasOwnProperty('id') && categories[0].hasOwnProperty('name');
