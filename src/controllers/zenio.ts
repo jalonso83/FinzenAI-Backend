@@ -909,6 +909,7 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 
 // Función para ejecutar manage_budget_record
 async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
+  console.log('[Zenio] Argumentos recibidos en manage_budget_record:', JSON.stringify(args, null, 2));
   const { operation, module, category, amount, previous_amount, recurrence } = args;
 
   // Validaciones
