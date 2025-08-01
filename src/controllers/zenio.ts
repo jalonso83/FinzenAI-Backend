@@ -910,17 +910,11 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 // Función para ejecutar manage_budget_record
 async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
   console.log('[Zenio] Argumentos recibidos en manage_budget_record:', JSON.stringify(args, null, 2));
-  const { operation, module, category, amount, previous_amount, recurrence } = args;
+  const { operation, category, amount, previous_amount, recurrence } = args;
 
   // Validaciones
   if (!['insert', 'update', 'delete', 'list'].includes(operation)) {
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
-  }
-
-  // Validar módulo (permitir variaciones comunes)
-  const validModules = ['presupuestos', 'presupuesto', 'budget', 'budgets'];
-  if (!validModules.includes(module?.toLowerCase())) {
-    throw new Error(`Módulo no válido: ${module}. Módulos válidos: ${validModules.join(', ')}`);
   }
 
   if (!category) {
