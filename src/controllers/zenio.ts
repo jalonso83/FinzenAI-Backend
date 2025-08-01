@@ -1,12 +1,8 @@
 import axios from 'axios';
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import OpenAI from 'openai';
 
 const prisma = new PrismaClient();
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 const API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID;
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
@@ -119,7 +115,6 @@ function reemplazarExpresionesTemporalesPorFecha(texto: string): string {
 
   // Si el texto es exactamente una expresión temporal, devolver la fecha directamente
   const textoLimpio = texto.trim().toLowerCase();
-  
   if (textoLimpio === 'hoy' || textoLimpio === 'enhoy') {
     return fechaISO;
   }
@@ -137,7 +132,7 @@ function reemplazarExpresionesTemporalesPorFecha(texto: string): string {
   }
 
   // Si no es una expresión exacta, aplicar reemplazos en el texto
-  const resultado = texto
+  return texto
     // Hoy
     .replace(/\benhoy\b/gi, fechaISO)
     .replace(/\benhoy día\b/gi, fechaISO)
@@ -156,8 +151,6 @@ function reemplazarExpresionesTemporalesPorFecha(texto: string): string {
     // Pasado mañana
     .replace(/\bpasado mañana\b/gi, fechaPasadoManana)
     .replace(/\bpasado manana\b/gi, fechaPasadoManana);
-    
-  return resultado;
 }
 
 // Función para normalizar fechas a formato YYYY-MM-DD
@@ -212,7 +205,6 @@ function procesarFechasEnDatosTransaccion(data: any, timezone?: string, includeP
     // Si no se pudo normalizar, intentar con expresiones temporales
     if (!fechaNormalizada) {
       fechaNormalizada = reemplazarExpresionesTemporalesPorFecha(datosProcesados.date);
-      
       // Si la función de reemplazo devolvió el mismo texto, significa que no encontró expresiones temporales
       if (fechaNormalizada === datosProcesados.date) {
         fechaNormalizada = null;
@@ -220,11 +212,13 @@ function procesarFechasEnDatosTransaccion(data: any, timezone?: string, includeP
     }
     
     if (fechaNormalizada) {
+      console.log(`[Zenio] Fecha procesada: "${datosProcesados.date}" -> "${fechaNormalizada}"`);
       datosProcesados.date = fechaNormalizada;
       
       // Solo agregar _processedDate si se solicita (solo para insert)
       if (includeProcessedDate && timezone) {
         datosProcesados._processedDate = procesarFechaConZonaHoraria(fechaNormalizada, timezone);
+        console.log(`[Zenio] Fecha con zona horaria ${timezone}:`, datosProcesados._processedDate);
       }
     }
   }
@@ -308,45 +302,31 @@ function validateCriterios(criterios: any): { valid: boolean; errors: string[] }
 }
 
 // Función para validar categoría contra la base de datos o lista proporcionada
-async function validateCategory(categoryName: string, type: string, availableCategories?: any[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
+async function validateCategory(categoryName: string, type: string, availableCategories?: string[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
   try {
     if (availableCategories && availableCategories.length > 0) {
       // Usar la lista proporcionada por el frontend
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      // Buscar la categoría en la lista proporcionada (case insensitive, sin acentos, soporta objetos o strings)
-      const foundCategory = availableCategories.find(cat => {
-        if (typeof cat === 'object' && cat.name) {
-          return normalizarTexto(cat.name) === normalizarTexto(categoryName);
-        } else if (typeof cat === 'string') {
-          return normalizarTexto(cat) === normalizarTexto(categoryName);
-        }
-        return false;
-      });
+      
+      // Buscar la categoría en la lista proporcionada (case insensitive)
+      const foundCategory = availableCategories.find(cat => 
+        cat.toLowerCase() === categoryName.toLowerCase()
+      );
       
       if (foundCategory) {
-        // Si encontramos la categoría en la lista del frontend, usar directamente su ID
-        if (typeof foundCategory === 'object' && foundCategory.id) {
-          return { valid: true, categoryId: foundCategory.id };
-        }
-        
-        // Fallback: buscar en la BD usando el nombre normalizado
-        const cleanName = typeof foundCategory === 'object' && foundCategory.name ? foundCategory.name : foundCategory;
-        
-        // Buscar en la BD usando normalización de texto para ignorar acentos y mayúsculas
-        const allCategories = await prisma.category.findMany({
-          where: { type: dbType }
+        // Obtener el ID de la categoría de la base de datos
+        const category = await prisma.category.findFirst({
+          where: {
+            name: { equals: foundCategory, mode: 'insensitive' },
+            type: dbType
+          }
         });
-        
-        const category = allCategories.find(cat => 
-          normalizarTexto(cat.name) === normalizarTexto(cleanName)
-        );
-        
         if (category) {
           return { valid: true, categoryId: category.id };
         }
       } else {
-        // Filtrar categorías por tipo y devolver solo los nombres
-        const suggestions = availableCategories.map(cat => typeof cat === 'object' && cat.name ? cat.name : cat);
+        // Filtrar categorías por tipo (asumiendo que las categorías del frontend son de gastos)
+        const suggestions = availableCategories;
         return {
           valid: false,
           error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.join(', ')}`,
@@ -356,33 +336,34 @@ async function validateCategory(categoryName: string, type: string, availableCat
     } else {
       // Comportamiento original: consultar base de datos
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      
-      // Buscar en la BD usando normalización de texto para ignorar acentos y mayúsculas
-      const allCategories = await prisma.category.findMany({
-        where: { type: dbType }
+      const category = await prisma.category.findFirst({
+        where: {
+          name: { equals: categoryName, mode: 'insensitive' },
+          type: dbType
+        }
       });
-      
-      const category = allCategories.find(cat => 
-        normalizarTexto(cat.name) === normalizarTexto(categoryName)
-      );
-      
       if (category) {
         return { valid: true, categoryId: category.id };
       } else {
         // Sugerir categorías válidas
+        const suggestions = await prisma.category.findMany({
+          where: { type: dbType },
+          select: { name: true }
+        });
         return {
           valid: false,
-          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${allCategories.map((c: any) => c.name).join(', ')}`,
-          suggestions: allCategories.map((c: any) => c.name)
+          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.map(c => c.name).join(', ')}`,
+          suggestions: suggestions.map(c => c.name)
         };
       }
     }
-  } catch (error) {
-    return { valid: false, error: 'Error al validar la categoría' };
+      } catch (error) {
+      return { valid: false, error: 'Error al validar la categoría' };
+    }
+    
+    // Return por defecto
+    return { valid: false, error: 'Categoría no válida' };
   }
-  // Return por defecto
-  return { valid: false, error: 'Categoría no válida' };
-}
 
 // Función para obtener categorías válidas usando las proporcionadas
 function getValidCategoriesFromList(categories: any[], type: 'EXPENSE' | 'INCOME'): string {
@@ -457,7 +438,7 @@ async function getValidCategoriesFromDB(type: 'EXPENSE' | 'INCOME'): Promise<str
       where: { type },
       select: { name: true, icon: true }
     });
-    return categories.map((cat: any) => `${cat.icon} ${cat.name}`).join(', ');
+    return categories.map(cat => `${cat.icon} ${cat.name}`).join(', ');
   } catch (error) {
     return 'Error al obtener categorías';
   }
@@ -738,7 +719,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
 }
 
 // Función para ejecutar tool calls y enviar resultados
-async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: any[], timezone?: string): Promise<any> {
+async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: string[], timezone?: string): Promise<any> {
   const executedActions: any[] = [];
   const toolOutputs: any[] = [];
 
@@ -746,6 +727,9 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
     const functionName = toolCall.function.name;
     const functionArgs = JSON.parse(toolCall.function.arguments);
     const toolCallId = toolCall.id;
+
+    console.log(`[Zenio] Ejecutando tool call: ${functionName}`);
+    // Log removido para evitar mostrar información sensible
 
     let result: any;
 
@@ -784,12 +768,13 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
       });
 
     } catch (error: any) {
+      console.error(`[Zenio] Error ejecutando ${functionName}:`, error);
+      
       toolOutputs.push({
         tool_call_id: toolCallId,
         output: JSON.stringify({
           success: false,
-          error: error.message || 'Error desconocido',
-          function: functionName
+          error: error.message || 'Error desconocido'
         })
       });
     }
@@ -797,6 +782,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
 
   // Enviar outputs a OpenAI
   if (toolOutputs.length > 0) {
+    console.log('[Zenio] Enviando tool outputs a OpenAI...');
     await axios.post(
       `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
       { tool_outputs: toolOutputs },
@@ -805,6 +791,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
   }
 
   // Hacer polling hasta que el run termine
+  console.log('[Zenio] Haciendo polling después de submit_tool_outputs...');
   const finalRun = await pollRunStatus(threadId, runId);
 
   // Devolver tanto el run como las acciones ejecutadas
@@ -815,7 +802,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
 }
 
 // Función para ejecutar onboarding_financiero
-async function executeOnboardingFinanciero(args: any, userId: string, userName: string, categories?: any[]): Promise<any> {
+async function executeOnboardingFinanciero(args: any, userId: string, userName: string, categories?: string[]): Promise<any> {
   // Guardar en la base de datos
   await prisma.onboarding.upsert({
     where: { userId },
@@ -853,7 +840,7 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 }
 
 // Función para ejecutar manage_transaction_record
-async function executeManageTransactionRecord(args: any, userId: string, categories?: any[], timezone?: string): Promise<any> {
+async function executeManageTransactionRecord(args: any, userId: string, categories?: string[], timezone?: string): Promise<any> {
   let transactionData = args.transaction_data;
   const operation = args.operation;
   const module = args.module;
@@ -866,7 +853,7 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 
   // Procesar fechas en los criterios (sin _processedDate para delete/update)
   if (criterios && Object.keys(criterios).length > 0) {
-    criterios = procesarFechasEnDatosTransaccion(criterios, timezone, false); // Sin _processedDate - FIXED
+    criterios = procesarFechasEnDatosTransaccion(criterios, timezone, false); // Sin _processedDate
   }
 
   // Validaciones estructurales
@@ -876,7 +863,6 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 
   // La función manage_transaction_record siempre es para transacciones, no necesita validar módulo
   // if (module !== 'transacciones') {
-  //   console.log(`[Zenio] ERROR: module "${module}" !== "transacciones"`);
   //   throw new Error('Solo se soporta el módulo "transacciones"');
   // }
 
@@ -911,7 +897,7 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 }
 
 // Función para ejecutar manage_budget_record
-async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
+async function executeManageBudgetRecord(args: any, userId: string, categories?: string[]): Promise<any> {
   const { operation, module, category, amount, previous_amount, recurrence } = args;
 
   // Validaciones
@@ -919,10 +905,9 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
   }
 
-  // La función manage_budget_record siempre es para presupuestos, no necesita validar módulo
-  // if (module !== 'presupuestos') {
-  //   throw new Error('Solo se soporta el módulo "presupuestos"');
-  // }
+  if (module !== 'presupuestos') {
+    throw new Error('Solo se soporta el módulo "presupuestos"');
+  }
 
   if (!category) {
     throw new Error('La categoría es requerida');
@@ -960,10 +945,9 @@ async function executeManageGoalRecord(args: any, userId: string, categories?: a
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
   }
 
-  // La función manage_goal_record siempre es para metas, no necesita validar módulo
-  // if (module !== 'metas') {
-  //   throw new Error('Solo se soporta el módulo "metas"');
-  // }
+  if (module !== 'metas') {
+    throw new Error('Solo se soporta el módulo "metas"');
+  }
 
   // Validaciones por operación
   if (operation === 'insert' || operation === 'update') {
@@ -1001,66 +985,64 @@ async function executeManageGoalRecord(args: any, userId: string, categories?: a
   }
 }
 
-// Función para ejecutar list_categories - FORZAR DEPLOY RAILWAY
+// Función para ejecutar list_categories
 async function executeListCategories(args: any, categories?: any[]): Promise<any> {
   const { module } = args;
   
-  console.log(`[Zenio] executeListCategories llamado con módulo: ${module}`);
-  console.log(`[Zenio] Categorías disponibles:`, categories?.length || 0);
+  console.log(`[Zenio] Listando categorías para módulo: ${module}`);
   
   if (!categories || categories.length === 0) {
-    // Fallback: obtener categorías de la base de datos
+    // Si no hay categorías del frontend, obtener de la BD
     try {
       const dbCategories = await prisma.category.findMany({
-        select: { id: true, name: true, type: true, icon: true }
+        select: { name: true, type: true, icon: true }
       });
       categories = dbCategories;
-      console.log('[Zenio] Categorías obtenidas de BD como fallback:', categories.length);
+      console.log('[Zenio] Categorías obtenidas de la BD:', categories.length);
     } catch (error) {
-      console.error('[Zenio] Error obteniendo categorías de BD:', error);
-      return { error: true, message: 'Error obteniendo categorías de la base de datos' };
-    }
-  } else {
-    // Verificar si las categorías vienen con información completa o solo nombres
-    const hasFullInfo = categories.length > 0 && typeof categories[0] === 'object' && categories[0].name;
-    if (hasFullInfo) {
-      console.log('[Zenio] Usando categorías completas del frontend:', categories.length, 'categorías');
-      // Extraer solo los nombres para las funciones que los necesitan
-      const categoryNames = categories.map((cat: any) => cat.name);
-      console.log('[Zenio] Nombres de categorías extraídos:', categoryNames);
-      // Mantener las categorías originales para el contexto, pero usar los nombres para las funciones
-      categories = categoryNames;
-    } else {
-      console.log('[Zenio] Usando categorías simples del frontend:', categories);
+      console.error('[Zenio] Error obteniendo categorías de la BD:', error);
+      return {
+        error: true,
+        message: 'Error al obtener categorías de la base de datos'
+      };
     }
   }
 
+  // Filtrar categorías según el módulo
   let filteredCategories: any[] = [];
   
   switch (module) {
     case 'presupuestos':
-      filteredCategories = categories!.filter(cat => cat.type === 'EXPENSE');
+      // Para presupuestos solo categorías de gastos
+      filteredCategories = categories!.filter((cat: any) => 
+        typeof cat === 'object' ? cat.type === 'EXPENSE' : true
+      );
       break;
     case 'transacciones':
+      // Para transacciones todas las categorías (gastos e ingresos)
       filteredCategories = categories!;
       break;
     case 'metas':
+      // Para metas todas las categorías (gastos e ingresos)
       filteredCategories = categories!;
       break;
     default:
-      return { error: true, message: `Módulo no válido: ${module}` };
+      return {
+        error: true,
+        message: `Módulo no válido: ${module}. Módulos válidos: presupuestos, transacciones, metas`
+      };
   }
 
-  // Formatear categorías con iconos si están disponibles
-  const formattedCategories = filteredCategories.map(cat => {
+  // Formatear respuesta con iconos
+  const formattedCategories = filteredCategories.map((cat: any) => {
     if (typeof cat === 'object' && cat.name) {
-      return `${cat.icon || '📁'} ${cat.name}`;
+      return `${cat.icon} ${cat.name}`;
     }
     return cat;
   });
 
-  console.log(`[Zenio] Categorías filtradas para ${module}:`, formattedCategories.length);
-  
+  console.log(`[Zenio] Categorías para ${module}:`, formattedCategories);
+
   return {
     categories: formattedCategories,
     count: formattedCategories.length,
@@ -1069,7 +1051,7 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
 }
 
 // Funciones auxiliares para transacciones
-async function insertTransaction(transactionData: any, userId: string, categories?: any[]): Promise<any> {
+async function insertTransaction(transactionData: any, userId: string, categories?: string[]): Promise<any> {
   const type = transactionData.type === 'gasto' ? 'EXPENSE' : 'INCOME';
   const amount = parseFloat(transactionData.amount);
   const categoryName = transactionData.category;
@@ -1152,10 +1134,8 @@ async function insertTransaction(transactionData: any, userId: string, categorie
   };
 }
 
-async function updateTransaction(transactionData: any, criterios: any, userId: string, categories?: any[]): Promise<any> {
+async function updateTransaction(transactionData: any, criterios: any, userId: string, categories?: string[]): Promise<any> {
   let where: any = { userId };
-  
-  // Logs removidos para evitar mostrar información sensible
   
   for (const [key, value] of Object.entries(criterios)) {
     if (key === 'amount' || key === 'oldAmount') where.amount = parseFloat(value as string);
@@ -1195,8 +1175,6 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
     else if (key === 'id') where.id = value;
   }
 
-  // Log removido para evitar mostrar información sensible
-
   const candidates = await prisma.transaction.findMany({
     where,
     orderBy: { createdAt: 'desc' },
@@ -1213,8 +1191,6 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
   });
 
   if (candidates.length === 0) {
-    // Log removido para evitar mostrar información sensible
-    
     throw new Error('No se encontró ninguna transacción con los criterios proporcionados');
   }
 
@@ -1291,7 +1267,7 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
   };
 }
 
-async function deleteTransaction(criterios: any, userId: string, categories?: any[]): Promise<any> {
+async function deleteTransaction(criterios: any, userId: string, categories?: string[]): Promise<any> {
   let where: any = { userId };
   
   for (const [key, value] of Object.entries(criterios)) {
@@ -1366,7 +1342,7 @@ async function deleteTransaction(criterios: any, userId: string, categories?: an
   };
 }
 
-async function listTransactions(transactionData: any, userId: string, categories?: any[]): Promise<any> {
+async function listTransactions(transactionData: any, userId: string, categories?: string[]): Promise<any> {
   let where: any = { userId };
   
   if (transactionData) {
@@ -1387,24 +1363,10 @@ async function listTransactions(transactionData: any, userId: string, categories
     
     if (transactionData.category) {
       const cat = await prisma.category.findFirst({
-        where: { 
-          name: { 
-            equals: transactionData.category, 
-            mode: 'insensitive' 
-          }
-        }
+        where: { name: { equals: transactionData.category, mode: 'insensitive' } }
       });
       if (cat) {
         where.category_id = cat.id;
-      } else {
-        // Búsqueda alternativa sin acentos
-        const allCategories = await prisma.category.findMany();
-        const foundCategory = allCategories.find(cat => 
-          normalizarTexto(cat.name) === normalizarTexto(transactionData.category)
-        );
-        if (foundCategory) {
-          where.category_id = foundCategory.id;
-        }
       }
     }
     
@@ -1444,7 +1406,7 @@ async function listTransactions(transactionData: any, userId: string, categories
 }
 
 // Funciones auxiliares para presupuestos
-async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[]): Promise<any> {
+async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: string[]): Promise<any> {
   const periodMap: { [key: string]: string } = {
     'semanal': 'weekly',
     'mensual': 'monthly',
@@ -1521,7 +1483,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
   };
 }
 
-async function updateBudget(category: string, previous_amount: string, amount: string, userId: string, categories?: any[]): Promise<any> {
+async function updateBudget(category: string, previous_amount: string, amount: string, userId: string, categories?: string[]): Promise<any> {
   const where: any = { 
     user_id: userId,
     amount: parseFloat(previous_amount)
@@ -1534,23 +1496,14 @@ async function updateBudget(category: string, previous_amount: string, amount: s
   if (cat) {
     where.category_id = cat.id;
   } else {
-    // Búsqueda alternativa sin acentos
-    const allCategories = await prisma.category.findMany();
-    const foundCategory = allCategories.find(cat => 
-      normalizarTexto(cat.name) === normalizarTexto(category)
-    );
-    if (foundCategory) {
-      where.category_id = foundCategory.id;
-    } else {
-      // Sugerencias conversacionales
-      const categoryValidation = await validateCategory(category, 'gasto', categories);
-      return {
-        success: false,
-        message: `🤔 **Categoría no encontrada**\n\nNo encontré la categoría "${category}" en tu lista de categorías.\n\n**Categorías disponibles para presupuestos:**\n${categoryValidation.suggestions?.map(cat => `• ${cat}`).join('\n')}\n\n¿Podrías elegir una de estas categorías o especificar una nueva?`,
-        suggestions: categoryValidation.suggestions,
-        action: 'category_not_found'
-      };
-    }
+    // Sugerencias conversacionales
+    const categoryValidation = await validateCategory(category, 'gasto', categories);
+    return {
+      success: false,
+      message: `🤔 **Categoría no encontrada**\n\nNo encontré la categoría "${category}" en tu lista de categorías.\n\n**Categorías disponibles para presupuestos:**\n${categoryValidation.suggestions?.map(cat => `• ${cat}`).join('\n')}\n\n¿Podrías elegir una de estas categorías o especificar una nueva?`,
+      suggestions: categoryValidation.suggestions,
+      action: 'category_not_found'
+    };
   }
 
   const budget = await prisma.budget.findFirst({
@@ -1610,16 +1563,7 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
   if (cat) {
     where.category_id = cat.id;
   } else {
-    // Búsqueda alternativa sin acentos
-    const allCategories = await prisma.category.findMany();
-    const foundCategory = allCategories.find(cat => 
-      normalizarTexto(cat.name) === normalizarTexto(category)
-    );
-    if (foundCategory) {
-      where.category_id = foundCategory.id;
-    } else {
-      throw new Error(`No encontré la categoría "${category}"`);
-    }
+    throw new Error(`No encontré la categoría "${category}"`);
   }
 
   const budget = await prisma.budget.findFirst({
@@ -1661,15 +1605,6 @@ async function listBudgets(category: string | undefined, userId: string, categor
     });
     if (cat) {
       where.category_id = cat.id;
-    } else {
-      // Búsqueda alternativa sin acentos
-      const allCategories = await prisma.category.findMany();
-      const foundCategory = allCategories.find(cat => 
-        normalizarTexto(cat.name) === normalizarTexto(category)
-      );
-      if (foundCategory) {
-        where.category_id = foundCategory.id;
-      }
     }
   }
 
@@ -1797,16 +1732,7 @@ async function updateGoal(goalData: any, criterios: any, userId: string, categor
       if (cat) {
         where.categoryId = cat.id;
       } else {
-        // Búsqueda alternativa sin acentos
-        const allCategories = await prisma.category.findMany();
-        const foundCategory = allCategories.find(cat => 
-          normalizarTexto(cat.name) === normalizarTexto(value as string)
-        );
-        if (foundCategory) {
-          where.categoryId = foundCategory.id;
-        } else {
-          where.categoryId = '___NO_MATCH___';
-        }
+        where.categoryId = '___NO_MATCH___';
       }
     }
   }
@@ -1835,19 +1761,48 @@ async function updateGoal(goalData: any, criterios: any, userId: string, categor
   }
 
   const goal = candidates[0];
+  const updateData: any = {};
   
-  // Actualizar la meta
-  const updatedGoal = await prisma.goal.update({
+  if (goalData.name) updateData.name = goalData.name;
+  if (goalData.target_amount) {
+    const amount = parseFloat(goalData.target_amount);
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error('Target_amount debe ser un número positivo');
+    }
+    updateData.targetAmount = amount;
+  }
+  if (goalData.category) {
+    const categoryValidation = await validateCategory(goalData.category, 'gasto', categories);
+    if (!categoryValidation.valid) {
+      throw new Error(categoryValidation.error || 'Categoría inválida');
+    }
+    updateData.categoryId = categoryValidation.categoryId;
+  }
+  if (goalData.monthly_type) {
+    if (goalData.monthly_type === 'porcentaje') {
+      updateData.monthlyTargetPercentage = goalData.monthly_value ? parseFloat(goalData.monthly_value) : null;
+      updateData.monthlyContributionAmount = null;
+    } else if (goalData.monthly_type === 'fijo') {
+      updateData.monthlyContributionAmount = goalData.monthly_value ? parseFloat(goalData.monthly_value) : null;
+      updateData.monthlyTargetPercentage = null;
+    }
+  }
+  if (goalData.due_date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(goalData.due_date)) {
+      throw new Error('Formato de fecha debe ser YYYY-MM-DD');
+    }
+    const dateObj = new Date(goalData.due_date);
+    if (isNaN(dateObj.getTime())) {
+      throw new Error('Fecha inválida');
+    }
+    updateData.targetDate = dateObj;
+  }
+  if (goalData.priority) updateData.priority = goalData.priority;
+  if (goalData.description !== undefined) updateData.description = goalData.description;
+
+  const updated = await prisma.goal.update({
     where: { id: goal.id },
-    data: {
-      name: goalData.name || goal.name,
-      targetAmount: goalData.target_amount ? parseFloat(goalData.target_amount) : goal.targetAmount,
-      targetDate: goalData.due_date ? new Date(goalData.due_date) : goal.targetDate,
-      priority: goalData.priority || goal.priority,
-      description: goalData.description || goal.description,
-      monthlyTargetPercentage: goalData.monthly_type === 'porcentaje' ? parseFloat(goalData.monthly_value) : goal.monthlyTargetPercentage,
-      monthlyContributionAmount: goalData.monthly_type === 'fijo' ? parseFloat(goalData.monthly_value) : goal.monthlyContributionAmount
-    },
+    data: updateData,
     include: {
       category: {
         select: {
@@ -1859,11 +1814,11 @@ async function updateGoal(goalData: any, criterios: any, userId: string, categor
       }
     }
   });
-  
+
   return {
     success: true,
-    message: `✅ **Meta actualizada exitosamente**\n\n🎯 **Meta:** ${updatedGoal.name}\n💰 **Monto objetivo:** RD$${updatedGoal.targetAmount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${updatedGoal.category.name}\n\nLa meta ha sido actualizada.`,
-    goal: updatedGoal,
+    message: `✅ **Meta actualizada exitosamente**\n\n🎯 **Meta:** ${updated.name}\n💰 **Monto objetivo:** RD$${updated.targetAmount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${updated.category.name}\n📈 **Prioridad:** ${updated.priority}\n\nLos cambios han sido guardados. ¡Puedes ver la meta actualizada en la sección de Metas!`,
+    goal: updated,
     action: 'goal_updated'
   };
 }
@@ -1891,16 +1846,7 @@ async function deleteGoal(criterios: any, userId: string, categories?: string[])
       if (cat) {
         where.categoryId = cat.id;
       } else {
-        // Búsqueda alternativa sin acentos
-        const allCategories = await prisma.category.findMany();
-        const foundCategory = allCategories.find(cat => 
-          normalizarTexto(cat.name) === normalizarTexto(value as string)
-        );
-        if (foundCategory) {
-          where.categoryId = foundCategory.id;
-        } else {
-          where.categoryId = '___NO_MATCH___';
-        }
+        where.categoryId = '___NO_MATCH___';
       }
     }
   }
@@ -1950,15 +1896,6 @@ async function listGoals(goalData: any, userId: string, categories?: string[]): 
     });
     if (cat) {
       where.categoryId = cat.id;
-    } else {
-      // Búsqueda alternativa sin acentos
-      const allCategories = await prisma.category.findMany();
-      const foundCategory = allCategories.find(cat => 
-        normalizarTexto(cat.name) === normalizarTexto(goalData.category)
-      );
-      if (foundCategory) {
-        where.categoryId = foundCategory.id;
-      }
     }
   }
 
@@ -1987,235 +1924,557 @@ async function listGoals(goalData: any, userId: string, categories?: string[]): 
   };
 }
 
-// Función auxiliar para normalizar texto sin acentos
+// Función para normalizar texto (remover acentos y convertir a minúsculas)
 function normalizarTexto(texto: string): string {
   return texto
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // Eliminar diacríticos (acentos)
-    .toLowerCase()
-    .trim();
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 }
 
 export const chatWithZenio = async (req: Request, res: Response) => {
+  let threadId: string | undefined = undefined;
+  
   try {
-    const { message, threadId } = req.body;
-    const userId = (req.user as any)?.id;
-    const userName = (req.user as any)?.name;
-
+    // 1. Validar usuario autenticado
+    const userId = req.user?.id;
     if (!userId) {
-      return res.status(401).json({ error: 'Usuario no autenticado' });
+      throw new Error('No se pudo determinar el usuario autenticado.');
     }
 
-    if (!message) {
-      return res.status(400).json({ error: 'Mensaje requerido' });
+    // 2. Obtener información del usuario
+    let userName = 'Usuario';
+    let user = null;
+    try {
+      user = await prisma.user.findUnique({ where: { id: userId } });
+      userName = user?.name || user?.email || 'Usuario';
+    } catch (e) {
+      console.error('No se pudo obtener el nombre del usuario:', e);
     }
 
-    // Usar categorías que vienen del frontend
-    let categories = req.body.categories || [];
+    // 3. Obtener datos de la petición
+    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone } = req.body;
+    threadId = incomingThreadId;
+    
+    // Usar zona horaria del usuario o default a UTC
+    const userTimezone = timezone || 'UTC';
+    console.log(`[Zenio] Zona horaria del usuario: ${userTimezone}`);
 
-    // Verificar si las categorías vienen del frontend con información completa
-    const hasFullInfo = categories.length > 0 && categories[0].hasOwnProperty('id') && categories[0].hasOwnProperty('name');
-
-    // Obtener timezone del usuario
-    const timezone = req.body.timezone || 'UTC';
-
-    let currentThreadId = threadId;
-
-    // Si no hay threadId, crear uno nuevo
-    if (!currentThreadId) {
-      const thread = await openai.beta.threads.create();
-      currentThreadId = thread.id;
-    } else {
-      // Verificar si hay un run activo en el thread existente
+    // 3.1. Obtener categorías de la base de datos SOLO si no se proporcionaron desde el frontend
+    if (!categories || categories.length === 0) {
       try {
-        const runs = await openai.beta.threads.runs.list(currentThreadId);
-        const activeRun = runs.data.find(run => 
-          run.status === 'queued' || 
-          run.status === 'in_progress' || 
-          run.status === 'requires_action'
-        );
-        
-        if (activeRun) {
-          // Crear un nuevo thread para evitar conflictos
-          const newThread = await openai.beta.threads.create();
-          currentThreadId = newThread.id;
-        }
-      } catch (error) {
-        // Error silencioso
-      }
-    }
-
-    // Agregar mensaje al thread
-    await openai.beta.threads.messages.create(currentThreadId, {
-      role: 'user',
-      content: message
-    });
-
-    // Ejecutar el asistente
-    const run = await openai.beta.threads.runs.create(currentThreadId, {
-      assistant_id: process.env.OPENAI_ASSISTANT_ID!
-    });
-
-    // Hacer polling del estado del run
-    const runResult = await pollRunStatus(currentThreadId, run.id);
-
-    if (runResult.status === 'failed') {
-      console.error(`[Zenio] Run falló:`, runResult);
-      return res.status(500).json({ 
-        error: 'Error en el procesamiento del mensaje',
-        details: runResult.last_error
-      });
-    }
-
-    if (runResult.status === 'requires_action' && runResult.required_action?.type === 'submit_tool_outputs') {
-      const toolCalls = runResult.required_action.submit_tool_outputs.tool_calls;
-      const result = await executeToolCalls(currentThreadId, run.id, toolCalls, userId, userName, categories, timezone);
-      
-      // Hacer polling nuevamente después de enviar tool outputs
-      const finalRunResult = await pollRunStatus(currentThreadId, run.id);
-      
-      if (finalRunResult.status === 'completed') {
-        // Obtener el último mensaje del asistente
-        const messages = await openai.beta.threads.messages.list(currentThreadId);
-        const lastMessage = messages.data[0]; // El más reciente
-        
-        // Incluir la última acción ejecutada para el frontend
-        if (result?.executedActions.length > 0) {
-          const lastAction = result.executedActions[result.executedActions.length - 1];
-          const response = {
-            message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
-            threadId: currentThreadId,
-            messageId: lastMessage.id,
-            action: lastAction.action,
-            transaction: lastAction.data.transaction,
-            budget: lastAction.data.budget,
-            goal: lastAction.data.goal // Incluir la meta si es una acción de meta
-          };
-              return res.json(response);
-        }
-        return res.json({
-          message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
-          threadId: currentThreadId,
-          messageId: lastMessage.id,
-          action: result?.action || null
+        const dbCategories = await prisma.category.findMany({
+          select: { name: true, type: true, icon: true }
         });
-      } else {
-        return res.status(500).json({ error: 'Error en el procesamiento final' });
+        categories = dbCategories.map(cat => cat.name);
+        console.log('[Zenio] Categorías obtenidas de la BD (respaldo):', categories);
+      } catch (error) {
+        console.error('[Zenio] Error obteniendo categorías de la BD:', error);
+        categories = [];
       }
-    } else if (runResult.status === 'completed') {
-      // Obtener el último mensaje del asistente
-      const messages = await openai.beta.threads.messages.list(currentThreadId);
-      const lastMessage = messages.data[0]; // El más reciente
-      
-
-      return res.json({
-        message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
-        threadId: currentThreadId,
-        messageId: lastMessage.id
-      });
     } else {
-      return res.status(500).json({ error: 'Estado inesperado del procesamiento' });
+      // Verificar si las categorías vienen con información completa o solo nombres
+      const hasFullInfo = categories.length > 0 && typeof categories[0] === 'object' && categories[0].name;
+      if (hasFullInfo) {
+        console.log('[Zenio] Usando categorías completas del frontend:', categories.length, 'categorías');
+        // Extraer solo los nombres para las funciones que los necesitan
+        const categoryNames = categories.map((cat: any) => cat.name);
+        console.log('[Zenio] Nombres de categorías extraídos:', categoryNames);
+        // Mantener las categorías originales para el contexto, pero usar los nombres para las funciones
+        categories = categoryNames;
+      } else {
+        console.log('[Zenio] Usando categorías simples del frontend:', categories);
+      }
     }
+
+
+
+    // 4. Procesar expresiones temporales
+    if (typeof message === 'string') {
+      const mensajeOriginal = message;
+      message = reemplazarExpresionesTemporalesPorFecha(message);
+      if (mensajeOriginal !== message) {
+        const ahora = new Date();
+        const offsetRD = -4;
+        const utc = ahora.getTime() + (ahora.getTimezoneOffset() * 60000);
+        const fechaRD = new Date(utc + (offsetRD * 60 * 60 * 1000));
+        
+        console.log('🕐 Fechas relativas reemplazadas:');
+        console.log('   Zona horaria: República Dominicana (UTC-4)');
+        console.log('   Fecha local actual:', fechaRD.toISOString().split('T')[0]);
+        console.log('   Original:', mensajeOriginal);
+        console.log('   Procesado:', message);
+      }
+    }
+
+    // 5. Crear o reutilizar thread
+    let isFirstMessage = !threadId || typeof threadId !== 'string' || !threadId.startsWith('thread_');
+
+    if (isFirstMessage) {
+      // Crear thread vacío
+      const threadRes = await axios.post(
+        `${OPENAI_BASE_URL}/threads`,
+        {},
+        { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+      );
+      threadId = threadRes.data.id;
+      
+      // Mensaje de sistema para que Zenio sepa el nombre del usuario
+      const systemMsg = `El usuario se llama ${userName}. Siempre que lo saludes, hazlo de forma natural y menciona su nombre en el saludo, tanto al inicio como en cualquier otro saludo durante la conversación.`;
+      await axios.post(
+        `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
+        {
+          role: "user",
+          content: systemMsg
+        },
+        { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+      );
+
+      // Agregar mensaje de onboarding si es necesario
+      if (isOnboarding && !user?.onboardingCompleted) {
+        const onboardingMsg = `Quiero iniciar mi onboarding financiero. Mi nombre es ${userName}.`;
+        await axios.post(
+          `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
+          {
+            role: "user",
+            content: onboardingMsg
+          },
+          { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+        );
+      } else if (message) {
+        // Agregar mensaje del usuario
+        await axios.post(
+          `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
+          {
+            role: "user",
+            content: message
+          },
+          { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+        );
+      }
+    } else {
+      // Agregar mensaje del usuario al thread existente
+      await axios.post(
+        `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
+        {
+          role: "user",
+          content: message
+        },
+        { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 6. Crear run con el assistant
+    console.log('[Zenio] Creando run...');
+    const runRes = await axios.post(
+      `${OPENAI_BASE_URL}/threads/${threadId}/runs`,
+      {
+        assistant_id: ASSISTANT_ID
+      },
+      { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+    );
+
+    const runId = runRes.data.id;
+    console.log(`[Zenio] Run creado: ${runId}`);
+
+    // 7. Hacer polling del run
+    console.log('[Zenio] Iniciando polling del run...');
+    const run = await pollRunStatus(threadId!, runId);
+
+    // 8. Manejar tool calls si los hay
+    let executedActions: any[] = [];
+    if (run.status === 'requires_action' && run.required_action?.submit_tool_outputs?.tool_calls) {
+      console.log('[Zenio] Tool calls detectados, ejecutando...');
+      const toolCallResult = await executeToolCalls(
+        threadId!, 
+        runId, 
+        run.required_action.submit_tool_outputs.tool_calls,
+        userId,
+        userName,
+        categories, // Pasar las categorías disponibles
+        userTimezone // Pasar la zona horaria del usuario
+      );
+
+      // Extraer las acciones ejecutadas
+      if (toolCallResult.executedActions) {
+        executedActions = toolCallResult.executedActions;
+      }
+
+      // Si después de ejecutar tool calls el run aún requiere acción, hacer polling nuevamente
+      if (toolCallResult.run.status === 'requires_action') {
+        console.log('[Zenio] Run aún requiere acción después de tool calls, continuando polling...');
+        await pollRunStatus(threadId!, runId);
+      }
+    }
+
+    // 9. Obtener la respuesta final del assistant
+    console.log('[Zenio] Obteniendo respuesta final...');
+    const messagesRes = await axios.get(
+      `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
+      { headers: OPENAI_HEADERS }
+    );
+    
+    const messages = messagesRes.data.data;
+    const lastAssistantMessage = messages.find((msg: any) => msg.role === 'assistant');
+    const assistantResponse = lastAssistantMessage?.content?.[0]?.text?.value || 'No se pudo obtener respuesta del asistente.';
+
+    // 10. Responder al frontend
+    console.log('[Zenio] Enviando respuesta al frontend');
+    
+    // Preparar respuesta con acciones ejecutadas
+    const response: any = {
+      message: assistantResponse,
+      threadId
+    };
+
+    // Incluir la última acción ejecutada para el frontend
+    if (executedActions.length > 0) {
+      const lastAction = executedActions[executedActions.length - 1];
+      response.action = lastAction.action;
+      response.transaction = lastAction.data.transaction;
+      response.budget = lastAction.data.budget;
+      response.goal = lastAction.data.goal; // Incluir la meta si es una acción de meta
+      console.log(`[Zenio] Incluyendo acción en respuesta: ${lastAction.action}`);
+      console.log(`[Zenio] Respuesta completa que se envía al frontend:`, JSON.stringify(response, null, 2));
+    }
+
+    return res.json(response);
 
   } catch (error) {
+    console.error('[Zenio] Error:', error);
+
+    // Manejo específico de errores
+    if (axios.isAxiosError(error)) {
+      if (error.code === 'ECONNRESET') {
+        return res.status(503).json({
+          message: 'No se pudo conectar con Zenio (OpenAI). Por favor, intenta de nuevo en unos segundos.',
+          threadId
+        });
+      }
+
+      if (error.response?.status === 429) {
+        return res.status(429).json({
+          message: 'Zenio está procesando muchos mensajes. Por favor, espera un momento antes de continuar.',
+          threadId
+        });
+      }
+
+      if (error.response?.data?.error?.message?.includes('while a run')) {
+        return res.status(429).json({
+          message: 'Zenio está terminando de procesar tu mensaje anterior. Por favor, espera un momento antes de continuar.',
+          threadId
+        });
+      }
+
+      if (error && typeof error === 'object' && 'response' in error && error.response && typeof error.response === 'object' && 'data' in error.response) {
+        console.error('❌ OpenAI API error:', error.response.data);
+        return res.status(500).json({ 
+          error: 'Error al comunicarse con Zenio.', 
+          openai: error.response.data 
+        });
+      }
+    }
+
+    // Error general
+    console.error('❌ Error general:', error);
     return res.status(500).json({ 
-      error: 'Error interno del servidor',
-      details: error instanceof Error ? error.message : 'Error desconocido'
+      error: 'Error al comunicarse con Zenio.',
+      message: error instanceof Error ? error.message : 'Error desconocido'
     });
   }
 };
 
 export const getChatHistory = async (req: Request, res: Response) => {
   try {
-    const { threadId } = req.params;
-    const userId = (req.user as any)?.id;
-
-    if (!userId) {
-      return res.status(401).json({ error: 'Usuario no autenticado' });
-    }
+    const userId = req.user!.id;
+    const { threadId } = req.query;
 
     if (!threadId) {
-      return res.status(400).json({ error: 'Thread ID requerido' });
+      return res.status(400).json({
+        error: 'Validation error',
+        message: 'Thread ID is required'
+      });
     }
 
-    const messages = await openai.beta.threads.messages.list(threadId);
-    
-    return res.json({
-      messages: messages.data.map((msg: any) => ({
-        id: msg.id,
-        role: msg.role,
-        content: msg.content[0].type === 'text' ? msg.content[0].text.value : 'Contenido no disponible',
-        createdAt: msg.created_at
-      }))
-    });
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        error: 'Configuration error',
+        message: 'OpenAI configuration is missing'
+      });
+    }
 
+    // Aquí puedes implementar la recuperación del historial usando axios y los endpoints v2 si lo necesitas
+    return res.status(501).json({ error: 'Not implemented' });
   } catch (error) {
-    return res.status(500).json({ 
-      error: 'Error interno del servidor',
-      details: error instanceof Error ? error.message : 'Error desconocido'
-    });
+    return res.status(500).json({ error: 'Error al recuperar el historial.' });
   }
-};
+}; 
 
 export const createTransactionFromZenio = async (req: Request, res: Response) => {
   try {
-    const { transactionData } = req.body;
-    const userId = (req.user as any)?.id;
-
+    const userId = req.user?.id;
     if (!userId) {
-      return res.status(401).json({ error: 'Usuario no autenticado' });
+      throw new Error('No se pudo determinar el usuario autenticado.');
     }
 
-    const result = await insertTransaction(transactionData, userId);
-    return res.json(result);
+    const { transaction_data, operation } = req.body;
+
+    if (operation !== 'insert') {
+      return res.status(400).json({
+        error: 'Invalid operation',
+        message: 'Only insert operation is supported'
+      });
+    }
+
+    // Validar y mapear los datos
+    const type = transaction_data.type === 'gasto' ? 'EXPENSE' : 'INCOME';
+    const amount = parseFloat(transaction_data.amount);
+    const category = transaction_data.category;
+    const date = transaction_data.date ? new Date(transaction_data.date) : new Date();
+    const description = transaction_data.description || '';
+
+    // Validaciones básicas
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: 'El monto debe ser un número positivo'
+      });
+    }
+
+    if (!category) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: 'La categoría es requerida'
+      });
+    }
+
+    // Crear la transacción
+    const newTransaction = await prisma.transaction.create({
+      data: {
+        userId,
+        amount,
+        type,
+        category_id: category,
+        description,
+        date
+      },
+      select: {
+        id: true,
+        amount: true,
+        type: true,
+        category: true,
+        description: true,
+        date: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    // Mensaje de confirmación
+    const confirmationMessage = `✅ **Transacción registrada exitosamente**\n\n💰 **Monto:** RD$${amount.toLocaleString('es-DO')}\n📊 **Tipo:** ${type === 'INCOME' ? 'Ingreso' : 'Gasto'}\n🏷️ **Categoría:** ${category}\n📅 **Fecha:** ${date.toLocaleDateString('es-ES')}\n\nLa transacción ha sido guardada en tu historial. ¡Puedes verla en la sección de Transacciones!`;
+
+    return res.json({
+      message: confirmationMessage,
+      transaction: newTransaction,
+      action: 'transaction_created'
+    });
 
   } catch (error) {
-    console.error(`[Zenio] Error creando transacción:`, error);
-    return res.status(500).json({ 
-      error: 'Error interno del servidor',
-      details: error instanceof Error ? error.message : 'Error desconocido'
+    console.error('Error creating transaction from Zenio:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: 'Error al crear la transacción'
     });
   }
 };
 
 export const createBudgetFromZenio = async (req: Request, res: Response) => {
   try {
-    const { category, amount, recurrence } = req.body;
-    const userId = (req.user as any)?.id;
-
+    const userId = req.user?.id;
     if (!userId) {
-      return res.status(401).json({ error: 'Usuario no autenticado' });
+      throw new Error('No se pudo determinar el usuario autenticado.');
     }
 
-    const result = await insertBudget(category, amount, recurrence, userId);
-    return res.json(result);
+    const { budget_data, operation } = req.body;
+
+    if (operation !== 'insert') {
+      return res.status(400).json({
+        error: 'Invalid operation',
+        message: 'Only insert operation is supported'
+      });
+    }
+
+    // Validar datos del presupuesto
+    const validation = validateBudgetData(budget_data);
+    if (!validation.valid) {
+      return res.status(400).json({ 
+        error: 'Datos de presupuesto inválidos', 
+        details: validation.errors 
+      });
+    }
+
+    // Validar y mapear los datos
+    const name = budget_data.name;
+    const amount = parseFloat(budget_data.amount);
+    const categoryName = budget_data.category;
+    const period = budget_data.period;
+    const startDate = new Date(budget_data.start_date);
+    const endDate = new Date(budget_data.end_date);
+    const alertPercentage = budget_data.alert_percentage || 80;
+
+    // Validar categoría contra la base de datos
+    const categoryValidation = await validateCategory(categoryName, 'gasto');
+    if (!categoryValidation.valid) {
+      return res.status(400).json({ 
+        error: 'Categoría inválida', 
+        message: categoryValidation.error 
+      });
+    }
+
+    const categoryId = categoryValidation.categoryId!;
+
+    // Crear el presupuesto
+    const newBudget = await prisma.budget.create({
+      data: {
+        user_id: userId,
+        name,
+        category_id: categoryId,
+        amount,
+        period,
+        start_date: startDate,
+        end_date: endDate,
+        alert_percentage: alertPercentage
+      },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            icon: true,
+            type: true,
+            isDefault: true
+          }
+        }
+      }
+    });
+
+    // Obtener el nombre de la categoría para el mensaje
+    const categoryRecord = await prisma.category.findUnique({
+      where: { id: categoryId }
+    });
+    
+    // Mensaje de confirmación
+    const confirmationMessage = `✅ **Presupuesto creado exitosamente**\n\n📋 **Nombre:** ${name}\n💰 **Monto:** RD$${amount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${categoryRecord ? categoryRecord.name : categoryName}\n📅 **Período:** ${period === 'monthly' ? 'Mensual' : period === 'weekly' ? 'Semanal' : 'Anual'}\n📆 **Desde:** ${startDate.toLocaleDateString('es-ES')}\n📆 **Hasta:** ${endDate.toLocaleDateString('es-ES')}\n\nEl presupuesto ha sido guardado. ¡Puedes verlo en la sección de Presupuestos!`;
+
+    return res.json({
+      message: confirmationMessage,
+      budget: newBudget,
+      action: 'budget_created'
+    });
 
   } catch (error) {
-    console.error(`[Zenio] Error creando presupuesto:`, error);
-    return res.status(500).json({ 
-      error: 'Error interno del servidor',
-      details: error instanceof Error ? error.message : 'Error desconocido'
+    console.error('Error creating budget from Zenio:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: 'Error al crear el presupuesto'
     });
   }
-};
+}; 
 
 export const createGoalFromZenio = async (req: Request, res: Response) => {
   try {
-    const { goalData } = req.body;
-    const userId = (req.user as any)?.id;
-
+    const userId = req.user?.id;
     if (!userId) {
-      return res.status(401).json({ error: 'Usuario no autenticado' });
+      throw new Error('No se pudo determinar el usuario autenticado.');
     }
 
-    const result = await insertGoal(goalData, userId);
-    return res.json(result);
+    const { goal_data, operation } = req.body;
+
+    if (operation !== 'insert') {
+      return res.status(400).json({
+        error: 'Invalid operation',
+        message: 'Only insert operation is supported'
+      });
+    }
+
+    // Validar datos de la meta
+    const validation = validateGoalData(goal_data);
+    if (!validation.valid) {
+      return res.status(400).json({ 
+        error: 'Datos de meta inválidos', 
+        details: validation.errors 
+      });
+    }
+
+    // Validar y mapear los datos
+    const name = goal_data.name;
+    const target_amount = parseFloat(goal_data.target_amount);
+    const categoryName = goal_data.category;
+    const monthly_type = goal_data.monthly_type;
+    const monthly_value = goal_data.monthly_value;
+    const due_date = goal_data.due_date;
+    const priority = goal_data.priority;
+    const description = goal_data.description || '';
+
+    // Validar categoría contra la base de datos
+    const categoryValidation = await validateCategory(categoryName, 'gasto');
+    if (!categoryValidation.valid) {
+      return res.status(400).json({ 
+        error: 'Categoría inválida', 
+        message: categoryValidation.error 
+      });
+    }
+
+    const categoryId = categoryValidation.categoryId!;
+
+    // Crear la meta
+    const newGoal = await prisma.goal.create({
+      data: {
+        userId,
+        name,
+        targetAmount: target_amount,
+        currentAmount: 0,
+        categoryId,
+        monthlyTargetPercentage: monthly_type === 'porcentaje' ? parseFloat(monthly_value) : null,
+        monthlyContributionAmount: monthly_type === 'fijo' ? parseFloat(monthly_value) : null,
+        targetDate: due_date ? new Date(due_date) : null,
+        priority: priority || 'Media',
+        description: description,
+        isCompleted: false,
+        isActive: true,
+        contributionsCount: 0
+      },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            icon: true,
+            type: true
+          }
+        }
+      }
+    });
+
+    // Obtener el nombre de la categoría para el mensaje
+    const categoryRecord = await prisma.category.findUnique({
+      where: { id: categoryId }
+    });
+    
+    // Mensaje de confirmación
+    const confirmationMessage = `✅ **Meta creada exitosamente**\n\n🎯 **Meta:** ${name}\n💰 **Monto objetivo:** RD$${target_amount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${categoryRecord ? categoryRecord.name : categoryName}\n📅 **Período:** ${monthly_type === 'porcentaje' ? `${monthly_value}% de tus ingresos` : monthly_type === 'fijo' ? `RD$${parseFloat(monthly_value).toLocaleString('es-DO')} fijos` : 'No definido'}\n📅 **Fecha objetivo:** ${due_date ? new Date(due_date).toLocaleDateString('es-ES') : 'Sin fecha límite'}\n📈 **Prioridad:** ${priority || 'Media'}\n\nLa meta ha sido guardada. ¡Puedes verla en la sección de Metas!`;
+
+    return res.json({
+      message: confirmationMessage,
+      goal: newGoal,
+      action: 'goal_created'
+    });
 
   } catch (error) {
-    console.error(`[Zenio] Error creando meta:`, error);
-    return res.status(500).json({ 
-      error: 'Error interno del servidor',
-      details: error instanceof Error ? error.message : 'Error desconocido'
+    console.error('Error creating goal from Zenio:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: 'Error al crear la meta'
     });
   }
-};
+}; 
