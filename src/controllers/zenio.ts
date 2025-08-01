@@ -2007,13 +2007,6 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // Verificar si las categorías vienen del frontend con información completa
     const hasFullInfo = categories.length > 0 && categories[0].hasOwnProperty('id') && categories[0].hasOwnProperty('name');
-    
-    if (hasFullInfo) {
-      // Extraer solo los nombres para las funciones que los necesitan
-      const categoryNames = categories.map((cat: any) => cat.name);
-      // Mantener las categorías originales para el contexto, pero usar los nombres para las funciones
-      categories = categoryNames;
-    }
 
     // Obtener timezone del usuario
     const timezone = req.body.timezone || 'UTC';
