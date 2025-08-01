@@ -302,31 +302,42 @@ function validateCriterios(criterios: any): { valid: boolean; errors: string[] }
 }
 
 // Función para validar categoría contra la base de datos o lista proporcionada
-async function validateCategory(categoryName: string, type: string, availableCategories?: string[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
+async function validateCategory(categoryName: string, type: string, availableCategories?: any[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
   try {
     if (availableCategories && availableCategories.length > 0) {
       // Usar la lista proporcionada por el frontend
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
       
-      // Buscar la categoría en la lista proporcionada (case insensitive)
-      const foundCategory = availableCategories.find(cat => 
-        cat.toLowerCase() === categoryName.toLowerCase()
-      );
+      // Buscar la categoría en la lista proporcionada (case insensitive y sin acentos)
+      const foundCategory = availableCategories.find(cat => {
+        const catName = typeof cat === 'object' && cat.name ? cat.name : cat;
+        return normalizarTexto(catName) === normalizarTexto(categoryName);
+      });
       
       if (foundCategory) {
-        // Obtener el ID de la categoría de la base de datos
-        const category = await prisma.category.findFirst({
-          where: {
-            name: { equals: foundCategory, mode: 'insensitive' },
-            type: dbType
-          }
+        // Si encontramos la categoría en la lista del frontend, usar directamente su ID
+        if (typeof foundCategory === 'object' && foundCategory.id) {
+          return { valid: true, categoryId: foundCategory.id };
+        }
+        
+        // Fallback: buscar en la BD usando el nombre normalizado
+        const cleanName = typeof foundCategory === 'object' && foundCategory.name ? foundCategory.name : foundCategory;
+        
+        // Buscar en la BD usando normalización de texto para ignorar acentos y mayúsculas
+        const allCategories = await prisma.category.findMany({
+          where: { type: dbType }
         });
+        
+        const category = allCategories.find(cat => 
+          normalizarTexto(cat.name) === normalizarTexto(cleanName)
+        );
+        
         if (category) {
           return { valid: true, categoryId: category.id };
         }
       } else {
-        // Filtrar categorías por tipo (asumiendo que las categorías del frontend son de gastos)
-        const suggestions = availableCategories;
+        // Filtrar categorías por tipo y devolver solo los nombres
+        const suggestions = availableCategories.map(cat => typeof cat === 'object' && cat.name ? cat.name : cat);
         return {
           valid: false,
           error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.join(', ')}`,
@@ -336,34 +347,34 @@ async function validateCategory(categoryName: string, type: string, availableCat
     } else {
       // Comportamiento original: consultar base de datos
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      const category = await prisma.category.findFirst({
-        where: {
-          name: { equals: categoryName, mode: 'insensitive' },
-          type: dbType
-        }
+      
+      // Buscar en la BD usando normalización de texto para ignorar acentos y mayúsculas
+      const allCategories = await prisma.category.findMany({
+        where: { type: dbType }
       });
+      
+      const category = allCategories.find(cat => 
+        normalizarTexto(cat.name) === normalizarTexto(categoryName)
+      );
+      
       if (category) {
         return { valid: true, categoryId: category.id };
       } else {
         // Sugerir categorías válidas
-        const suggestions = await prisma.category.findMany({
-          where: { type: dbType },
-          select: { name: true }
-        });
         return {
           valid: false,
-          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.map(c => c.name).join(', ')}`,
-          suggestions: suggestions.map(c => c.name)
+          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${allCategories.map((c: any) => c.name).join(', ')}`,
+          suggestions: allCategories.map((c: any) => c.name)
         };
       }
-    }
-      } catch (error) {
-      return { valid: false, error: 'Error al validar la categoría' };
     }
     
     // Return por defecto
     return { valid: false, error: 'Categoría no válida' };
+  } catch (error) {
+    return { valid: false, error: 'Error al validar la categoría' };
   }
+}
 
 // Función para obtener categorías válidas usando las proporcionadas
 function getValidCategoriesFromList(categories: any[], type: 'EXPENSE' | 'INCOME'): string {
@@ -719,7 +730,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
 }
 
 // Función para ejecutar tool calls y enviar resultados
-async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: string[], timezone?: string): Promise<any> {
+async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: any[], timezone?: string): Promise<any> {
   const executedActions: any[] = [];
   const toolOutputs: any[] = [];
 
@@ -840,7 +851,7 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 }
 
 // Función para ejecutar manage_transaction_record
-async function executeManageTransactionRecord(args: any, userId: string, categories?: string[], timezone?: string): Promise<any> {
+async function executeManageTransactionRecord(args: any, userId: string, categories?: any[], timezone?: string): Promise<any> {
   let transactionData = args.transaction_data;
   const operation = args.operation;
   const module = args.module;
@@ -1051,7 +1062,7 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
 }
 
 // Funciones auxiliares para transacciones
-async function insertTransaction(transactionData: any, userId: string, categories?: string[]): Promise<any> {
+async function insertTransaction(transactionData: any, userId: string, categories?: any[]): Promise<any> {
   const type = transactionData.type === 'gasto' ? 'EXPENSE' : 'INCOME';
   const amount = parseFloat(transactionData.amount);
   const categoryName = transactionData.category;
@@ -1134,7 +1145,7 @@ async function insertTransaction(transactionData: any, userId: string, categorie
   };
 }
 
-async function updateTransaction(transactionData: any, criterios: any, userId: string, categories?: string[]): Promise<any> {
+async function updateTransaction(transactionData: any, criterios: any, userId: string, categories?: any[]): Promise<any> {
   let where: any = { userId };
   
   for (const [key, value] of Object.entries(criterios)) {
@@ -1267,7 +1278,7 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
   };
 }
 
-async function deleteTransaction(criterios: any, userId: string, categories?: string[]): Promise<any> {
+async function deleteTransaction(criterios: any, userId: string, categories?: any[]): Promise<any> {
   let where: any = { userId };
   
   for (const [key, value] of Object.entries(criterios)) {
@@ -1977,11 +1988,8 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       const hasFullInfo = categories.length > 0 && typeof categories[0] === 'object' && categories[0].name;
       if (hasFullInfo) {
         console.log('[Zenio] Usando categorías completas del frontend:', categories.length, 'categorías');
-        // Extraer solo los nombres para las funciones que los necesitan
-        const categoryNames = categories.map((cat: any) => cat.name);
-        console.log('[Zenio] Nombres de categorías extraídos:', categoryNames);
-        // Mantener las categorías originales para el contexto, pero usar los nombres para las funciones
-        categories = categoryNames;
+        // Mantener las categorías originales con información completa (id, name, type)
+        // NO transformar a solo nombres
       } else {
         console.log('[Zenio] Usando categorías simples del frontend:', categories);
       }
