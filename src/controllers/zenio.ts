@@ -952,15 +952,11 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
 
 // Función para ejecutar manage_goal_record
 async function executeManageGoalRecord(args: any, userId: string, categories?: any[]): Promise<any> {
-  const { operation, module, goal_data, criterios_identificacion } = args;
+  const { operation, goal_data, criterios_identificacion } = args;
 
   // Validaciones
   if (!['insert', 'update', 'delete', 'list'].includes(operation)) {
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
-  }
-
-  if (module !== 'metas') {
-    throw new Error('Solo se soporta el módulo "metas"');
   }
 
   // Validaciones por operación
