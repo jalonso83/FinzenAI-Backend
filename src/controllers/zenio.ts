@@ -856,6 +856,7 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
   const operation = args.operation;
   const module = args.module;
   let criterios = args.criterios_identificacion || {};
+  const filtros = args.filtros_busqueda;
 
   // Procesar fechas en los datos de transacción
   if (transactionData) {
@@ -865,6 +866,17 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
   // Procesar fechas en los criterios (sin _processedDate para delete/update)
   if (criterios && Object.keys(criterios).length > 0) {
     criterios = procesarFechasEnDatosTransaccion(criterios, timezone, false); // Sin _processedDate
+  }
+
+  // Procesar fechas en los filtros para la operación list
+  if (filtros && filtros.date) {
+    filtros.date = reemplazarExpresionesTemporalesPorFecha(filtros.date);
+  }
+  if (filtros && filtros.date_from) {
+    filtros.date_from = reemplazarExpresionesTemporalesPorFecha(filtros.date_from);
+  }
+  if (filtros && filtros.date_to) {
+    filtros.date_to = reemplazarExpresionesTemporalesPorFecha(filtros.date_to);
   }
 
   // Validaciones estructurales
@@ -901,7 +913,7 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
     case 'delete':
       return await deleteTransaction(criterios, userId, categories);
     case 'list':
-      return await listTransactions(transactionData, userId, categories);
+      return await listTransactions(transactionData, userId, categories, filtros);
     default:
       throw new Error('Operación no soportada');
   }
@@ -1346,21 +1358,83 @@ async function deleteTransaction(criterios: any, userId: string, categories?: an
   };
 }
 
-async function listTransactions(transactionData: any, userId: string, categories?: string[]): Promise<any> {
+async function listTransactions(transactionData: any, userId: string, categories?: string[], filtros?: any): Promise<any> {
   let where: any = { userId };
+  let limit: number | undefined;
+
+  // Usar filtros_busqueda si están disponibles
+  if (filtros) {
+    if (filtros.limit) {
+      limit = parseInt(filtros.limit);
+      if (isNaN(limit) || limit <= 0 || limit > 100) {
+        throw new Error('Limit debe ser un número entre 1 y 100');
+      }
+    }
+    
+    if (filtros.type) {
+      if (!['gasto', 'ingreso'].includes(filtros.type)) {
+        throw new Error('Type debe ser "gasto" o "ingreso"');
+      }
+      where.type = filtros.type === 'gasto' ? 'EXPENSE' : 'INCOME';
+    }
+    
+    if (filtros.category) {
+      const cat = await prisma.category.findFirst({
+        where: { name: { equals: filtros.category, mode: 'insensitive' } }
+      });
+      if (cat) {
+        where.category_id = cat.id;
+      }
+    }
+    
+    if (filtros.date) {
+      const fechaNormalizada = normalizarFecha(filtros.date);
+      if (fechaNormalizada) {
+        const start = new Date(fechaNormalizada + 'T00:00:00.000Z');
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 1);
+        where.date = { gte: start, lt: end };
+      }
+    }
+
+    if (filtros.date_from || filtros.date_to) {
+      let dateRange: any = {};
+      
+      if (filtros.date_from) {
+        const fechaNormalizada = normalizarFecha(filtros.date_from);
+        if (fechaNormalizada) {
+          dateRange.gte = new Date(fechaNormalizada + 'T00:00:00.000Z');
+        }
+      }
+      
+      if (filtros.date_to) {
+        const fechaNormalizada = normalizarFecha(filtros.date_to);
+        if (fechaNormalizada) {
+          const endDate = new Date(fechaNormalizada + 'T00:00:00.000Z');
+          endDate.setUTCDate(endDate.getUTCDate() + 1);
+          dateRange.lt = endDate;
+        }
+      }
+      
+      if (Object.keys(dateRange).length > 0) {
+        where.date = dateRange;
+      }
+    }
+  }
   
+  // Fallback a transactionData para compatibilidad con versión anterior
   if (transactionData) {
     if (transactionData.amount) {
       const amount = parseFloat(transactionData.amount);
       if (isNaN(amount) || amount <= 0) {
-      throw new Error('Amount debe ser un número positivo');
+        throw new Error('Amount debe ser un número positivo');
       }
       where.amount = amount;
     }
     
     if (transactionData.type) {
       if (!['gasto', 'ingreso'].includes(transactionData.type)) {
-      throw new Error('Type debe ser "gasto" o "ingreso"');
+        throw new Error('Type debe ser "gasto" o "ingreso"');
       }
       where.type = transactionData.type === 'gasto' ? 'EXPENSE' : 'INCOME';
     }
@@ -1388,6 +1462,7 @@ async function listTransactions(transactionData: any, userId: string, categories
   const transactions = await prisma.transaction.findMany({
     where,
     orderBy: { date: 'desc' },
+    take: limit,
     include: {
       category: {
         select: {
@@ -1401,9 +1476,25 @@ async function listTransactions(transactionData: any, userId: string, categories
     }
   });
 
+  // Crear mensaje formateado con la lista
+  let mensaje = '';
+  if (transactions.length === 0) {
+    mensaje = 'No se encontraron transacciones con los criterios especificados.';
+  } else {
+    const limitText = limit ? ` (mostrando ${Math.min(limit, transactions.length)})` : '';
+    mensaje = `📊 **${transactions.length} transacciones encontradas${limitText}:**\n\n`;
+    
+    mensaje += transactions.map(t => {
+      const tipo = t.type === 'EXPENSE' ? '💸' : '💰';
+      const fecha = new Date(t.date).toLocaleDateString('es-ES');
+      const monto = `RD$${t.amount.toLocaleString('es-DO')}`;
+      return `${tipo} **${t.description}** - ${monto}\n   📅 ${fecha} | 🏷️ ${t.category.name}`;
+    }).join('\n\n');
+  }
+
   return {
     success: true,
-    message: `Se encontraron ${transactions.length} transacciones`,
+    message: mensaje,
     transactions,
     action: 'transaction_list'
   };
