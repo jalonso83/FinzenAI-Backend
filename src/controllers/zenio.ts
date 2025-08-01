@@ -739,8 +739,6 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
     const functionArgs = JSON.parse(toolCall.function.arguments);
     const toolCallId = toolCall.id;
 
-    console.log(`[Zenio] Ejecutando tool call: ${functionName}`);
-
     let result: any;
 
     try {
@@ -778,9 +776,6 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
       });
 
     } catch (error: any) {
-      console.error(`[Zenio] Error ejecutando ${functionName}:`, error);
-      console.error(`[Zenio] Error details:`, error.message || 'Error desconocido');
-      
       toolOutputs.push({
         tool_call_id: toolCallId,
         output: JSON.stringify({
@@ -794,7 +789,6 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
 
   // Enviar outputs a OpenAI
   if (toolOutputs.length > 0) {
-    console.log('[Zenio] Enviando tool outputs a OpenAI...');
     await axios.post(
       `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
       { tool_outputs: toolOutputs },
@@ -803,7 +797,6 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
   }
 
   // Hacer polling hasta que el run termine
-  console.log('[Zenio] Haciendo polling después de submit_tool_outputs...');
   const finalRun = await pollRunStatus(threadId, runId);
 
   // Devolver tanto el run como las acciones ejecutadas
@@ -853,8 +846,6 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 
 // Función para ejecutar manage_transaction_record
 async function executeManageTransactionRecord(args: any, userId: string, categories?: any[], timezone?: string): Promise<any> {
-  console.log(`[Zenio] executeManageTransactionRecord - operation: "${args.operation}"`);
-  
   let transactionData = args.transaction_data;
   const operation = args.operation;
   const module = args.module;
@@ -2011,27 +2002,17 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Mensaje requerido' });
     }
 
-    console.log(`[Zenio] Chat iniciado - Usuario: ${userName} (${userId})`);
-    console.log(`[Zenio] Mensaje: "${message}"`);
-    console.log(`[Zenio] Thread ID: ${threadId || 'Nuevo thread'}`);
-
     // Usar categorías que vienen del frontend
     let categories = req.body.categories || [];
-
-    console.log(`[Zenio] Categorías recibidas del frontend: ${categories.length}`);
 
     // Verificar si las categorías vienen del frontend con información completa
     const hasFullInfo = categories.length > 0 && categories[0].hasOwnProperty('id') && categories[0].hasOwnProperty('name');
     
     if (hasFullInfo) {
-      console.log('[Zenio] Usando categorías completas del frontend:', categories.length, 'categorías');
       // Extraer solo los nombres para las funciones que los necesitan
       const categoryNames = categories.map((cat: any) => cat.name);
-      console.log('[Zenio] Nombres de categorías extraídos:', categoryNames);
       // Mantener las categorías originales para el contexto, pero usar los nombres para las funciones
       categories = categoryNames;
-    } else {
-      console.log('[Zenio] Usando categorías simples del frontend:', categories);
     }
 
     // Obtener timezone del usuario
@@ -2043,7 +2024,6 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     if (!currentThreadId) {
       const thread = await openai.beta.threads.create();
       currentThreadId = thread.id;
-      console.log(`[Zenio] Nuevo thread creado: ${currentThreadId}`);
     } else {
       // Verificar si hay un run activo en el thread existente
       try {
@@ -2055,14 +2035,12 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         );
         
         if (activeRun) {
-          console.log(`[Zenio] Run activo encontrado: ${activeRun.id} con estado: ${activeRun.status}`);
           // Crear un nuevo thread para evitar conflictos
           const newThread = await openai.beta.threads.create();
           currentThreadId = newThread.id;
-          console.log(`[Zenio] Nuevo thread creado para evitar conflicto: ${currentThreadId}`);
         }
       } catch (error) {
-        console.log(`[Zenio] Error verificando runs activos:`, error);
+        // Error silencioso
       }
     }
 
@@ -2072,14 +2050,10 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       content: message
     });
 
-    console.log(`[Zenio] Mensaje agregado al thread`);
-
     // Ejecutar el asistente
     const run = await openai.beta.threads.runs.create(currentThreadId, {
       assistant_id: process.env.OPENAI_ASSISTANT_ID!
     });
-
-    console.log(`[Zenio] Run iniciado: ${run.id}`);
 
     // Hacer polling del estado del run
     const runResult = await pollRunStatus(currentThreadId, run.id);
@@ -2093,23 +2067,16 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     if (runResult.status === 'requires_action' && runResult.required_action?.type === 'submit_tool_outputs') {
-      console.log(`[Zenio] Ejecutando tool calls...`);
-      
       const toolCalls = runResult.required_action.submit_tool_outputs.tool_calls;
       const result = await executeToolCalls(currentThreadId, run.id, toolCalls, userId, userName, categories, timezone);
       
-      console.log(`[Zenio] Tool calls ejecutados, resultado:`, result);
-      
       // Hacer polling nuevamente después de enviar tool outputs
-      console.log(`[Zenio] Haciendo polling después de submit_tool_outputs...`);
       const finalRunResult = await pollRunStatus(currentThreadId, run.id);
       
       if (finalRunResult.status === 'completed') {
         // Obtener el último mensaje del asistente
         const messages = await openai.beta.threads.messages.list(currentThreadId);
         const lastMessage = messages.data[0]; // El más reciente
-        
-        console.log(`[Zenio] Respuesta final del asistente:`, lastMessage.content[0]);
         
         // Incluir la última acción ejecutada para el frontend
         if (result?.executedActions.length > 0) {
@@ -2132,15 +2099,12 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           action: result?.action || null
         });
       } else {
-        console.error(`[Zenio] Run no completado después de tool calls:`, finalRunResult.status);
         return res.status(500).json({ error: 'Error en el procesamiento final' });
       }
     } else if (runResult.status === 'completed') {
       // Obtener el último mensaje del asistente
       const messages = await openai.beta.threads.messages.list(currentThreadId);
       const lastMessage = messages.data[0]; // El más reciente
-      
-      console.log(`[Zenio] Respuesta del asistente:`, lastMessage.content[0]);
       
 
       return res.json({
@@ -2149,19 +2113,10 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         messageId: lastMessage.id
       });
     } else {
-      console.error(`[Zenio] Estado inesperado del run:`, runResult.status);
       return res.status(500).json({ error: 'Estado inesperado del procesamiento' });
     }
 
   } catch (error) {
-    console.error(`[Zenio] Error en chatWithZenio:`, error);
-    
-    // Log más detallado para debugging
-    if (error instanceof Error) {
-      console.error(`[Zenio] Error message: ${error.message}`);
-      console.error(`[Zenio] Error stack: ${error.stack}`);
-    }
-    
     return res.status(500).json({ 
       error: 'Error interno del servidor',
       details: error instanceof Error ? error.message : 'Error desconocido'
@@ -2194,7 +2149,6 @@ export const getChatHistory = async (req: Request, res: Response) => {
     });
 
   } catch (error) {
-    console.error(`[Zenio] Error obteniendo historial:`, error);
     return res.status(500).json({ 
       error: 'Error interno del servidor',
       details: error instanceof Error ? error.message : 'Error desconocido'
