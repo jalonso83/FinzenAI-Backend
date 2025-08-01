@@ -88,8 +88,6 @@ function procesarFechaConZonaHoraria(fecha: string, timezone: string = 'UTC'): D
 
 // Función para reemplazar expresiones temporales por la fecha real
 function reemplazarExpresionesTemporalesPorFecha(texto: string): string {
-  console.log(`[Zenio] reemplazarExpresionesTemporalesPorFecha - texto original: "${texto}"`);
-  
   // Obtener fecha actual en zona horaria de República Dominicana
   const ahora = new Date();
   
@@ -101,8 +99,6 @@ function reemplazarExpresionesTemporalesPorFecha(texto: string): string {
   
   // Formatear fecha actual en YYYY-MM-DD (local RD)
   const fechaISO = formatearFechaYYYYMMDD(fechaRD);
-  
-  console.log(`[Zenio] Fecha actual calculada: ${fechaISO} (fechaRD: ${fechaRD.toISOString()})`);
   
   // Calcular otras fechas relativas
   const ayer = new Date(fechaRD);
@@ -123,26 +119,20 @@ function reemplazarExpresionesTemporalesPorFecha(texto: string): string {
 
   // Si el texto es exactamente una expresión temporal, devolver la fecha directamente
   const textoLimpio = texto.trim().toLowerCase();
-  console.log(`[Zenio] Texto limpio: "${textoLimpio}"`);
   
   if (textoLimpio === 'hoy' || textoLimpio === 'enhoy') {
-    console.log(`[Zenio] Coincidencia exacta "hoy" -> ${fechaISO}`);
     return fechaISO;
   }
   if (textoLimpio === 'ayer') {
-    console.log(`[Zenio] Coincidencia exacta "ayer" -> ${fechaAyer}`);
     return fechaAyer;
   }
   if (textoLimpio === 'mañana' || textoLimpio === 'manana') {
-    console.log(`[Zenio] Coincidencia exacta "mañana" -> ${fechaManana}`);
     return fechaManana;
   }
   if (textoLimpio === 'anteayer') {
-    console.log(`[Zenio] Coincidencia exacta "anteayer" -> ${fechaAnteayer}`);
     return fechaAnteayer;
   }
   if (textoLimpio === 'pasado mañana' || textoLimpio === 'pasado manana') {
-    console.log(`[Zenio] Coincidencia exacta "pasado mañana" -> ${fechaPasadoManana}`);
     return fechaPasadoManana;
   }
 
@@ -167,7 +157,6 @@ function reemplazarExpresionesTemporalesPorFecha(texto: string): string {
     .replace(/\bpasado mañana\b/gi, fechaPasadoManana)
     .replace(/\bpasado manana\b/gi, fechaPasadoManana);
     
-  console.log(`[Zenio] Resultado final: "${resultado}"`);
   return resultado;
 }
 
@@ -211,51 +200,35 @@ function normalizarFecha(fecha: string): string | null {
 
 // Función para procesar fechas en datos de transacción
 function procesarFechasEnDatosTransaccion(data: any, timezone?: string, includeProcessedDate: boolean = true): any {
-  console.log(`[Zenio] procesarFechasEnDatosTransaccion - datos originales:`, JSON.stringify(data, null, 2));
-  console.log(`[Zenio] timezone: ${timezone}, includeProcessedDate: ${includeProcessedDate}`);
-  
   if (!data) return data;
   
   const datosProcesados = { ...data };
   
   // Procesar fecha si existe
   if (datosProcesados.date && typeof datosProcesados.date === 'string') {
-    console.log(`[Zenio] Procesando fecha: "${datosProcesados.date}"`);
-    
     // Primero intentar normalizar la fecha
     let fechaNormalizada = normalizarFecha(datosProcesados.date);
-    console.log(`[Zenio] Resultado normalizarFecha: ${fechaNormalizada}`);
     
     // Si no se pudo normalizar, intentar con expresiones temporales
     if (!fechaNormalizada) {
-      console.log(`[Zenio] Intentando reemplazarExpresionesTemporalesPorFecha...`);
       fechaNormalizada = reemplazarExpresionesTemporalesPorFecha(datosProcesados.date);
-      console.log(`[Zenio] Resultado reemplazarExpresionesTemporalesPorFecha: "${fechaNormalizada}"`);
       
       // Si la función de reemplazo devolvió el mismo texto, significa que no encontró expresiones temporales
       if (fechaNormalizada === datosProcesados.date) {
-        console.log(`[Zenio] No se encontraron expresiones temporales, fechaNormalizada = null`);
         fechaNormalizada = null;
       }
     }
     
     if (fechaNormalizada) {
-      console.log(`[Zenio] Fecha procesada: "${datosProcesados.date}" -> "${fechaNormalizada}"`);
       datosProcesados.date = fechaNormalizada;
       
       // Solo agregar _processedDate si se solicita (solo para insert)
       if (includeProcessedDate && timezone) {
         datosProcesados._processedDate = procesarFechaConZonaHoraria(fechaNormalizada, timezone);
-        console.log(`[Zenio] Fecha con zona horaria ${timezone}:`, datosProcesados._processedDate);
       }
-    } else {
-      console.log(`[Zenio] No se pudo procesar la fecha, manteniendo original: "${datosProcesados.date}"`);
     }
-  } else {
-    console.log(`[Zenio] No hay fecha para procesar o no es string`);
   }
   
-  console.log(`[Zenio] Datos procesados finales:`, JSON.stringify(datosProcesados, null, 2));
   return datosProcesados;
 }
 
@@ -1098,8 +1071,6 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
 
 // Funciones auxiliares para transacciones
 async function insertTransaction(transactionData: any, userId: string, categories?: any[]): Promise<any> {
-  console.log(`[Zenio] insertTransaction - datos recibidos:`, JSON.stringify(transactionData, null, 2));
-  
   const type = transactionData.type === 'gasto' ? 'EXPENSE' : 'INCOME';
   const amount = parseFloat(transactionData.amount);
   const categoryName = transactionData.category;
@@ -1110,40 +1081,26 @@ async function insertTransaction(transactionData: any, userId: string, categorie
   const utc = ahora.getTime() + (ahora.getTimezoneOffset() * 60000);
   const fechaRD = new Date(utc + (offsetRD * 60 * 60 * 1000));
   
-  console.log(`[Zenio] Fecha actual calculada en insertTransaction: ${fechaRD.toISOString()}`);
-  
   let date = fechaRD;
   if (transactionData.date) {
-    console.log(`[Zenio] Procesando fecha proporcionada: "${transactionData.date}"`);
-    
     // Si se proporciona una fecha, validar que sea razonable (no muy antigua)
     const fechaMinima = new Date('2020-01-01'); // Fecha mínima razonable
     
     // Usar la fecha procesada con zona horaria si está disponible
     if (transactionData._processedDate) {
-      console.log(`[Zenio] Usando _processedDate:`, transactionData._processedDate);
       date = transactionData._processedDate;
     } else {
-      console.log(`[Zenio] No hay _processedDate, usando fallback`);
       // Fallback al método anterior - aplicar zona horaria correctamente
       const fechaLocal = new Date(transactionData.date + 'T00:00:00');
       const fechaUTC = new Date(fechaLocal.getTime() - (fechaLocal.getTimezoneOffset() * 60000));
       
-      console.log(`[Zenio] fechaLocal: ${fechaLocal.toISOString()}, fechaUTC: ${fechaUTC.toISOString()}`);
-      
       if (fechaUTC < fechaMinima) {
-        console.log(`[Zenio] Fecha muy antigua, usando fecha actual`);
         date = fechaRD;
       } else {
-        console.log(`[Zenio] Usando fechaUTC calculada`);
         date = fechaUTC;
       }
     }
-  } else {
-    console.log(`[Zenio] No se proporcionó fecha, usando fecha actual`);
   }
-  
-  console.log(`[Zenio] Fecha final para guardar: ${date.toISOString()}`);
   
   const description = transactionData.description || '';
 
@@ -2168,9 +2125,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
             budget: lastAction.data.budget,
             goal: lastAction.data.goal // Incluir la meta si es una acción de meta
           };
-          console.log(`[Zenio] Incluyendo acción en respuesta: ${lastAction.action}`);
-          console.log(`[Zenio] Respuesta completa que se envía al frontend:`, JSON.stringify(response, null, 2));
-          return res.json(response);
+              return res.json(response);
         }
         return res.json({
           message: lastMessage.content[0].type === 'text' ? lastMessage.content[0].text.value : 'Respuesta no disponible',
