@@ -324,15 +324,23 @@ async function validateCategory(categoryName: string, type: string, availableCat
       });
       
       if (foundCategory) {
-        // Obtener el nombre limpio para buscar en la BD
+        // Si encontramos la categoría en la lista del frontend, usar directamente su ID
+        if (typeof foundCategory === 'object' && foundCategory.id) {
+          return { valid: true, categoryId: foundCategory.id };
+        }
+        
+        // Fallback: buscar en la BD usando el nombre normalizado
         const cleanName = typeof foundCategory === 'object' && foundCategory.name ? foundCategory.name : foundCategory;
-        // Obtener el ID de la categoría de la base de datos
-        const category = await prisma.category.findFirst({
-          where: {
-            name: { equals: cleanName, mode: 'insensitive' },
-            type: dbType
-          }
+        
+        // Buscar en la BD usando normalización de texto para ignorar acentos y mayúsculas
+        const allCategories = await prisma.category.findMany({
+          where: { type: dbType }
         });
+        
+        const category = allCategories.find(cat => 
+          normalizarTexto(cat.name) === normalizarTexto(cleanName)
+        );
+        
         if (category) {
           return { valid: true, categoryId: category.id };
         }
@@ -348,24 +356,24 @@ async function validateCategory(categoryName: string, type: string, availableCat
     } else {
       // Comportamiento original: consultar base de datos
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      const category = await prisma.category.findFirst({
-        where: {
-          name: { equals: categoryName, mode: 'insensitive' },
-          type: dbType
-        }
+      
+      // Buscar en la BD usando normalización de texto para ignorar acentos y mayúsculas
+      const allCategories = await prisma.category.findMany({
+        where: { type: dbType }
       });
+      
+      const category = allCategories.find(cat => 
+        normalizarTexto(cat.name) === normalizarTexto(categoryName)
+      );
+      
       if (category) {
         return { valid: true, categoryId: category.id };
       } else {
         // Sugerir categorías válidas
-        const suggestions = await prisma.category.findMany({
-          where: { type: dbType },
-          select: { name: true }
-        });
         return {
           valid: false,
-          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.map((c: any) => c.name).join(', ')}`,
-          suggestions: suggestions.map((c: any) => c.name)
+          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${allCategories.map((c: any) => c.name).join(', ')}`,
+          suggestions: allCategories.map((c: any) => c.name)
         };
       }
     }
