@@ -923,17 +923,19 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
   console.log('[Zenio] Argumentos recibidos en manage_budget_record:', JSON.stringify(args, null, 2));
   const { operation, category, amount, previous_amount, recurrence } = args;
+  const filtros = args.filtros_busqueda;
 
   // Validaciones
   if (!['insert', 'update', 'delete', 'list'].includes(operation)) {
     throw new Error('Operación inválida: debe ser insert, update, delete o list');
   }
 
-  if (!category) {
+  // Para operaciones que no son list, category es requerida
+  if (!category && operation !== 'list') {
     throw new Error('La categoría es requerida');
   }
 
-  if (!amount && operation !== 'list') {
+  if (!amount && !['list'].includes(operation)) {
     throw new Error('El monto es requerido');
   }
 
@@ -950,7 +952,7 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
     case 'delete':
       return await deleteBudget(category, previous_amount, userId, categories);
     case 'list':
-      return await listBudgets(category, userId, categories);
+      return await listBudgets(category, userId, categories, filtros);
     default:
       throw new Error('Operación no soportada');
   }
@@ -1691,10 +1693,65 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
   };
 }
 
-async function listBudgets(category: string | undefined, userId: string, categories?: any[]): Promise<any> {
+async function listBudgets(category: string | undefined, userId: string, categories?: any[], filtros?: any): Promise<any> {
   let where: any = { user_id: userId };
+  let limit: number | undefined;
+
+  // Usar filtros_busqueda si están disponibles
+  if (filtros) {
+    if (filtros.limit) {
+      limit = parseInt(filtros.limit);
+      if (isNaN(limit) || limit <= 0 || limit > 100) {
+        throw new Error('Limit debe ser un número entre 1 y 100');
+      }
+    }
+    
+    if (filtros.category) {
+      const cat = await prisma.category.findFirst({
+        where: { name: { equals: filtros.category, mode: 'insensitive' } }
+      });
+      if (cat) {
+        where.category_id = cat.id;
+      }
+    }
+    
+    if (filtros.recurrence) {
+      const periodMap: { [key: string]: string } = {
+        'semanal': 'weekly',
+        'mensual': 'monthly',
+        'anual': 'yearly'
+      };
+      const period = periodMap[filtros.recurrence];
+      if (period) {
+        where.period = period;
+      }
+    }
+    
+    if (filtros.min_amount || filtros.max_amount) {
+      let amountRange: any = {};
+      
+      if (filtros.min_amount) {
+        const minAmount = parseFloat(filtros.min_amount);
+        if (!isNaN(minAmount)) {
+          amountRange.gte = minAmount;
+        }
+      }
+      
+      if (filtros.max_amount) {
+        const maxAmount = parseFloat(filtros.max_amount);
+        if (!isNaN(maxAmount)) {
+          amountRange.lte = maxAmount;
+        }
+      }
+      
+      if (Object.keys(amountRange).length > 0) {
+        where.amount = amountRange;
+      }
+    }
+  }
   
-  if (category) {
+  // Fallback a category parameter para compatibilidad con versión anterior
+  if (category && !filtros?.category) {
     const cat = await prisma.category.findFirst({
       where: { name: { equals: category, mode: 'insensitive' } }
     });
@@ -1706,6 +1763,7 @@ async function listBudgets(category: string | undefined, userId: string, categor
   const budgetList = await prisma.budget.findMany({
     where,
     orderBy: { created_at: 'desc' },
+    take: limit,
     include: {
       category: {
         select: {
@@ -1718,12 +1776,26 @@ async function listBudgets(category: string | undefined, userId: string, categor
       }
     }
   });
+
+  // Crear mensaje formateado con la lista
+  let mensaje = '';
+  if (budgetList.length === 0) {
+    mensaje = 'No se encontraron presupuestos con los criterios especificados.';
+  } else {
+    const limitText = limit ? ` (mostrando ${Math.min(limit, budgetList.length)})` : '';
+    mensaje = `💰 **${budgetList.length} presupuestos encontrados${limitText}:**\n\n`;
+    
+    mensaje += budgetList.map(b => {
+      const periodo = b.period === 'weekly' ? 'semanal' : b.period === 'monthly' ? 'mensual' : 'anual';
+      const monto = `RD$${b.amount.toLocaleString('es-DO')}`;
+      const fechaCreacion = new Date(b.created_at).toLocaleDateString('es-ES');
+      return `💳 **${b.name}** - ${monto}\n   📅 ${periodo} | 🏷️ ${b.category.name}\n   📆 Creado: ${fechaCreacion}`;
+    }).join('\n\n');
+  }
   
   return {
     success: true,
-    message: category 
-      ? `Se encontraron ${budgetList.length} presupuestos para ${category}`
-      : `Se encontraron ${budgetList.length} presupuestos en total`,
+    message: mensaje,
     budgets: budgetList,
     action: 'budget_list'
   };
