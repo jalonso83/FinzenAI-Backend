@@ -961,6 +961,7 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
 // Función para ejecutar manage_goal_record
 async function executeManageGoalRecord(args: any, userId: string, categories?: any[]): Promise<any> {
   const { operation, goal_data, criterios_identificacion } = args;
+  const filtros = args.filtros_busqueda;
 
   // Validaciones
   if (!['insert', 'update', 'delete', 'list'].includes(operation)) {
@@ -988,6 +989,14 @@ async function executeManageGoalRecord(args: any, userId: string, categories?: a
     }
   }
 
+  // Procesar fechas en los filtros para la operación list
+  if (filtros && filtros.due_date_from) {
+    filtros.due_date_from = reemplazarExpresionesTemporalesPorFecha(filtros.due_date_from);
+  }
+  if (filtros && filtros.due_date_to) {
+    filtros.due_date_to = reemplazarExpresionesTemporalesPorFecha(filtros.due_date_to);
+  }
+
   // Ejecutar operación
   switch (operation) {
     case 'insert':
@@ -997,7 +1006,7 @@ async function executeManageGoalRecord(args: any, userId: string, categories?: a
     case 'delete':
       return await deleteGoal(criterios_identificacion, userId, categories);
     case 'list':
-      return await listGoals(goal_data, userId, categories);
+      return await listGoals(goal_data, userId, categories, filtros);
     default:
       throw new Error('Operación no soportada');
   }
@@ -2053,11 +2062,81 @@ async function deleteGoal(criterios: any, userId: string, categories?: string[])
   };
 }
 
-async function listGoals(goalData: any, userId: string, categories?: string[]): Promise<any> {
+async function listGoals(goalData: any, userId: string, categories?: string[], filtros?: any): Promise<any> {
   let where: any = { userId };
+  let limit: number | undefined;
+
+  // Usar filtros_busqueda si están disponibles
+  if (filtros) {
+    if (filtros.limit) {
+      limit = parseInt(filtros.limit);
+      if (isNaN(limit) || limit <= 0 || limit > 100) {
+        throw new Error('Limit debe ser un número entre 1 y 100');
+      }
+    }
+    
+    if (filtros.category) {
+      const cat = await prisma.category.findFirst({
+        where: { name: { equals: filtros.category, mode: 'insensitive' } }
+      });
+      if (cat) {
+        where.categoryId = cat.id;
+      }
+    }
+    
+    if (filtros.priority) {
+      where.priority = filtros.priority;
+    }
+    
+    if (filtros.min_amount || filtros.max_amount) {
+      let amountRange: any = {};
+      
+      if (filtros.min_amount) {
+        const minAmount = parseFloat(filtros.min_amount);
+        if (!isNaN(minAmount)) {
+          amountRange.gte = minAmount;
+        }
+      }
+      
+      if (filtros.max_amount) {
+        const maxAmount = parseFloat(filtros.max_amount);
+        if (!isNaN(maxAmount)) {
+          amountRange.lte = maxAmount;
+        }
+      }
+      
+      if (Object.keys(amountRange).length > 0) {
+        where.targetAmount = amountRange;
+      }
+    }
+    
+    if (filtros.due_date_from || filtros.due_date_to) {
+      let dateRange: any = {};
+      
+      if (filtros.due_date_from) {
+        const fechaNormalizada = normalizarFecha(filtros.due_date_from);
+        if (fechaNormalizada) {
+          dateRange.gte = new Date(fechaNormalizada + 'T00:00:00.000Z');
+        }
+      }
+      
+      if (filtros.due_date_to) {
+        const fechaNormalizada = normalizarFecha(filtros.due_date_to);
+        if (fechaNormalizada) {
+          const endDate = new Date(fechaNormalizada + 'T00:00:00.000Z');
+          endDate.setUTCDate(endDate.getUTCDate() + 1);
+          dateRange.lte = endDate;
+        }
+      }
+      
+      if (Object.keys(dateRange).length > 0) {
+        where.targetDate = dateRange;
+      }
+    }
+  }
   
-  // Si se proporciona categoría específica
-  if (goalData && goalData.category) {
+  // Fallback a goalData para compatibilidad con versión anterior
+  if (goalData && goalData.category && !filtros?.category) {
     const cat = await prisma.category.findFirst({
       where: { name: { equals: goalData.category, mode: 'insensitive' } }
     });
@@ -2069,6 +2148,7 @@ async function listGoals(goalData: any, userId: string, categories?: string[]): 
   const goalList = await prisma.goal.findMany({
     where,
     orderBy: { createdAt: 'desc' },
+    take: limit,
     include: {
       category: {
         select: {
@@ -2080,12 +2160,47 @@ async function listGoals(goalData: any, userId: string, categories?: string[]): 
       }
     }
   });
+
+  // Calcular estado de cada meta y crear mensaje formateado
+  let mensaje = '';
+  if (goalList.length === 0) {
+    mensaje = 'No se encontraron metas con los criterios especificados.';
+  } else {
+    const limitText = limit ? ` (mostrando ${Math.min(limit, goalList.length)})` : '';
+    mensaje = `🎯 **${goalList.length} metas encontradas${limitText}:**\n\n`;
+    
+    mensaje += goalList.map(g => {
+      // Calcular estado de la meta
+      const ahora = new Date();
+      const fechaVencimiento = g.targetDate ? new Date(g.targetDate) : null;
+      let estado = '';
+      let emoji = '';
+      
+      if (fechaVencimiento) {
+        if (fechaVencimiento < ahora) {
+          estado = 'vencida';
+          emoji = '⏰';
+        } else {
+          estado = 'activa';
+          emoji = '✅';
+        }
+      } else {
+        estado = 'sin fecha';
+        emoji = '📅';
+      }
+      
+      // Formatear información de la meta
+      const monto = `RD$${g.targetAmount.toLocaleString('es-DO')}`;
+      const fechaTexto = fechaVencimiento ? fechaVencimiento.toLocaleDateString('es-ES') : 'Sin fecha límite';
+      const prioridad = g.priority || 'Media';
+      
+      return `${emoji} **${g.name}** - ${monto}\n   📊 Prioridad: ${prioridad} | 🏷️ ${g.category.name}\n   📅 Vence: ${fechaTexto} (${estado})`;
+    }).join('\n\n');
+  }
   
   return {
     success: true,
-    message: goalData && goalData.category 
-      ? `Se encontraron ${goalList.length} metas para ${goalData.category}`
-      : `Se encontraron ${goalList.length} metas en total`,
+    message: mensaje,
     goals: goalList,
     action: 'goal_list'
   };
