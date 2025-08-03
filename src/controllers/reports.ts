@@ -3,8 +3,15 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+interface Alert {
+  type: string;
+  category: string;
+  message: string;
+  level: string;
+}
+
 // Obtener reporte por categorías
-export const getCategoryReport = async (req: Request, res: Response) => {
+export const getCategoryReport = async (req: Request, res: Response): Promise<Response> => {
   try {
     const userId = req.user?.id;
     if (!userId) {
@@ -61,7 +68,7 @@ export const getCategoryReport = async (req: Request, res: Response) => {
     let totalIncome = 0;
 
     transactions.forEach(transaction => {
-      const categoryId = transaction.categoryId;
+      const categoryId = transaction.category_id;
       const categoryName = transaction.category?.name || 'Sin categoría';
       const categoryType = transaction.category?.type || transaction.type;
       const amount = parseFloat(transaction.amount.toString());
@@ -93,7 +100,7 @@ export const getCategoryReport = async (req: Request, res: Response) => {
       stats.minAmount = Math.min(stats.minAmount, amount);
 
       // Calcular totales generales
-      if (transaction.type === 'expense') {
+      if (transaction.type === 'EXPENSE') {
         totalExpenses += amount;
       } else {
         totalIncome += amount;
@@ -136,7 +143,7 @@ export const getCategoryReport = async (req: Request, res: Response) => {
     const monthlyStats = new Map();
     monthlyData.forEach(transaction => {
       const monthKey = `${transaction.date.getFullYear()}-${String(transaction.date.getMonth() + 1).padStart(2, '0')}`;
-      const categoryId = transaction.categoryId;
+      const categoryId = transaction.category_id;
       const amount = parseFloat(transaction.amount.toString());
 
       if (!monthlyStats.has(monthKey)) {
@@ -156,9 +163,9 @@ export const getCategoryReport = async (req: Request, res: Response) => {
     });
 
     // Convertir a formato para gráfico
-    const chartData = [];
+    const chartData: any[] = [];
     for (const [month, categories] of monthlyStats) {
-      const monthData = { month };
+      const monthData: any = { month };
       for (const [categoryId, data] of categories) {
         monthData[data.categoryName] = data.total;
       }
@@ -175,7 +182,7 @@ export const getCategoryReport = async (req: Request, res: Response) => {
       Math.min(...transactions.map(t => parseFloat(t.amount.toString()))) : 0;
 
     // Generar alertas
-    const alerts = [];
+    const alerts: Alert[] = [];
     
     // Alerta para categorías que superan el 30% del total
     categoryData.forEach(category => {
@@ -209,7 +216,7 @@ export const getCategoryReport = async (req: Request, res: Response) => {
 
     const prevCategoryStats = new Map();
     previousTransactions.forEach(transaction => {
-      const categoryId = transaction.categoryId;
+      const categoryId = transaction.category_id;
       const amount = parseFloat(transaction.amount.toString());
       
       if (!prevCategoryStats.has(categoryId)) {
@@ -254,16 +261,16 @@ export const getCategoryReport = async (req: Request, res: Response) => {
       alerts
     };
 
-    res.json(reportData);
+    return res.json(reportData);
 
   } catch (error) {
     console.error('Error generando reporte por categorías:', error);
-    res.status(500).json({ message: 'Error interno del servidor' });
+    return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };
 
 // Exportar datos del reporte (preparar para PDF/Excel)
-export const exportCategoryReport = async (req: Request, res: Response) => {
+export const exportCategoryReport = async (req: Request, res: Response): Promise<Response> => {
   try {
     const userId = req.user?.id;
     if (!userId) {
@@ -278,13 +285,14 @@ export const exportCategoryReport = async (req: Request, res: Response) => {
     // Aquí se podría implementar la conversión a PDF/Excel
     // Por ahora devolvemos JSON
     if (format === 'json') {
-      return; // Ya se respondió en getCategoryReport
+      // Reutilizar la función getCategoryReport para obtener los datos
+      return await getCategoryReport(req, res);
     }
     
-    res.status(501).json({ message: 'Formato de exportación no implementado aún' });
+    return res.status(501).json({ message: 'Formato de exportación no implementado aún' });
     
   } catch (error) {
     console.error('Error exportando reporte:', error);
-    res.status(500).json({ message: 'Error interno del servidor' });
+    return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };

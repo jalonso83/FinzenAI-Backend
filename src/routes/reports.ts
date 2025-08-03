@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authenticateToken } from '../middlewares/auth';
 import { getCategoryReport, exportCategoryReport } from '../controllers/reports';
 
-const router = Router();
+const router: Router = Router();
 
 // Aplicar middleware de autenticación a todas las rutas
 router.use(authenticateToken);
