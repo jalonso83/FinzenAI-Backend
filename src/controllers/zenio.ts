@@ -2235,7 +2235,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // 3. Obtener datos de la petición
-    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone } = req.body;
+    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting } = req.body;
     threadId = incomingThreadId;
     
     // Usar zona horaria del usuario o default a UTC
@@ -2403,7 +2403,8 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     // Preparar respuesta con acciones ejecutadas
     const response: any = {
       message: assistantResponse,
-      threadId
+      threadId,
+      autoGreeting: autoGreeting || false
     };
 
     // Incluir la última acción ejecutada para el frontend
