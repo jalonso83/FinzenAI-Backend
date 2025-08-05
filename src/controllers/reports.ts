@@ -35,8 +35,10 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
     // Filtro de categorías si se especifica
     let categoryFilter: any = {};
     if (categories) {
-      const categoryIds = (categories as string).split(',').map(id => parseInt(id));
-      categoryFilter = { categoryId: { in: categoryIds } };
+      const categoryIds = (categories as string).split(',').filter(id => id.trim() !== '');
+      if (categoryIds.length > 0) {
+        categoryFilter = { category_id: { in: categoryIds } };
+      }
     }
 
     // Obtener transacciones en el rango de fechas
@@ -121,15 +123,15 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
     // Top 5 categorías
     const top5Categories = categoryData.slice(0, 5);
 
-    // Datos para gráfico de líneas (últimos 6 meses por categoría)
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    // Datos para gráfico de líneas (últimos 3 meses por categoría)
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
     const monthlyData = await prisma.transaction.findMany({
       where: {
         userId,
         date: {
-          gte: sixMonthsAgo,
+          gte: threeMonthsAgo,
           lte: now
         },
         ...categoryFilter
