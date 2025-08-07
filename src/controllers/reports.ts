@@ -747,3 +747,283 @@ function generateTimeSeries(transactions: any[], granularity: string, startDate:
   // Convertir Map a Array y ordenar
   return Array.from(groupedData.values()).sort((a, b) => a.period.localeCompare(b.period));
 }
+
+// Obtener reporte de presupuestos - Análisis de rendimiento
+export const getBudgetReport = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: 'Usuario no autenticado' });
+    }
+
+    const { 
+      startDate, 
+      endDate, 
+      categories,
+      activeOnly = 'true' 
+    } = req.query;
+
+    // Configurar fechas por defecto (mes actual)
+    const now = new Date();
+    const defaultStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    const defaultEndDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    const dateStart = startDate ? new Date(startDate as string) : defaultStartDate;
+    const dateEnd = endDate ? new Date(endDate as string) : defaultEndDate;
+
+    // Filtro de categorías si se especifica
+    let categoryFilter: any = {};
+    if (categories) {
+      const categoryIds = (categories as string).split(',').filter(id => id.trim() !== '');
+      if (categoryIds.length > 0) {
+        categoryFilter = { category_id: { in: categoryIds } };
+      }
+    }
+
+    // Filtro de presupuestos activos
+    let activeFilter: any = {};
+    if (activeOnly === 'true') {
+      activeFilter = { is_active: true };
+    }
+
+    // Obtener presupuestos del período
+    const budgets = await prisma.budget.findMany({
+      where: {
+        userId,
+        start_date: { lte: dateEnd },
+        end_date: { gte: dateStart },
+        ...categoryFilter,
+        ...activeFilter
+      },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            icon: true
+          }
+        }
+      },
+      orderBy: { created_at: 'desc' }
+    });
+
+    // Obtener transacciones relacionadas con los presupuestos
+    const budgetCategoryIds = budgets.map(b => b.category_id);
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        userId,
+        category_id: { in: budgetCategoryIds },
+        date: { gte: dateStart, lte: dateEnd },
+        type: 'EXPENSE'
+      },
+      include: { category: true },
+      orderBy: { date: 'desc' }
+    });
+
+    // Procesar datos de presupuestos
+    const budgetStats = budgets.map(budget => {
+      const budgetAmount = parseFloat(budget.amount.toString());
+      
+      // Calcular gastos en este presupuesto
+      const budgetTransactions = transactions.filter(t => t.category_id === budget.category_id);
+      const totalSpent = budgetTransactions.reduce((sum, t) => sum + parseFloat(t.amount.toString()), 0);
+      
+      // Calcular métricas
+      const percentageUsed = budgetAmount > 0 ? (totalSpent / budgetAmount) * 100 : 0;
+      const remaining = Math.max(0, budgetAmount - totalSpent);
+      const isExceeded = totalSpent > budgetAmount;
+      
+      // Calcular días transcurridos y restantes
+      const budgetStart = new Date(budget.start_date);
+      const budgetEnd = new Date(budget.end_date);
+      const totalDays = Math.ceil((budgetEnd.getTime() - budgetStart.getTime()) / (1000 * 60 * 60 * 24));
+      const elapsedDays = Math.ceil((now.getTime() - budgetStart.getTime()) / (1000 * 60 * 60 * 24));
+      const remainingDays = Math.max(0, totalDays - elapsedDays);
+      
+      // Velocidad de gasto (DOP/día)
+      const plannedDailySpend = totalDays > 0 ? budgetAmount / totalDays : 0;
+      const actualDailySpend = elapsedDays > 0 ? totalSpent / elapsedDays : 0;
+      const spendVelocity = plannedDailySpend > 0 ? (actualDailySpend / plannedDailySpend) * 100 : 0;
+      
+      // Proyección de fin de período
+      const projectedTotal = remainingDays > 0 ? totalSpent + (actualDailySpend * remainingDays) : totalSpent;
+      const projectedExcess = Math.max(0, projectedTotal - budgetAmount);
+      
+      // Estado del presupuesto
+      let status = 'on_track';
+      if (isExceeded) {
+        status = 'exceeded';
+      } else if (percentageUsed > 90) {
+        status = 'critical';
+      } else if (percentageUsed > 75) {
+        status = 'warning';
+      }
+
+      return {
+        id: budget.id,
+        name: budget.name,
+        category: budget.category,
+        period: budget.period,
+        budgetAmount,
+        totalSpent,
+        remaining,
+        percentageUsed,
+        isExceeded,
+        status,
+        totalDays,
+        elapsedDays,
+        remainingDays,
+        plannedDailySpend,
+        actualDailySpend,
+        spendVelocity,
+        projectedTotal,
+        projectedExcess,
+        alertPercentage: budget.alert_percentage,
+        isActive: budget.is_active,
+        startDate: budget.start_date,
+        endDate: budget.end_date,
+        transactionCount: budgetTransactions.length
+      };
+    });
+
+    // Métricas generales
+    const totalBudgetsActive = budgetStats.filter(b => b.isActive).length;
+    const totalBudgeted = budgetStats.reduce((sum, b) => sum + b.budgetAmount, 0);
+    const totalSpent = budgetStats.reduce((sum, b) => sum + b.totalSpent, 0);
+    const totalRemaining = budgetStats.reduce((sum, b) => sum + b.remaining, 0);
+    
+    // Tasa de cumplimiento
+    const budgetsOnTrack = budgetStats.filter(b => b.status === 'on_track').length;
+    const complianceRate = budgets.length > 0 ? (budgetsOnTrack / budgets.length) * 100 : 0;
+    
+    // Eficiencia promedio (qué tan cerca del límite ideal)
+    const avgEfficiency = budgetStats.length > 0 
+      ? budgetStats.reduce((sum, b) => sum + Math.min(100, b.percentageUsed), 0) / budgetStats.length
+      : 0;
+
+    // Análisis comparativo
+    const bestBudget = budgetStats
+      .filter(b => b.percentageUsed <= 100)
+      .sort((a, b) => Math.abs(85 - a.percentageUsed) - Math.abs(85 - b.percentageUsed))[0] || null;
+    
+    const worstBudget = budgetStats
+      .sort((a, b) => b.percentageUsed - a.percentageUsed)[0] || null;
+
+    // Generar alertas
+    const alerts: Alert[] = [];
+    
+    // Presupuestos excedidos
+    budgetStats.filter(b => b.isExceeded).forEach(budget => {
+      alerts.push({
+        type: 'exceeded',
+        category: 'Presupuesto Excedido',
+        message: `${budget.name} ha excedido su límite en ${((budget.percentageUsed - 100).toFixed(1))}%`,
+        level: 'warning'
+      });
+    });
+
+    // Presupuestos en riesgo crítico
+    budgetStats.filter(b => b.status === 'critical' && !b.isExceeded).forEach(budget => {
+      alerts.push({
+        type: 'critical',
+        category: 'Riesgo Crítico',
+        message: `${budget.name} está al ${budget.percentageUsed.toFixed(1)}% con ${budget.remainingDays} días restantes`,
+        level: 'warning'
+      });
+    });
+
+    // Oportunidades de ahorro
+    budgetStats.filter(b => b.percentageUsed < 50 && b.elapsedDays > b.totalDays * 0.5).forEach(budget => {
+      alerts.push({
+        type: 'saving_opportunity',
+        category: 'Oportunidad de Ahorro',
+        message: `${budget.name} tiene potencial de ahorro de ${budget.remaining.toFixed(0)} DOP`,
+        level: 'info'
+      });
+    });
+
+    // Análisis temporal (últimos 3 meses para tendencia)
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    
+    const historicalBudgets = await prisma.budget.findMany({
+      where: {
+        userId,
+        start_date: { gte: threeMonthsAgo },
+        end_date: { lte: now }
+      },
+      include: { category: true }
+    });
+
+    // Calcular tendencia de cumplimiento
+    const monthlyCompliance = new Map();
+    for (const budget of historicalBudgets) {
+      const monthKey = `${budget.start_date.getFullYear()}-${String(budget.start_date.getMonth() + 1).padStart(2, '0')}`;
+      
+      if (!monthlyCompliance.has(monthKey)) {
+        monthlyCompliance.set(monthKey, { total: 0, compliant: 0 });
+      }
+      
+      const monthData = monthlyCompliance.get(monthKey);
+      monthData.total += 1;
+      
+      // Aquí necesitaríamos calcular si se cumplió, por simplicidad asumimos un cálculo básico
+      if (parseFloat(budget.spent.toString()) <= parseFloat(budget.amount.toString())) {
+        monthData.compliant += 1;
+      }
+    }
+
+    const complianceTrend = Array.from(monthlyCompliance.entries()).map(([month, data]) => ({
+      month,
+      complianceRate: data.total > 0 ? (data.compliant / data.total) * 100 : 0,
+      totalBudgets: data.total
+    })).sort((a, b) => a.month.localeCompare(b.month));
+
+    const reportData = {
+      period: {
+        startDate: dateStart,
+        endDate: dateEnd,
+        activeOnly: activeOnly === 'true'
+      },
+      metrics: {
+        totalBudgetsActive,
+        totalBudgets: budgets.length,
+        totalBudgeted,
+        totalSpent,
+        totalRemaining,
+        complianceRate,
+        avgEfficiency,
+        budgetsExceeded: budgetStats.filter(b => b.isExceeded).length,
+        budgetsAtRisk: budgetStats.filter(b => b.status === 'critical' || b.status === 'warning').length
+      },
+      budgetStats: budgetStats.sort((a, b) => b.percentageUsed - a.percentageUsed),
+      insights: {
+        bestBudget: bestBudget ? {
+          name: bestBudget.name,
+          category: bestBudget.category.name,
+          efficiency: bestBudget.percentageUsed
+        } : null,
+        worstBudget: worstBudget ? {
+          name: worstBudget.name,
+          category: worstBudget.category.name,
+          overrun: worstBudget.percentageUsed
+        } : null,
+        totalSavingOpportunity: budgetStats
+          .filter(b => b.percentageUsed < 80)
+          .reduce((sum, b) => sum + b.remaining, 0),
+        avgSpendVelocity: budgetStats.length > 0 
+          ? budgetStats.reduce((sum, b) => sum + b.spendVelocity, 0) / budgetStats.length
+          : 0
+      },
+      complianceTrend,
+      alerts
+    };
+
+    return res.json(reportData);
+
+  } catch (error) {
+    console.error('Error generando reporte de presupuestos:', error);
+    return res.status(500).json({ message: 'Error interno del servidor' });
+  }
+};

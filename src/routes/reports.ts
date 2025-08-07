@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticateToken } from '../middlewares/auth';
-import { getCategoryReport, exportCategoryReport, getDateReport } from '../controllers/reports';
+import { getCategoryReport, exportCategoryReport, getDateReport, getBudgetReport } from '../controllers/reports';
 
 const router: Router = Router();
 
@@ -11,5 +11,6 @@ router.use(authenticateToken);
 router.get('/categories', getCategoryReport);
 router.get('/categories/export', exportCategoryReport);
 router.get('/dates', getDateReport);
+router.get('/budgets', getBudgetReport);
 
 export default router;
