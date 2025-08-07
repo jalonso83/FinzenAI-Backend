@@ -812,7 +812,7 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
     const budgetCategoryIds = budgets.map(b => b.category_id);
     const transactions = await prisma.transaction.findMany({
       where: {
-        user_id: userId,
+        userId,
         category_id: { in: budgetCategoryIds },
         date: { gte: dateStart, lte: dateEnd },
         type: 'EXPENSE'
