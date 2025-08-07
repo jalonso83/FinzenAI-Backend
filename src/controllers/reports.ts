@@ -789,7 +789,7 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
     // Obtener presupuestos del período
     const budgets = await prisma.budget.findMany({
       where: {
-        userId,
+        user_id: userId,
         start_date: { lte: dateEnd },
         end_date: { gte: dateStart },
         ...categoryFilter,
@@ -812,7 +812,7 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
     const budgetCategoryIds = budgets.map(b => b.category_id);
     const transactions = await prisma.transaction.findMany({
       where: {
-        userId,
+        user_id: userId,
         category_id: { in: budgetCategoryIds },
         date: { gte: dateStart, lte: dateEnd },
         type: 'EXPENSE'
@@ -949,7 +949,7 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
     
     const historicalBudgets = await prisma.budget.findMany({
       where: {
-        userId,
+        user_id: userId,
         start_date: { gte: threeMonthsAgo },
         end_date: { lte: now }
       },
