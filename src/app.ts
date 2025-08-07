@@ -46,7 +46,7 @@ app.use('/api/reports', reportRoutes);
 app.get('/api/health', (req, res) => {
   return res.json({
     status: 'OK',
-    message: 'FinZen AI Backend is running - Updated for Railway',
+    message: 'FinZen AI Backend is running - Budget Reports Ready',
     timestamp: new Date().toISOString(),
     version: process.env.APP_VERSION || '1.0.0'
   });
