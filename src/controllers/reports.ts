@@ -41,7 +41,7 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       }
     }
 
-    // Obtener transacciones en el rango de fechas
+    // Obtener transacciones en el rango de fechas - SOLO GASTOS
     const transactions = await prisma.transaction.findMany({
       where: {
         userId,
@@ -49,6 +49,7 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
           gte: dateStart,
           lte: dateEnd
         },
+        type: 'EXPENSE',  // Solo gastos para el reporte de categorías
         ...categoryFilter
       },
       include: {
@@ -64,10 +65,9 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       orderBy: { date: 'desc' }
     });
 
-    // Procesar datos para el reporte
+    // Procesar datos para el reporte - SOLO GASTOS
     const categoryStats = new Map();
     let totalExpenses = 0;
-    let totalIncome = 0;
 
     transactions.forEach(transaction => {
       const categoryId = transaction.category_id;
@@ -101,12 +101,8 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       stats.maxAmount = Math.max(stats.maxAmount, amount);
       stats.minAmount = Math.min(stats.minAmount, amount);
 
-      // Calcular totales generales
-      if (transaction.type === 'EXPENSE') {
-        totalExpenses += amount;
-      } else {
-        totalIncome += amount;
-      }
+      // Solo gastos
+      totalExpenses += amount;
     });
 
     // Convertir Map a Array y calcular promedios
@@ -134,6 +130,7 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
           gte: threeMonthsAgo,
           lte: now
         },
+        type: 'EXPENSE',  // Solo gastos para el gráfico
         ...categoryFilter
       },
       include: {
@@ -174,10 +171,10 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       chartData.push(monthData);
     }
 
-    // Métricas generales
+    // Métricas generales - SOLO GASTOS
     const totalTransactions = transactions.length;
     const averageTransactionAmount = totalTransactions > 0 ? 
-      (totalExpenses + totalIncome) / totalTransactions : 0;
+      totalExpenses / totalTransactions : 0;
     const maxTransaction = transactions.length > 0 ? 
       Math.max(...transactions.map(t => parseFloat(t.amount.toString()))) : 0;
     const minTransaction = transactions.length > 0 ? 
@@ -211,7 +208,8 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
         date: {
           gte: prevPeriodStart,
           lte: prevPeriodEnd
-        }
+        },
+        type: 'EXPENSE'  // Solo gastos para comparación
       },
       include: { category: true }
     });
@@ -250,7 +248,6 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       },
       metrics: {
         totalExpenses,
-        totalIncome,
         totalTransactions,
         averageTransactionAmount,
         maxTransaction,
@@ -305,7 +302,7 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
       }
     }
 
-    // Obtener datos para exportación
+    // Obtener datos para exportación - SOLO GASTOS
     const transactions = await prisma.transaction.findMany({
       where: {
         userId,
@@ -313,6 +310,7 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
           gte: dateStart,
           lte: dateEnd
         },
+        type: 'EXPENSE',  // Solo gastos para exportación
         ...categoryFilter
       },
       include: {
@@ -328,10 +326,9 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
       orderBy: { date: 'desc' }
     });
 
-    // Procesar datos para exportación
+    // Procesar datos para exportación - SOLO GASTOS
     const categoryStats = new Map();
     let totalExpenses = 0;
-    let totalIncome = 0;
 
     transactions.forEach(transaction => {
       const categoryId = transaction.category_id;
@@ -358,11 +355,8 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
       stats.maxAmount = Math.max(stats.maxAmount, amount);
       stats.minAmount = Math.min(stats.minAmount, amount);
 
-      if (transaction.type === 'EXPENSE') {
-        totalExpenses += amount;
-      } else {
-        totalIncome += amount;
-      }
+      // Solo gastos
+      totalExpenses += amount;
     });
 
     const categoryData = Array.from(categoryStats.values()).map(stats => ({
@@ -377,9 +371,8 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
     if (format === 'csv') {
       // Crear CSV para Excel
       const csvHeaders = [
-        'Categoría',
-        'Tipo',
-        'Total (DOP)',
+        'Categoría de Gasto',
+        'Total Gastado (DOP)',
         'Cantidad Transacciones',
         'Promedio (DOP)',
         'Máximo (DOP)',
@@ -389,7 +382,6 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
 
       const csvRows = categoryData.map(cat => [
         cat.name,
-        cat.type === 'EXPENSE' ? 'Gasto' : 'Ingreso',
         cat.total.toFixed(2),
         cat.count.toString(),
         cat.average.toFixed(2),
@@ -422,12 +414,10 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
           },
           generatedAt: new Date().toISOString(),
           totalTransactions: transactions.length,
-          totalExpenses,
-          totalIncome
+          totalExpenses
         },
         summary: {
           totalExpenses,
-          totalIncome,
           totalTransactions: transactions.length,
           activeCategories: categoryData.length
         },
