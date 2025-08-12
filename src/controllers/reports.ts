@@ -248,6 +248,7 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       },
       metrics: {
         totalExpenses,
+        totalIncome: 0, // Para compatibilidad con frontend
         totalTransactions,
         averageTransactionAmount,
         maxTransaction,
@@ -680,6 +681,7 @@ export const getIncomeReport = async (req: Request, res: Response): Promise<Resp
         endDate: dateEnd
       },
       metrics: {
+        totalExpenses: 0, // Para compatibilidad con frontend
         totalIncome,
         totalTransactions,
         averageTransactionAmount,
