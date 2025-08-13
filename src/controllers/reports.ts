@@ -127,8 +127,8 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       where: {
         userId,
         date: {
-          gte: threeMonthsAgo,
-          lte: now
+          gte: dateStart,
+          lte: dateEnd
         },
         type: 'EXPENSE',  // Solo gastos para el gráfico
         ...categoryFilter
@@ -561,8 +561,8 @@ export const getIncomeReport = async (req: Request, res: Response): Promise<Resp
       where: {
         userId,
         date: {
-          gte: threeMonthsAgo,
-          lte: now
+          gte: dateStart,
+          lte: dateEnd
         },
         type: 'INCOME',  // Solo ingresos para el gráfico
         ...categoryFilter
