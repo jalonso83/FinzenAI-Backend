@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { GamificationService } from '../services/gamificationService';
 
 const prisma = new PrismaClient();
 
@@ -226,6 +227,24 @@ export const createTransaction = async (req: Request, res: Response) => {
     // Recalcular presupuesto si es gasto
     if (type === 'EXPENSE') {
       await recalculateBudgetSpent(userId, category_id, transaction.date);
+    }
+
+    // Disparar evento de gamificación
+    try {
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'add_tx',
+        eventData: {
+          transactionId: transaction.id,
+          amount: transaction.amount,
+          type: transaction.type,
+          categoryId: transaction.category_id
+        },
+        pointsAwarded: 5
+      });
+    } catch (error) {
+      console.error('Error dispatching gamification event:', error);
+      // No fallar la transacción por error de gamificación
     }
 
     return res.status(201).json({

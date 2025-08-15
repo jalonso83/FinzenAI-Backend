@@ -31,6 +31,13 @@ model User {
   budgets             Budget[]
   transactions        Transaction[]
   goals               Goal[]
+  
+  // Gamificación
+  gamificationEvents  GamificationEvent[]
+  finScoreHistory     FinScoreHistory[]
+  userStreak          UserStreak?
+  userBadges          UserBadge[]
+  challengeParticipants ChallengeParticipant[]
 
   @@map("users")
 }
@@ -128,4 +135,137 @@ model Goal {
 enum TransactionType {
   INCOME
   EXPENSE
+}
+
+// =============================================
+// MODELOS DE GAMIFICACIÓN
+// =============================================
+
+// Sistema de Eventos de Gamificación
+model GamificationEvent {
+  id            String   @id @default(cuid())
+  userId        String
+  eventType     String   // 'add_tx', 'goal_complete', 'budget_overspend', etc.
+  eventData     Json?    // Datos específicos del evento
+  pointsAwarded Int      @default(0)
+  createdAt     DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("gamification_events")
+  @@index([userId, eventType])
+  @@index([createdAt])
+}
+
+// FinScore Histórico  
+model FinScoreHistory {
+  id           String   @id @default(cuid())
+  userId       String
+  score        Int      // 0-100
+  breakdown    Json     // {savings: 25, budget: 20, streak: 15, debt: 10}
+  calculatedAt DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("finscore_history")
+  @@index([userId, calculatedAt])
+}
+
+// Sistema de Rachas
+model UserStreak {
+  id                      String    @id @default(cuid())
+  userId                  String    @unique
+  currentStreak           Int       @default(0)
+  longestStreak           Int       @default(0)
+  lastActivityDate        DateTime?
+  streakType              String    @default("daily") // 'daily', 'budget', 'savings'
+  salvividasUsedThisMonth Boolean   @default(false)
+  lastSalvividasDate      DateTime?
+  updatedAt               DateTime  @updatedAt
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_streaks")
+}
+
+// Sistema de Badges
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  badgeId   String   // 'primer_paso', 'planificador', etc.
+  earnedAt  DateTime @default(now())
+  isFeatured Boolean @default(false)
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+  @@index([userId])
+}
+
+// Desafíos Mensuales
+model MonthlyChallenge {
+  id            String   @id @default(cuid())
+  name          String
+  description   String
+  startDate     DateTime
+  endDate       DateTime
+  criteria      Json     // Criterios específicos del desafío
+  rewardBadgeId String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  
+  participants ChallengeParticipant[]
+  
+  @@map("monthly_challenges")
+  @@index([isActive, startDate, endDate])
+}
+
+// Participación en Desafíos
+model ChallengeParticipant {
+  id          String   @id @default(cuid())
+  userId      String
+  challengeId String
+  joinedAt    DateTime @default(now())
+  progress    Json     @default("{}")
+  completed   Boolean  @default(false)
+  rank        Int?     // Para rankings
+  completedAt DateTime?
+  
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge MonthlyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, challengeId])
+  @@map("challenge_participants")
+  @@index([challengeId, completed])
+  @@index([userId])
+}
+
+// Enums para Gamificación
+enum EventType {
+  ADD_TX
+  EDIT_TX
+  DELETE_TX
+  CREATE_BUDGET
+  OVERSPEND
+  WITHIN_BUDGET
+  CREATE_GOAL
+  GOAL_CONTRIB
+  GOAL_COMPLETE
+  TIP_ACCEPTED
+  TIP_IGNORED
+  DAILY_OPEN
+  STREAK_BREAK
+}
+
+enum BadgeType {
+  PRIMER_PASO
+  PLANIFICADOR
+  AHORRO_ROOKIE
+  ZENIO_LOVER
+  ANTI_DOOM_SPENDER
+  RACHA_FUEGO
+  AHORRADOR_NOVATO
+  PRESUPUESTO_MAESTRO
+  META_CRUSHER
 }

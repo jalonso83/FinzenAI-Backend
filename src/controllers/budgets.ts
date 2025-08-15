@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { GamificationService } from '../services/gamificationService';
 
 const prisma = new PrismaClient();
 
@@ -212,6 +213,24 @@ export const createBudget = async (req: Request, res: Response) => {
         }
       }
     });
+
+    // Disparar evento de gamificación
+    try {
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'create_budget',
+        eventData: {
+          budgetId: budget.id,
+          amount: budget.amount,
+          period: budget.period,
+          categoryId: budget.category_id
+        },
+        pointsAwarded: 20
+      });
+    } catch (error) {
+      console.error('Error dispatching gamification event:', error);
+      // No fallar la creación del presupuesto por error de gamificación
+    }
 
     return res.status(201).json({
       message: 'Budget created successfully',

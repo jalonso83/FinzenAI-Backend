@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { GamificationService } from '../services/gamificationService';
 
 const prisma = new PrismaClient();
 
@@ -172,6 +173,23 @@ export const createGoal = async (req: Request, res: Response): Promise<void> => 
         }
       }
     });
+
+    // Disparar evento de gamificación
+    try {
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'create_goal',
+        eventData: {
+          goalId: goal.id,
+          targetAmount: goal.targetAmount,
+          categoryId: goal.categoryId
+        },
+        pointsAwarded: 15
+      });
+    } catch (error) {
+      console.error('Error dispatching gamification event:', error);
+      // No fallar la creación de la meta por error de gamificación
+    }
 
     res.status(201).json(goal);
   } catch (error) {
