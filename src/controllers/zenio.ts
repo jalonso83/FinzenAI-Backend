@@ -447,9 +447,9 @@ async function getValidCategoriesFromDB(type: 'EXPENSE' | 'INCOME'): Promise<str
   try {
     const categories = await prisma.category.findMany({
       where: { type },
-      select: { name: true, icon: true }
+      select: { name: true }
     });
-    return categories.map(cat => `${cat.icon} ${cat.name}`).join(', ');
+    return categories.map(cat => cat.name).join(', ');
   } catch (error) {
     return 'Error al obtener categorías';
   }
@@ -1022,7 +1022,7 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
     // Si no hay categorías del frontend, obtener de la BD
     try {
       const dbCategories = await prisma.category.findMany({
-        select: { name: true, type: true, icon: true }
+        select: { name: true, type: true }
       });
       categories = dbCategories;
       console.log('[Zenio] Categorías obtenidas de la BD:', categories.length);
@@ -1060,10 +1060,10 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
       };
   }
 
-  // Formatear respuesta con iconos
+  // Formatear respuesta - solo nombres, sin íconos
   const formattedCategories = filteredCategories.map((cat: any) => {
     if (typeof cat === 'object' && cat.name) {
-      return `${cat.icon} ${cat.name}`;
+      return cat.name;
     }
     return cat;
   });
@@ -2246,7 +2246,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     if (!categories || categories.length === 0) {
       try {
         const dbCategories = await prisma.category.findMany({
-          select: { name: true, type: true, icon: true }
+          select: { name: true, type: true }
         });
         categories = dbCategories.map(cat => cat.name);
         console.log('[Zenio] Categorías obtenidas de la BD (respaldo):', categories);

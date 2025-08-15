@@ -14,7 +14,16 @@ export class GamificationController {
         return;
       }
 
-      const finScore = await GamificationService.getUserFinScore(userId);
+      const finScoreData = await GamificationService.getUserFinScore(userId);
+      
+      // Transformar al formato esperado por el frontend
+      const finScore = {
+        currentScore: finScoreData.score,
+        level: this.calculateUserLevel(finScoreData.score),
+        pointsToNextLevel: this.calculatePointsToNextLevel(finScoreData.score),
+        totalPointsEarned: finScoreData.score,
+        breakdown: finScoreData.breakdown
+      };
       
       res.json({
         success: true,
@@ -395,6 +404,13 @@ export class GamificationController {
     const basePoints = 100;
     const level = Math.floor(Math.sqrt(totalPoints / basePoints)) + 1;
     return Math.max(1, level);
+  }
+
+  private static calculatePointsToNextLevel(totalPoints: number): number {
+    const currentLevel = this.calculateUserLevel(totalPoints);
+    const nextLevelRequiredPoints = Math.pow(currentLevel, 2) * 100;
+    const pointsToNext = Math.max(0, nextLevelRequiredPoints - totalPoints);
+    return pointsToNext;
   }
 
   private static calculateLevelProgress(totalPoints: number): { current: number; needed: number; percentage: number } {
