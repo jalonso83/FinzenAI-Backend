@@ -2528,13 +2528,28 @@ export const createTransactionFromZenio = async (req: Request, res: Response) =>
       });
     }
 
+    // Buscar la categoría por nombre para obtener su ID
+    const categoryRecord = await prisma.category.findFirst({
+      where: { 
+        name: category,
+        type: type
+      }
+    });
+
+    if (!categoryRecord) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: `No se encontró la categoría "${category}" para el tipo ${type}`
+      });
+    }
+
     // Crear la transacción
     const newTransaction = await prisma.transaction.create({
       data: {
         userId,
         amount,
         type,
-        category_id: category,
+        category_id: categoryRecord.id,
         description,
         date
       },
@@ -2551,7 +2566,7 @@ export const createTransactionFromZenio = async (req: Request, res: Response) =>
     });
 
     // Mensaje de confirmación
-    const confirmationMessage = `✅ **Transacción registrada exitosamente**\n\n💰 **Monto:** RD$${amount.toLocaleString('es-DO')}\n📊 **Tipo:** ${type === 'INCOME' ? 'Ingreso' : 'Gasto'}\n🏷️ **Categoría:** ${category}\n📅 **Fecha:** ${date.toLocaleDateString('es-ES')}\n\nLa transacción ha sido guardada en tu historial. ¡Puedes verla en la sección de Transacciones!`;
+    const confirmationMessage = `✅ **Transacción registrada exitosamente**\n\n💰 **Monto:** RD$${amount.toLocaleString('es-DO')}\n📊 **Tipo:** ${type === 'INCOME' ? 'Ingreso' : 'Gasto'}\n🏷️ **Categoría:** ${categoryRecord.name}\n📅 **Fecha:** ${date.toLocaleDateString('es-ES')}\n\nLa transacción ha sido guardada en tu historial. ¡Puedes verla en la sección de Transacciones!`;
 
     return res.json({
       message: confirmationMessage,
