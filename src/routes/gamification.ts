@@ -1,8 +1,9 @@
 import { Router } from 'express';
+import type { Router as ExpressRouter } from 'express';
 import { GamificationController } from '../controllers/gamification';
 import { authenticateToken } from '../middlewares/auth';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 // Todas las rutas requieren autenticación
 router.use(authenticateToken);
