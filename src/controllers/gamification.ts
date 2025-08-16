@@ -19,8 +19,8 @@ export class GamificationController {
       // Transformar al formato esperado por el frontend
       const finScore = {
         currentScore: finScoreData.score,
-        level: this.calculateUserLevel(finScoreData.score),
-        pointsToNextLevel: this.calculatePointsToNextLevel(finScoreData.score),
+        level: GamificationController.calculateUserLevel(finScoreData.score),
+        pointsToNextLevel: GamificationController.calculatePointsToNextLevel(finScoreData.score),
         totalPointsEarned: finScoreData.score,
         breakdown: finScoreData.breakdown
       };
@@ -82,7 +82,7 @@ export class GamificationController {
       // Agregar información adicional de cada badge
       const badgesWithInfo = badges.map(badge => ({
         ...badge,
-        info: this.getBadgeInfo(badge.badgeId)
+        info: GamificationController.getBadgeInfo(badge.badgeId)
       }));
 
       res.json({
@@ -157,8 +157,8 @@ export class GamificationController {
         streak,
         totalPoints: totalPoints._sum.pointsAwarded || 0,
         recentActivity: recentEvents,
-        level: this.calculateUserLevel(totalPoints._sum.pointsAwarded || 0),
-        nextLevelProgress: this.calculateLevelProgress(totalPoints._sum.pointsAwarded || 0)
+        level: GamificationController.calculateUserLevel(totalPoints._sum.pointsAwarded || 0),
+        nextLevelProgress: GamificationController.calculateLevelProgress(totalPoints._sum.pointsAwarded || 0)
       };
 
       res.json({
@@ -407,14 +407,14 @@ export class GamificationController {
   }
 
   private static calculatePointsToNextLevel(totalPoints: number): number {
-    const currentLevel = this.calculateUserLevel(totalPoints);
+    const currentLevel = GamificationController.calculateUserLevel(totalPoints);
     const nextLevelRequiredPoints = Math.pow(currentLevel, 2) * 100;
     const pointsToNext = Math.max(0, nextLevelRequiredPoints - totalPoints);
     return pointsToNext;
   }
 
   private static calculateLevelProgress(totalPoints: number): { current: number; needed: number; percentage: number } {
-    const currentLevel = this.calculateUserLevel(totalPoints);
+    const currentLevel = GamificationController.calculateUserLevel(totalPoints);
     const currentLevelPoints = Math.pow(currentLevel - 1, 2) * 100;
     const nextLevelPoints = Math.pow(currentLevel, 2) * 100;
     
