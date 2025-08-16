@@ -711,10 +711,10 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
       
       // Si es rate limit, esperar más tiempo
       if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError && (error as any).response?.status === 429) {
-        console.log('[Zenio] Rate limit detectado, esperando...');
-        await sleep(backoffMs * 2);
+        console.log('[Zenio] Rate limit detectado, esperando 60 segundos...');
+        await sleep(60000); // Esperar 60 segundos en lugar de solo backoffMs * 2
         retries++;
-        backoffMs = Math.min(backoffMs * 2, 5000);
+        backoffMs = Math.min(backoffMs * 2, 10000); // Aumentar el máximo backoff
         continue;
       }
       
@@ -2564,6 +2564,25 @@ export const createTransactionFromZenio = async (req: Request, res: Response) =>
         updatedAt: true
       }
     });
+
+    // Disparar evento de gamificación
+    try {
+      const { GamificationService } = await import('../services/gamificationService');
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'add_tx',
+        eventData: {
+          transactionId: newTransaction.id,
+          amount: newTransaction.amount,
+          type: newTransaction.type,
+          categoryId: categoryRecord.id
+        },
+        pointsAwarded: 5
+      });
+    } catch (error) {
+      console.error('[Zenio] Error dispatching gamification event:', error);
+      // No fallar la transacción por error de gamificación
+    }
 
     // Mensaje de confirmación
     const confirmationMessage = `✅ **Transacción registrada exitosamente**\n\n💰 **Monto:** RD$${amount.toLocaleString('es-DO')}\n📊 **Tipo:** ${type === 'INCOME' ? 'Ingreso' : 'Gasto'}\n🏷️ **Categoría:** ${categoryRecord.name}\n📅 **Fecha:** ${date.toLocaleDateString('es-ES')}\n\nLa transacción ha sido guardada en tu historial. ¡Puedes verla en la sección de Transacciones!`;
