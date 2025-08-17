@@ -669,7 +669,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 // Función para hacer polling del run con backoff exponencial
-async function pollRunStatus(threadId: string, runId: string, maxRetries: number = 15): Promise<any> {
+async function pollRunStatus(threadId: string, runId: string, maxRetries: number = 25): Promise<any> {
   let retries = 0;
   let backoffMs = 500; // 0.5 segundos inicial
 
@@ -696,9 +696,22 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
         return run;
       }
 
-      // Si falló o expiró, lanzar error
-      if (run.status === 'failed' || run.status === 'expired') {
-        throw new Error(`Run ${run.status}: ${run.last_error?.message || 'Error desconocido'}`);
+      // Si falló, verificar si es por rate limit
+      if (run.status === 'failed') {
+        const errorMessage = run.last_error?.message || 'Error desconocido';
+        if (errorMessage.includes('Rate limit reached')) {
+          console.log('[Zenio] Run falló por rate limit, esperando 60 segundos antes de reintentar...');
+          await sleep(60000);
+          retries++;
+          backoffMs = Math.min(backoffMs * 2, 10000);
+          continue;
+        }
+        throw new Error(`Run failed: ${errorMessage}`);
+      }
+
+      // Si expiró, lanzar error
+      if (run.status === 'expired') {
+        throw new Error(`Run expired: ${run.last_error?.message || 'Error desconocido'}`);
       }
 
       // Si está en progreso o en cola, esperar y reintentar
@@ -737,7 +750,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
     }
   }
 
-  throw new Error(`Timeout: El run no se completó después de ${maxRetries} intentos (${maxRetries * 2} segundos máximo)`);
+  throw new Error(`Timeout: El run no se completó después de ${maxRetries} intentos. Esto puede deberse a rate limits de OpenAI.`);
 }
 
 // Función para ejecutar tool calls y enviar resultados
