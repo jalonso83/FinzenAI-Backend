@@ -6,9 +6,19 @@ const prisma = new PrismaClient();
 const API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID;
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
+// Validar que las variables de entorno estén configuradas
+if (!API_KEY) {
+  console.error('[Zenio] ERROR: OPENAI_API_KEY no está configurada');
+}
+if (!ASSISTANT_ID) {
+  console.error('[Zenio] ERROR: OPENAI_ASSISTANT_ID no está configurada');
+}
+
 const OPENAI_HEADERS = {
   Authorization: `Bearer ${API_KEY}`,
-  'OpenAI-Beta': 'assistants=v2'
+  'OpenAI-Beta': 'assistants=v2',
+  'Content-Type': 'application/json'
 };
 
 // Tipos para las peticiones
@@ -682,6 +692,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
       // Si requiere acción (tool calls), devolver
       if (run.status === 'requires_action') {
         console.log('[Zenio] Run requiere acción (tool calls)');
+        console.log('[Zenio] Tool calls requeridos:', JSON.stringify(run.required_action?.submit_tool_outputs?.tool_calls || [], null, 2));
         return run;
       }
 
@@ -739,8 +750,8 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
     const functionArgs = JSON.parse(toolCall.function.arguments);
     const toolCallId = toolCall.id;
 
-    console.log(`[Zenio] Ejecutando tool call: ${functionName}`);
-    // Log removido para evitar mostrar información sensible
+    console.log(`[Zenio] Ejecutando tool call: ${functionName} con ID: ${toolCallId}`);
+    console.log(`[Zenio] Argumentos de la función:`, functionArgs);
 
     let result: any;
 
@@ -773,6 +784,8 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
         });
       }
 
+      console.log(`[Zenio] Tool call ${functionName} ejecutado exitosamente. Resultado:`, result);
+
       toolOutputs.push({
         tool_call_id: toolCallId,
         output: JSON.stringify(result)
@@ -794,22 +807,33 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
   // Enviar outputs a OpenAI
   if (toolOutputs.length > 0) {
     console.log('[Zenio] Enviando tool outputs a OpenAI...');
-    await axios.post(
-      `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
-      { tool_outputs: toolOutputs },
-      { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
-    );
+    console.log('[Zenio] Tool outputs a enviar:', JSON.stringify(toolOutputs, null, 2));
+    
+    try {
+      const submitResponse = await axios.post(
+        `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
+        { tool_outputs: toolOutputs },
+        { headers: OPENAI_HEADERS }
+      );
+      console.log('[Zenio] Tool outputs enviados exitosamente. Status:', submitResponse.status);
+    } catch (error) {
+      console.error('[Zenio] Error enviando tool outputs:', error);
+      throw error;
+    }
   }
 
   // Hacer polling hasta que el run termine
   console.log('[Zenio] Haciendo polling después de submit_tool_outputs...');
   const finalRun = await pollRunStatus(threadId, runId);
+  console.log('[Zenio] Polling completado. Final run status:', finalRun.status);
 
   // Devolver tanto el run como las acciones ejecutadas
-  return {
+  const result = {
     run: finalRun,
     executedActions
   };
+  console.log('[Zenio] Retornando resultado de executeToolCalls:', result);
+  return result;
 }
 
 // Función para ejecutar onboarding_financiero
@@ -2294,7 +2318,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       const threadRes = await axios.post(
         `${OPENAI_BASE_URL}/threads`,
         {},
-        { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+        { headers: OPENAI_HEADERS }
       );
       threadId = threadRes.data.id;
       
@@ -2306,7 +2330,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           role: "user",
           content: systemMsg
         },
-        { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+        { headers: OPENAI_HEADERS }
       );
 
       // Agregar mensaje de onboarding si es necesario
@@ -2318,7 +2342,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
             role: "user",
             content: onboardingMsg
           },
-          { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+          { headers: OPENAI_HEADERS }
         );
       } else if (message) {
         // Agregar mensaje del usuario
@@ -2328,7 +2352,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
             role: "user",
             content: message
           },
-          { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+          { headers: OPENAI_HEADERS }
         );
       }
     } else {
@@ -2339,7 +2363,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           role: "user",
           content: message
         },
-        { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+        { headers: OPENAI_HEADERS }
       );
     }
 
@@ -2350,7 +2374,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       {
         assistant_id: ASSISTANT_ID
       },
-      { headers: { ...OPENAI_HEADERS, 'Content-Type': 'application/json' } }
+      { headers: OPENAI_HEADERS }
     );
 
     const runId = runRes.data.id;
@@ -2418,6 +2442,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       console.log(`[Zenio] Respuesta completa que se envía al frontend:`, JSON.stringify(response, null, 2));
     }
 
+    console.log('[Zenio] Enviando respuesta final al frontend...');
     return res.json(response);
 
   } catch (error) {
@@ -2425,10 +2450,34 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // Manejo específico de errores
     if (axios.isAxiosError(error)) {
+      console.error('[Zenio] Axios Error Details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        headers: error.response?.headers,
+        code: error.code,
+        message: error.message
+      });
+
       if (error.code === 'ECONNRESET') {
         return res.status(503).json({
           message: 'No se pudo conectar con Zenio (OpenAI). Por favor, intenta de nuevo en unos segundos.',
           threadId
+        });
+      }
+
+      if (error.response?.status === 401) {
+        return res.status(401).json({
+          message: 'Error de autenticación con OpenAI. API Key inválida.',
+          threadId
+        });
+      }
+
+      if (error.response?.status === 400) {
+        return res.status(400).json({
+          message: 'Request inválida a OpenAI. Por favor, verifica la configuración.',
+          threadId,
+          error: error.response?.data
         });
       }
 
