@@ -22,6 +22,9 @@ router.get('/streak', GamificationController.getUserStreak);
 // Rutas de Estadísticas
 router.get('/stats', GamificationController.getGamificationStats);
 
+// Rutas de Eventos
+router.get('/events/recent', GamificationController.getRecentEvents);
+
 // Rutas de Rankings
 router.get('/leaderboard', GamificationController.getLeaderboard);
 

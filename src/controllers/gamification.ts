@@ -273,6 +273,41 @@ export class GamificationController {
     }
   }
 
+  // Obtener eventos recientes de gamificación
+  static async getRecentEvents(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json({ message: 'Usuario no autenticado' });
+        return;
+      }
+
+      const { since, limit = 5 } = req.query;
+      const sinceDate = since ? new Date(since as string) : new Date(Date.now() - 5 * 60 * 1000); // 5 minutos por defecto
+
+      const events = await prisma.gamificationEvent.findMany({
+        where: {
+          userId,
+          createdAt: { gte: sinceDate },
+          eventType: { in: ['add_tx', 'create_budget', 'create_goal', 'goal_complete', 'within_budget'] }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: parseInt(limit as string)
+      });
+
+      res.json({
+        success: true,
+        data: events
+      });
+    } catch (error) {
+      console.error('[GamificationController] Error obteniendo eventos recientes:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  }
+
   // Obtener rankings globales
   static async getLeaderboard(req: Request, res: Response): Promise<void> {
     try {
