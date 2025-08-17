@@ -559,9 +559,31 @@ export class GamificationService {
 
   static async getUserStreak(userId: string): Promise<any> {
     try {
-      return await prisma.userStreak.findUnique({
+      const streak = await prisma.userStreak.findUnique({
         where: { userId }
       });
+
+      if (!streak) return null;
+
+      // Calcular si la racha está activa basado en lastActivityDate
+      const now = new Date();
+      const lastActivity = new Date(streak.lastActivityDate || 0);
+      const diffTime = Math.abs(now.getTime() - lastActivity.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      // La racha está activa si la última actividad fue hace 1 día o menos
+      const isActive = diffDays <= 1;
+      
+      console.log(`[Gamification] Calculando isActive para usuario ${userId}:`);
+      console.log(`  - Ahora: ${now.toISOString()}`);
+      console.log(`  - Última actividad: ${lastActivity.toISOString()}`);
+      console.log(`  - Diferencia en días: ${diffDays}`);
+      console.log(`  - isActive: ${isActive}`);
+
+      return {
+        ...streak,
+        isActive
+      };
     } catch (error) {
       console.error('[Gamification] Error obteniendo racha:', error);
       return null;
