@@ -668,6 +668,47 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Función para verificar y cancelar runs activos en un thread
+async function ensureNoActiveRuns(threadId: string): Promise<void> {
+  try {
+    console.log('[Zenio] Verificando runs activos en el thread...');
+    const runsResponse = await axios.get(
+      `${OPENAI_BASE_URL}/threads/${threadId}/runs`,
+      { headers: OPENAI_HEADERS }
+    );
+
+    const activeRuns = runsResponse.data.data.filter((run: any) => 
+      ['queued', 'in_progress', 'requires_action'].includes(run.status)
+    );
+
+    if (activeRuns.length > 0) {
+      console.log(`[Zenio] Encontrados ${activeRuns.length} runs activos, cancelando...`);
+      
+      for (const run of activeRuns) {
+        try {
+          await axios.post(
+            `${OPENAI_BASE_URL}/threads/${threadId}/runs/${run.id}/cancel`,
+            {},
+            { headers: OPENAI_HEADERS }
+          );
+          console.log(`[Zenio] Run ${run.id} cancelado exitosamente`);
+        } catch (cancelError) {
+          console.log(`[Zenio] Error cancelando run ${run.id}:`, cancelError);
+          // Continuar con otros runs
+        }
+      }
+
+      // Esperar un momento para que se procesen las cancelaciones
+      await sleep(1000);
+    } else {
+      console.log('[Zenio] No se encontraron runs activos');
+    }
+  } catch (error) {
+    console.log('[Zenio] Error verificando runs activos:', error);
+    // No lanzar error, continuar con el flujo normal
+  }
+}
+
 // Función para hacer polling del run con backoff exponencial
 async function pollRunStatus(threadId: string, runId: string, maxRetries: number = 25): Promise<any> {
   let retries = 0;
@@ -2369,6 +2410,11 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         );
       }
     } else {
+      // Verificar y cancelar runs activos antes de agregar mensaje
+      if (threadId) {
+        await ensureNoActiveRuns(threadId);
+      }
+      
       // Agregar mensaje del usuario al thread existente
       await axios.post(
         `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
