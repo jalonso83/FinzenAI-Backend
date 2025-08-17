@@ -2673,20 +2673,11 @@ export const createTransactionFromZenio = async (req: Request, res: Response) =>
       }
     });
 
-    // Disparar evento de gamificación
+    // Disparar eventos de gamificación inteligentes
     try {
-      const { GamificationService } = await import('../services/gamificationService');
-      await GamificationService.dispatchEvent({
-        userId,
-        eventType: 'add_tx',
-        eventData: {
-          transactionId: newTransaction.id,
-          amount: newTransaction.amount,
-          type: newTransaction.type,
-          categoryId: categoryRecord.id
-        },
-        pointsAwarded: 5
-      });
+      // Importar la función de análisis inteligente
+      const { analyzeAndDispatchTransactionEvents } = await import('./transactions');
+      await analyzeAndDispatchTransactionEvents(userId, newTransaction);
     } catch (error) {
       console.error('[Zenio] Error dispatching gamification event:', error);
       // No fallar la transacción por error de gamificación

@@ -378,6 +378,25 @@ export const deleteBudget = async (req: Request, res: Response) => {
       where: { id }
     });
 
+    // Restar puntos de gamificación por eliminar presupuesto
+    try {
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'create_budget',
+        eventData: {
+          budgetId: existingBudget.id,
+          amount: existingBudget.amount,
+          period: existingBudget.period,
+          categoryId: existingBudget.category_id,
+          action: 'delete'
+        },
+        pointsAwarded: -20 // Restar 20 puntos
+      });
+    } catch (error) {
+      console.error('Error dispatching gamification event for delete:', error);
+      // No fallar la eliminación por error de gamificación
+    }
+
     return res.json({
       message: 'Budget deleted successfully'
     });

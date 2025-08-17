@@ -4,6 +4,279 @@ import { GamificationService } from '../services/gamificationService';
 
 const prisma = new PrismaClient();
 
+// Función inteligente para analizar y disparar eventos de gamificación
+export async function analyzeAndDispatchTransactionEvents(userId: string, transaction: any) {
+  const today = new Date();
+  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const endOfDay = new Date(startOfDay);
+  endOfDay.setDate(endOfDay.getDate() + 1);
+  
+  // Obtener estadísticas necesarias para análisis
+  const [
+    todayTransactions,
+    weekTransactions,
+    monthTransactions,
+    totalTransactions,
+    categoriesUsedToday,
+    totalCategories,
+    weeklyBalance,
+    monthlyFirstIncome,
+    consecutiveDays
+  ] = await Promise.all([
+    // Transacciones de hoy
+    prisma.transaction.count({
+      where: { userId, date: { gte: startOfDay, lt: endOfDay } }
+    }),
+    
+    // Transacciones de esta semana
+    prisma.transaction.count({
+      where: { 
+        userId, 
+        date: { 
+          gte: new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000) 
+        } 
+      }
+    }),
+    
+    // Transacciones de este mes
+    prisma.transaction.count({
+      where: { 
+        userId, 
+        date: { 
+          gte: new Date(today.getFullYear(), today.getMonth(), 1) 
+        } 
+      }
+    }),
+    
+    // Total de transacciones del usuario
+    prisma.transaction.count({ where: { userId } }),
+    
+    // Categorías diferentes usadas hoy
+    prisma.transaction.findMany({
+      where: { userId, date: { gte: startOfDay, lt: endOfDay } },
+      select: { category_id: true },
+      distinct: ['category_id']
+    }),
+    
+    // Total de categorías disponibles
+    prisma.category.count(),
+    
+    // Balance de la semana (placeholder - se calcula después)
+    Promise.resolve(null),
+    
+    // Primer ingreso del mes
+    prisma.transaction.findFirst({
+      where: { 
+        userId, 
+        type: 'INCOME',
+        date: { 
+          gte: new Date(today.getFullYear(), today.getMonth(), 1) 
+        } 
+      },
+      orderBy: { date: 'asc' }
+    }),
+    
+    // Calcular días consecutivos (simplificado)
+    calculateConsecutiveDays(userId)
+  ]);
+
+  // ===== EVENTO BASE: Crear transacción =====
+  await GamificationService.dispatchEvent({
+    userId,
+    eventType: 'add_tx',
+    eventData: { transactionId: transaction.id },
+    pointsAwarded: 5
+  });
+
+  // ===== 1. EVENTOS DE CANTIDAD/FRECUENCIA =====
+  
+  // Primera transacción del día
+  if (todayTransactions === 1) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'add_tx',
+      eventData: { milestone: 'first_today' },
+      pointsAwarded: 3
+    });
+  }
+  
+  // 5 transacciones en un día
+  if (todayTransactions === 5) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'add_tx',
+      eventData: { milestone: '5_per_day' },
+      pointsAwarded: 10
+    });
+  }
+  
+  // 10 transacciones en una semana
+  if (weekTransactions === 10) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'add_tx',
+      eventData: { milestone: '10_per_week' },
+      pointsAwarded: 15
+    });
+  }
+  
+  // 50 transacciones en un mes
+  if (monthTransactions === 50) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'add_tx',
+      eventData: { milestone: '50_per_month' },
+      pointsAwarded: 25
+    });
+  }
+  
+  // 100 transacciones totales
+  if (totalTransactions === 100) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'add_tx',
+      eventData: { milestone: '100_total' },
+      pointsAwarded: 50
+    });
+  }
+
+  // ===== 2. EVENTOS DE CONSISTENCIA =====
+  
+  // Días consecutivos
+  if (consecutiveDays === 3) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'consecutive_days',
+      eventData: { days: 3 },
+      pointsAwarded: 15
+    });
+  }
+  
+  if (consecutiveDays === 7) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'consecutive_days',
+      eventData: { days: 7 },
+      pointsAwarded: 25
+    });
+  }
+  
+  if (consecutiveDays === 30) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'consecutive_days',
+      eventData: { days: 30 },
+      pointsAwarded: 100
+    });
+  }
+
+  // ===== 3. EVENTOS DE CATEGORIZACIÓN =====
+  
+  // 5 categorías diferentes en un día
+  if (categoriesUsedToday.length === 5) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'category_milestone',
+      eventData: { milestone: '5_categories_day' },
+      pointsAwarded: 10
+    });
+  }
+  
+  // Completar todas las categorías disponibles
+  if (categoriesUsedToday.length === totalCategories) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'category_milestone',
+      eventData: { milestone: 'all_categories' },
+      pointsAwarded: 30
+    });
+  }
+  
+  // Especialista en categoría (20 transacciones en misma categoría)
+  const categoryCount = await prisma.transaction.count({
+    where: { userId, category_id: transaction.category_id }
+  });
+  
+  if (categoryCount === 20) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'category_milestone',
+      eventData: { milestone: 'category_specialist', categoryId: transaction.category_id },
+      pointsAwarded: 15
+    });
+  }
+
+  // ===== 5. EVENTOS DE METAS FINANCIERAS =====
+  
+  // Primer ingreso del mes
+  if (transaction.type === 'INCOME' && monthlyFirstIncome?.id === transaction.id) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'add_tx',
+      eventData: { milestone: 'first_income_month' },
+      pointsAwarded: 10
+    });
+  }
+  
+  // Más ingresos que gastos en una semana (verificar al final de la semana)
+  const weeklyIncome = await prisma.transaction.aggregate({
+    where: { 
+      userId, 
+      type: 'INCOME',
+      date: { gte: new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000) }
+    },
+    _sum: { amount: true }
+  });
+  
+  const weeklyExpenses = await prisma.transaction.aggregate({
+    where: { 
+      userId, 
+      type: 'EXPENSE',
+      date: { gte: new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000) }
+    },
+    _sum: { amount: true }
+  });
+  
+  if ((weeklyIncome._sum.amount || 0) > (weeklyExpenses._sum.amount || 0)) {
+    await GamificationService.dispatchEvent({
+      userId,
+      eventType: 'add_tx',
+      eventData: { milestone: 'positive_week' },
+      pointsAwarded: 20
+    });
+  }
+}
+
+// Función auxiliar para calcular días consecutivos
+async function calculateConsecutiveDays(userId: string): Promise<number> {
+  const today = new Date();
+  let consecutiveDays = 0;
+  
+  for (let i = 0; i < 30; i++) { // Verificar últimos 30 días
+    const checkDate = new Date(today);
+    checkDate.setDate(today.getDate() - i);
+    
+    const startOfDay = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate());
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setDate(endOfDay.getDate() + 1);
+    
+    const hasTransaction = await prisma.transaction.findFirst({
+      where: { 
+        userId, 
+        date: { gte: startOfDay, lt: endOfDay } 
+      }
+    });
+    
+    if (hasTransaction) {
+      consecutiveDays++;
+    } else {
+      break;
+    }
+  }
+  
+  return consecutiveDays;
+}
+
 // Función utilitaria para recalcular el gasto de los presupuestos afectados
 async function recalculateBudgetSpent(userId: string, categoryId: string, date: Date) {
   // Buscar presupuestos activos de la categoría y usuario cuyo período incluya la fecha
@@ -229,21 +502,11 @@ export const createTransaction = async (req: Request, res: Response) => {
       await recalculateBudgetSpent(userId, category_id, transaction.date);
     }
 
-    // Disparar evento de gamificación
+    // Analizar y disparar eventos de gamificación inteligentes
     try {
-      await GamificationService.dispatchEvent({
-        userId,
-        eventType: 'add_tx',
-        eventData: {
-          transactionId: transaction.id,
-          amount: transaction.amount,
-          type: transaction.type,
-          categoryId: transaction.category_id
-        },
-        pointsAwarded: 5
-      });
+      await analyzeAndDispatchTransactionEvents(userId, transaction);
     } catch (error) {
-      console.error('Error dispatching gamification event:', error);
+      console.error('Error dispatching gamification events:', error);
       // No fallar la transacción por error de gamificación
     }
 
@@ -381,6 +644,25 @@ export const deleteTransaction = async (req: Request, res: Response) => {
     // Si era gasto, recalcular presupuesto
     if (existingTransaction.type === 'EXPENSE') {
       await recalculateBudgetSpent(userId, existingTransaction.category_id, existingTransaction.date);
+    }
+
+    // Restar puntos de gamificación por eliminar transacción
+    try {
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'add_tx',
+        eventData: {
+          transactionId: existingTransaction.id,
+          amount: existingTransaction.amount,
+          type: existingTransaction.type,
+          categoryId: existingTransaction.category_id,
+          action: 'delete'
+        },
+        pointsAwarded: -5 // Restar 5 puntos
+      });
+    } catch (error) {
+      console.error('Error dispatching gamification event for delete:', error);
+      // No fallar la eliminación por error de gamificación
     }
 
     return res.json({

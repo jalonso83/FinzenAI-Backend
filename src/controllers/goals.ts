@@ -303,6 +303,24 @@ export const deleteGoal = async (req: Request, res: Response): Promise<void> => 
       data: { isActive: false }
     });
 
+    // Restar puntos de gamificación por eliminar meta
+    try {
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'create_goal',
+        eventData: {
+          goalId: existingGoal.id,
+          targetAmount: existingGoal.targetAmount,
+          categoryId: existingGoal.categoryId,
+          action: 'delete'
+        },
+        pointsAwarded: -15 // Restar 15 puntos
+      });
+    } catch (error) {
+      console.error('Error dispatching gamification event for delete:', error);
+      // No fallar la eliminación por error de gamificación
+    }
+
     res.json({ message: 'Meta eliminada exitosamente' });
   } catch (error) {
     console.error('Error al eliminar meta:', error);
