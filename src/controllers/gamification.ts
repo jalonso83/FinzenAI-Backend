@@ -234,58 +234,6 @@ export class GamificationController {
     }
   }
 
-  // Obtener eventos recientes del usuario
-  static async getRecentEvents(req: Request, res: Response): Promise<void> {
-    try {
-      const userId = req.user?.id;
-      if (!userId) {
-        res.status(401).json({ message: 'Usuario no autenticado' });
-        return;
-      }
-
-      const { since, limit = 100 } = req.query;
-
-      // Construir filtros
-      const where: any = { userId };
-      
-      if (since) {
-        where.createdAt = {
-          gte: new Date(since as string)
-        };
-      }
-
-      const events = await prisma.gamificationEvent.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        take: parseInt(limit as string),
-        select: {
-          id: true,
-          eventType: true,
-          pointsAwarded: true,
-          eventData: true,
-          createdAt: true
-        }
-      });
-
-      console.log(`[GamificationController] Eventos recientes para usuario ${userId}:`, {
-        since,
-        limit,
-        eventosEncontrados: events.length,
-        totalPuntos: events.reduce((sum, e) => sum + (e.pointsAwarded || 0), 0)
-      });
-
-      res.json({
-        success: true,
-        data: events
-      });
-    } catch (error) {
-      console.error('[GamificationController] Error obteniendo eventos recientes:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error interno del servidor'
-      });
-    }
-  }
 
   // Disparar evento de gamificación manualmente (para testing)
   static async dispatchEvent(req: Request, res: Response): Promise<void> {
@@ -335,17 +283,28 @@ export class GamificationController {
         return;
       }
 
-      const { since, limit = 5 } = req.query;
-      const sinceDate = since ? new Date(since as string) : new Date(Date.now() - 5 * 60 * 1000); // 5 minutos por defecto
+      const { since } = req.query;
+      const sinceDate = since ? new Date(since as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 días por defecto
 
       const events = await prisma.gamificationEvent.findMany({
         where: {
           userId,
-          createdAt: { gte: sinceDate },
-          eventType: { in: ['add_tx', 'create_budget', 'create_goal', 'goal_complete', 'within_budget'] }
+          createdAt: { gte: sinceDate }
         },
         orderBy: { createdAt: 'desc' },
-        take: parseInt(limit as string)
+        select: {
+          id: true,
+          eventType: true,
+          pointsAwarded: true,
+          eventData: true,
+          createdAt: true
+        }
+      });
+
+      console.log(`[GamificationController] Eventos recientes para usuario ${userId}:`, {
+        since: sinceDate.toISOString(),
+        eventosEncontrados: events.length,
+        totalPuntos: events.reduce((sum, e) => sum + (e.pointsAwarded || 0), 0)
       });
 
       res.json({
