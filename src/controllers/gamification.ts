@@ -16,7 +16,7 @@ export class GamificationController {
 
       const finScoreData = await GamificationService.getUserFinScore(userId);
       
-      // Transformar al formato esperado por el frontend
+      // Transformar al formato esperado por el frontend - Nueva escala implementada
       const finScore = {
         currentScore: finScoreData.score,
         level: GamificationController.calculateUserLevel(finScoreData.score),
@@ -24,6 +24,8 @@ export class GamificationController {
         totalPointsEarned: finScoreData.score,
         breakdown: finScoreData.breakdown
       };
+      
+      console.log(`[DEBUG] Nueva escala - Score: ${finScoreData.score}, Nivel: ${finScore.level}, Faltan: ${finScore.pointsToNextLevel}`);
       
       res.json({
         success: true,
