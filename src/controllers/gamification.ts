@@ -481,17 +481,30 @@ export class GamificationController {
     };
   }
 
-  private static calculateUserLevel(totalPoints: number): number {
-    // Cada nivel requiere más puntos exponencialmente
-    const basePoints = 100;
-    const level = Math.floor(Math.sqrt(totalPoints / basePoints)) + 1;
-    return Math.max(1, level);
+  private static calculateUserLevel(finZenIndex: number): number {
+    // Niveles basados en Índice FinZen (Opción C)
+    if (finZenIndex >= 92) return 5;    // Maestro
+    if (finZenIndex >= 82) return 4;    // Experto
+    if (finZenIndex >= 70) return 3;    // Avanzado
+    if (finZenIndex >= 55) return 2;    // Intermedio  
+    return 1;                           // Principiante
   }
 
-  private static calculatePointsToNextLevel(totalPoints: number): number {
-    const currentLevel = GamificationController.calculateUserLevel(totalPoints);
-    const nextLevelRequiredPoints = Math.pow(currentLevel, 2) * 100;
-    const pointsToNext = Math.max(0, nextLevelRequiredPoints - totalPoints);
+  private static calculatePointsToNextLevel(finZenIndex: number): number {
+    // Calcular puntos necesarios para el siguiente nivel
+    const currentLevel = GamificationController.calculateUserLevel(finZenIndex);
+    
+    let nextLevelThreshold: number;
+    switch (currentLevel) {
+      case 1: nextLevelThreshold = 55; break;  // Para nivel 2
+      case 2: nextLevelThreshold = 70; break;  // Para nivel 3  
+      case 3: nextLevelThreshold = 82; break;  // Para nivel 4
+      case 4: nextLevelThreshold = 92; break;  // Para nivel 5
+      case 5: return 0; break;                 // Nivel máximo
+      default: nextLevelThreshold = 55; break;
+    }
+    
+    const pointsToNext = Math.max(0, nextLevelThreshold - finZenIndex);
     return pointsToNext;
   }
 
