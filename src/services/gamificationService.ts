@@ -579,9 +579,9 @@ export class GamificationService {
       const diffTime = nowDay.getTime() - lastActivityDay.getTime();
       const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
       
-      // La racha está activa si la última actividad fue hoy o ayer
-      // Si han pasado más de 1 día, la racha está rota
-      const isActive = diffDays <= 1;
+      // La racha está activa SOLO si la última actividad fue HOY (diffDays === 0)
+      // Si fue ayer o antes, la racha está rota porque no tuviste actividad hoy
+      const isActive = diffDays === 0;
       
       // Si la racha está inactiva, el currentStreak debe ser 0
       const currentStreak = isActive ? streak.currentStreak : 0;
