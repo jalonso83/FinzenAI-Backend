@@ -17,9 +17,11 @@ export class GamificationController {
       const finScoreData = await GamificationService.getUserFinScore(userId);
       
       // Transformar al formato esperado por el frontend - Nueva escala implementada
+      const level = GamificationController.calculateUserLevel(finScoreData.score);
       const finScore = {
         currentScore: finScoreData.score,
-        level: GamificationController.calculateUserLevel(finScoreData.score),
+        level: level,
+        levelName: GamificationController.getLevelName(level),
         pointsToNextLevel: GamificationController.calculatePointsToNextLevel(finScoreData.score),
         totalPointsEarned: finScoreData.score,
         breakdown: finScoreData.breakdown
@@ -490,6 +492,17 @@ export class GamificationController {
     if (finZenIndex >= 70) return 3;    // Avanzado
     if (finZenIndex >= 55) return 2;    // Intermedio  
     return 1;                           // Principiante
+  }
+
+  private static getLevelName(level: number): string {
+    switch (level) {
+      case 1: return 'Principiante';
+      case 2: return 'Intermedio';  
+      case 3: return 'Avanzado';
+      case 4: return 'Experto';
+      case 5: return 'Maestro';
+      default: return 'Principiante';
+    }
   }
 
   private static calculatePointsToNextLevel(finZenIndex: number): number {
