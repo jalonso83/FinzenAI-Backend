@@ -568,10 +568,18 @@ export class GamificationService {
       // Calcular si la racha está activa basado en lastActivityDate
       const now = new Date();
       const lastActivity = new Date(streak.lastActivityDate || 0);
-      const diffTime = Math.abs(now.getTime() - lastActivity.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       
-      // La racha está activa si la última actividad fue hace 1 día o menos
+      // Normalizar fechas a medianoche para comparar solo días
+      const nowDay = new Date(now);
+      nowDay.setHours(0, 0, 0, 0);
+      
+      const lastActivityDay = new Date(lastActivity);
+      lastActivityDay.setHours(0, 0, 0, 0);
+      
+      const diffTime = nowDay.getTime() - lastActivityDay.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      
+      // La racha está activa si la última actividad fue hoy o ayer
       const isActive = diffDays <= 1;
       
       console.log(`[Gamification] Calculando isActive para usuario ${userId}:`);
