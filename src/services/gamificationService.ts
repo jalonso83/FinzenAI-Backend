@@ -591,6 +591,8 @@ export class GamificationService {
       console.log(`  - Última actividad: ${lastActivity.toISOString()}`);
       console.log(`  - Diferencia en días: ${diffDays}`);
       console.log(`  - isActive: ${isActive}`);
+      console.log(`  - currentStreak original: ${streak.currentStreak}`);
+      console.log(`  - currentStreak calculado: ${currentStreak}`);
 
       return {
         ...streak,
