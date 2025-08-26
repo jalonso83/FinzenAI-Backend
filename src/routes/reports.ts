@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticateToken } from '../middlewares/auth';
-import { getCategoryReport, exportCategoryReport, getIncomeReport, getDateReport, getBudgetReport } from '../controllers/reports';
+import { getCategoryReport, exportCategoryReport, getIncomeReport, getDateReport, getBudgetReport, getDashboardTotals } from '../controllers/reports';
 
 const router: Router = Router();
 
@@ -13,5 +13,6 @@ router.get('/categories/export', exportCategoryReport);
 router.get('/income', getIncomeReport);
 router.get('/dates', getDateReport);
 router.get('/budgets', getBudgetReport);
+router.get('/dashboard-totals', getDashboardTotals); // Nuevo endpoint para totales consistentes del dashboard
 
 export default router;

@@ -998,6 +998,122 @@ function generateTimeSeries(transactions: any[], granularity: string, startDate:
   return Array.from(groupedData.values()).sort((a, b) => a.period.localeCompare(b.period));
 }
 
+// Obtener totales para dashboard - Métricas principales sin filtros de fecha
+export const getDashboardTotals = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: 'Usuario no autenticado' });
+    }
+
+    // Obtener TODAS las transacciones del usuario sin límite de fechas
+    const allTransactions = await prisma.transaction.findMany({
+      where: { userId },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            icon: true
+          }
+        }
+      },
+      orderBy: { date: 'desc' }
+    });
+
+    // Calcular totales históricos completos
+    let totalIncome = 0;
+    let totalExpenses = 0;
+    let totalTransactions = allTransactions.length;
+
+    // Procesar todas las transacciones para obtener totales reales
+    allTransactions.forEach(transaction => {
+      const amount = parseFloat(transaction.amount.toString());
+      if (transaction.type === 'INCOME') {
+        totalIncome += amount;
+      } else {
+        totalExpenses += amount;
+      }
+    });
+
+    const totalBalance = totalIncome - totalExpenses;
+
+    // Calcular totales del mes actual para comparación
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    const currentMonthTransactions = allTransactions.filter(t => {
+      const transactionDate = new Date(t.date);
+      return transactionDate >= currentMonthStart && transactionDate <= currentMonthEnd;
+    });
+
+    let monthlyIncome = 0;
+    let monthlyExpenses = 0;
+
+    currentMonthTransactions.forEach(transaction => {
+      const amount = parseFloat(transaction.amount.toString());
+      if (transaction.type === 'INCOME') {
+        monthlyIncome += amount;
+      } else {
+        monthlyExpenses += amount;
+      }
+    });
+
+    const monthlyBalance = monthlyIncome - monthlyExpenses;
+
+    // Análisis de gastos por categoría (para el gráfico)
+    const expenseTransactions = allTransactions.filter(t => t.type === 'EXPENSE');
+    const categoryTotals: { [key: string]: number } = {};
+    
+    expenseTransactions.forEach(transaction => {
+      const categoryId = transaction.category_id;
+      if (categoryId) {
+        categoryTotals[categoryId] = (categoryTotals[categoryId] || 0) + parseFloat(transaction.amount.toString());
+      }
+    });
+
+    // Top categorías de gastos
+    const topExpenseCategories = Object.entries(categoryTotals)
+      .map(([categoryId, total]) => {
+        const category = allTransactions.find(t => t.category_id === categoryId)?.category;
+        return {
+          id: categoryId,
+          name: category?.name || 'Sin categoría',
+          icon: category?.icon || '📊',
+          total: total,
+          percentage: totalExpenses > 0 ? (total / totalExpenses) * 100 : 0
+        };
+      })
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8);
+
+    return res.json({
+      totals: {
+        totalIncome,
+        totalExpenses,
+        totalBalance,
+        totalTransactions,
+        monthlyIncome,
+        monthlyExpenses,
+        monthlyBalance,
+        monthlyTransactions: currentMonthTransactions.length
+      },
+      topExpenseCategories,
+      recentTransactions: allTransactions.slice(0, 10),
+      period: {
+        start: currentMonthStart,
+        end: currentMonthEnd
+      }
+    });
+
+  } catch (error) {
+    console.error('Error obteniendo totales del dashboard:', error);
+    return res.status(500).json({ message: 'Error interno del servidor' });
+  }
+};
+
 // Obtener reporte de presupuestos - Análisis de rendimiento
 export const getBudgetReport = async (req: Request, res: Response): Promise<Response> => {
   try {
