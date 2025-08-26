@@ -24,10 +24,10 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       categories 
     } = req.query;
 
-    // Configurar fechas por defecto (último mes si no se especifica)
+    // Configurar fechas por defecto (mes actual si no se especifica)
     const now = new Date();
-    const defaultStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const defaultEndDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    const defaultStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    const defaultEndDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
     const dateStart = startDate ? new Date(startDate as string) : defaultStartDate;
     const dateEnd = endDate ? new Date(endDate as string) : defaultEndDate;
@@ -458,10 +458,10 @@ export const getIncomeReport = async (req: Request, res: Response): Promise<Resp
       categories 
     } = req.query;
 
-    // Configurar fechas por defecto (último mes si no se especifica)
+    // Configurar fechas por defecto (mes actual si no se especifica)
     const now = new Date();
-    const defaultStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const defaultEndDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    const defaultStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    const defaultEndDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
     const dateStart = startDate ? new Date(startDate as string) : defaultStartDate;
     const dateEnd = endDate ? new Date(endDate as string) : defaultEndDate;
