@@ -1285,11 +1285,14 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
       : 0;
 
     // Análisis comparativo
+    // Mejor presupuesto: alto uso pero sin exceder (eficiencia real)
     const bestBudget = budgetStats
-      .filter(b => b.percentageUsed <= 100)
-      .sort((a, b) => Math.abs(85 - a.percentageUsed) - Math.abs(85 - b.percentageUsed))[0] || null;
+      .filter(b => b.percentageUsed <= 100 && b.percentageUsed >= 50)
+      .sort((a, b) => b.percentageUsed - a.percentageUsed)[0] || null;
     
+    // Peor presupuesto: solo los que están excedidos
     const worstBudget = budgetStats
+      .filter(b => b.isExceeded)
       .sort((a, b) => b.percentageUsed - a.percentageUsed)[0] || null;
 
     // Generar alertas
@@ -1392,7 +1395,7 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
           overrun: worstBudget.percentageUsed
         } : null,
         totalSavingOpportunity: budgetStats
-          .filter(b => b.percentageUsed < 80)
+          .filter(b => b.percentageUsed < 80 && b.remaining > 0)
           .reduce((sum, b) => sum + b.remaining, 0),
         avgSpendVelocity: budgetStats.length > 0 
           ? budgetStats.reduce((sum, b) => sum + b.spendVelocity, 0) / budgetStats.length
