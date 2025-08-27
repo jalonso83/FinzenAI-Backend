@@ -886,7 +886,10 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
     // Burnrate y runway (solo para gastos)
     const daysInPeriod = (dateEnd.getTime() - dateStart.getTime()) / (1000 * 60 * 60 * 24);
     const burnRate = totalExpenses / daysInPeriod;
-    const runway = totalIncome > 0 ? Math.floor(totalIncome / burnRate) : 0;
+    
+    // Calcular runway basado en saldo disponible actual, no en ingresos totales
+    const currentBalance = totalIncome - totalExpenses;
+    const runway = (burnRate > 0 && currentBalance > 0) ? Math.floor(currentBalance / burnRate) : 0;
 
     // Heatmap data (actividad por día de la semana)
     const weekdayActivity = [0, 0, 0, 0, 0, 0, 0]; // Dom, Lun, Mar, Mie, Jue, Vie, Sab
