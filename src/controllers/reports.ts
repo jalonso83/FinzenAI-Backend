@@ -893,7 +893,7 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
     
     // Calcular runway basado en saldo disponible actual, no en ingresos totales
     const currentBalance = totalIncome - totalExpenses;
-    const runway = (burnRate > 0 && currentBalance > 0) ? Math.floor(currentBalance / burnRate) : 0;
+    const runway = (burnRate > 0 && currentBalance > 0) ? Math.ceil(currentBalance / burnRate) : 0;
     
     console.log('[Reports] Métricas calculadas:');
     console.log('  - Total Income:', totalIncome);
