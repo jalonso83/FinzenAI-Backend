@@ -579,12 +579,21 @@ export class GamificationService {
       const diffTime = nowDay.getTime() - lastActivityDay.getTime();
       const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
       
-      // La racha está activa SOLO si la última actividad fue HOY (diffDays === 0)
-      // Si fue ayer o antes, la racha está rota porque no tuviste actividad hoy
-      const isActive = diffDays === 0;
+      // La racha está activa si la última actividad fue HOY (diffDays === 0) 
+      // O si fue AYER (diffDays === 1) y todavía puedes continuar la racha hoy
+      const isActive = diffDays <= 1;
       
-      // Si la racha está inactiva, el currentStreak debe ser 0
-      const currentStreak = isActive ? streak.currentStreak : 0;
+      // Si la racha está inactiva (más de 1 día sin actividad), resetear a 0
+      // Si está activa, mantener el currentStreak actual
+      let currentStreak = streak.currentStreak;
+      if (diffDays > 1) {
+        currentStreak = 0;
+        // Actualizar la base de datos para reflejar la racha rota
+        await prisma.userStreak.update({
+          where: { userId },
+          data: { currentStreak: 0 }
+        });
+      }
       
       console.log(`[Gamification] Calculando isActive para usuario ${userId}:`);
       console.log(`  - Ahora: ${now.toISOString()}`);
