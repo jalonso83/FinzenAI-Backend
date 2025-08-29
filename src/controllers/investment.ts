@@ -202,11 +202,11 @@ export const calculateInvestment = async (req: Request, res: Response) => {
     console.log(`[Investment Calculator] Calculated for RD$${monthlyAmount}/month over ${years} years at ${annualInterestRate}%`);
     console.log(`[Investment Calculator] Result: RD$${finalAmount.toLocaleString()} (contributed: RD$${totalContributed.toLocaleString()}, interest: RD$${totalInterest.toLocaleString()})`);
 
-    res.json(result);
+    return res.json(result);
 
   } catch (error) {
     console.error('Error in investment calculation:', error);
-    res.status(500).json({ 
+    return res.status(500).json({ 
       error: 'Error interno del servidor al calcular la inversión' 
     });
   }
@@ -215,10 +215,10 @@ export const calculateInvestment = async (req: Request, res: Response) => {
 // Endpoint para obtener perfiles de riesgo disponibles
 export const getRiskProfiles = async (req: Request, res: Response) => {
   try {
-    res.json(riskProfiles);
+    return res.json(riskProfiles);
   } catch (error) {
     console.error('Error getting risk profiles:', error);
-    res.status(500).json({ 
+    return res.status(500).json({ 
       error: 'Error interno del servidor' 
     });
   }
@@ -232,10 +232,10 @@ export const getEquivalencyExamples = async (req: Request, res: Response) => {
       description: eq.description
     }));
     
-    res.json(examples);
+    return res.json(examples);
   } catch (error) {
     console.error('Error getting equivalency examples:', error);
-    res.status(500).json({ 
+    return res.status(500).json({ 
       error: 'Error interno del servidor' 
     });
   }
