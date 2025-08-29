@@ -12,6 +12,7 @@ import categoryRoutes from './routes/categories';
 import goalRoutes from './routes/goals';
 import reportRoutes from './routes/reports';
 import gamificationRoutes from './routes/gamification';
+import investmentRoutes from './routes/investment';
 
 // Configurar variables de entorno
 dotenv.config();
@@ -43,6 +44,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/goals', goalRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/gamification', gamificationRoutes);
+app.use('/api/investment', investmentRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
