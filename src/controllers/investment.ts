@@ -691,3 +691,156 @@ export const getCommonExpenses = async (req: Request, res: Response) => {
   }
 };
 
+// ===== CALCULADORA DE INFLACIÓN =====
+
+// Tipos para la calculadora de inflación
+interface InflationCalculationRequest {
+  currentAmount: number; // Monto actual en RD$
+  years: number; // Años a futuro
+  inflationRate?: number; // Tasa de inflación anual opcional
+}
+
+interface InflationResult {
+  currentAmount: number;
+  futureAmount: number; // Valor futuro nominal (sin ajustar)
+  realValue: number; // Poder adquisitivo real
+  lostValue: number; // Dinero que "pierdes" por inflación
+  inflationRate: number;
+  years: number;
+  examples: Array<{
+    item: string;
+    currentPrice: number;
+    futurePrice: number;
+    icon: string;
+  }>;
+  impactMessage: string;
+}
+
+// Ejemplos de precios actuales dominicanos Gen Z (2025)
+const currentPricesDR = [
+  { item: "iPhone 15 Pro Max", price: 60000, icon: "📱" },
+  { item: "Gasolina Regular (galón)", price: 290, icon: "⛽" },
+  { item: "Combo McDonald's", price: 650, icon: "🍔" },
+  { item: "Entrada cine (Palacio del Cine)", price: 450, icon: "🎬" },
+  { item: "Uber 10km en Santiago", price: 350, icon: "🚗" },
+  { item: "Mensualidad PUCMM", price: 85000, icon: "🎓" },
+  { item: "Apartamento 1 habitación/mes", price: 25000, icon: "🏠" },
+  { item: "Salario mínimo mensual", price: 21000, icon: "💼" },
+  { item: "Libra de pollo", price: 150, icon: "🍗" },
+  { item: "Plan Claro 20GB", price: 1200, icon: "📞" }
+];
+
+// Función para calcular inflación
+function calculateInflationImpact(
+  currentAmount: number,
+  years: number,
+  annualInflation: number
+): {
+  futureAmount: number;
+  realValue: number;
+  lostValue: number;
+} {
+  // Valor futuro nominal (lo que dice el dinero)
+  const futureAmount = currentAmount;
+  
+  // Poder adquisitivo real (lo que realmente puedes comprar)
+  const realValue = currentAmount / Math.pow(1 + annualInflation / 100, years);
+  
+  // Valor perdido por inflación
+  const lostValue = currentAmount - realValue;
+
+  return {
+    futureAmount,
+    realValue,
+    lostValue
+  };
+}
+
+// Función para generar ejemplos de precios futuros
+function generateInflationExamples(
+  years: number,
+  inflationRate: number
+): Array<{ item: string; currentPrice: number; futurePrice: number; icon: string }> {
+  
+  return currentPricesDR.slice(0, 6).map(item => ({
+    item: item.item,
+    currentPrice: item.price,
+    futurePrice: Math.round(item.price * Math.pow(1 + inflationRate / 100, years)),
+    icon: item.icon
+  }));
+}
+
+// Endpoint principal para calcular inflación
+export const calculateInflation = async (req: Request, res: Response) => {
+  try {
+    const { 
+      currentAmount, 
+      years, 
+      inflationRate = 7 // Inflación promedio RD histórica
+    }: InflationCalculationRequest = req.body;
+
+    // Validaciones
+    if (!currentAmount || currentAmount <= 0) {
+      return res.status(400).json({ 
+        error: 'El monto actual debe ser mayor a 0' 
+      });
+    }
+
+    if (!years || years <= 0 || years > 50) {
+      return res.status(400).json({ 
+        error: 'Los años deben estar entre 1 y 50' 
+      });
+    }
+
+    if (inflationRate < 0 || inflationRate > 100) {
+      return res.status(400).json({ 
+        error: 'La tasa de inflación debe estar entre 0 y 100%' 
+      });
+    }
+
+    // Calcular impacto de inflación
+    const calculations = calculateInflationImpact(currentAmount, years, inflationRate);
+    
+    // Generar ejemplos de precios
+    const examples = generateInflationExamples(years, inflationRate);
+    
+    // Generar mensaje de impacto
+    const percentageLost = ((calculations.lostValue / currentAmount) * 100).toFixed(1);
+    const impactMessage = `En ${years} años, tus RD$${currentAmount.toLocaleString()} perderán ${percentageLost}% de su poder de compra por culpa de la inflación`;
+
+    const result: InflationResult = {
+      currentAmount,
+      futureAmount: calculations.futureAmount,
+      realValue: Math.round(calculations.realValue),
+      lostValue: Math.round(calculations.lostValue),
+      inflationRate,
+      years,
+      examples,
+      impactMessage
+    };
+
+    console.log(`[Inflation Calculator] RD$${currentAmount} over ${years} years at ${inflationRate}% inflation`);
+    console.log(`[Inflation Calculator] Real value: RD$${result.realValue.toLocaleString()} (lost: RD$${result.lostValue.toLocaleString()})`);
+
+    return res.json(result);
+
+  } catch (error) {
+    console.error('Error in inflation calculation:', error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor al calcular la inflación' 
+    });
+  }
+};
+
+// Endpoint para obtener precios actuales de referencia
+export const getCurrentPrices = async (req: Request, res: Response) => {
+  try {
+    return res.json(currentPricesDR);
+  } catch (error) {
+    console.error('Error getting current prices:', error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor' 
+    });
+  }
+};
+

@@ -7,7 +7,9 @@ import {
   calculateGoal,
   getGoalTypes,
   calculateSkipVsSave,
-  getCommonExpenses
+  getCommonExpenses,
+  calculateInflation,
+  getCurrentPrices
 } from '../controllers/investment';
 
 const router: Router = Router();
@@ -35,5 +37,11 @@ router.post('/skip-vs-save', calculateSkipVsSave);
 
 // GET /api/investment/common-expenses - Obtener gastos comunes sugeridos
 router.get('/common-expenses', getCommonExpenses);
+
+// POST /api/investment/calculate-inflation - Calcular impacto de inflación
+router.post('/calculate-inflation', calculateInflation);
+
+// GET /api/investment/current-prices - Obtener precios actuales de referencia
+router.get('/current-prices', getCurrentPrices);
 
 export default router;
