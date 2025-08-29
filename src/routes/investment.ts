@@ -5,7 +5,9 @@ import {
   getRiskProfiles, 
   getEquivalencyExamples,
   calculateGoal,
-  getGoalTypes
+  getGoalTypes,
+  calculateSkipVsSave,
+  getCommonExpenses
 } from '../controllers/investment';
 
 const router: Router = Router();
@@ -27,5 +29,11 @@ router.post('/calculate-goal', calculateGoal);
 
 // GET /api/investment/goal-types - Obtener tipos de metas disponibles
 router.get('/goal-types', getGoalTypes);
+
+// POST /api/investment/skip-vs-save - Calcular Skip vs Save Challenge
+router.post('/skip-vs-save', calculateSkipVsSave);
+
+// GET /api/investment/common-expenses - Obtener gastos comunes sugeridos
+router.get('/common-expenses', getCommonExpenses);
 
 export default router;

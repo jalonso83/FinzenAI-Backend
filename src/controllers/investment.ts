@@ -344,8 +344,11 @@ function calculateGoalSavings(
     };
   }
 
-  // Con inversión - fórmula de anualidades
+  // Con inversión - fórmula correcta de valor futuro de anualidades
   const monthlyReturn = annualReturn / 12 / 100;
+  
+  // PMT = FV * r / ((1 + r)^n - 1)
+  // donde PMT = pago mensual, FV = valor futuro, r = tasa mensual, n = número de pagos
   const monthlySavings = goalAmount * monthlyReturn / (Math.pow(1 + monthlyReturn, months) - 1);
   const totalContributed = monthlySavings * months;
   const totalInterest = goalAmount - totalContributed;
@@ -453,6 +456,235 @@ export const getGoalTypes = async (req: Request, res: Response) => {
     return res.json(goalConfigurations);
   } catch (error) {
     console.error('Error getting goal types:', error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor' 
+    });
+  }
+};
+
+// ===== SKIP VS SAVE CHALLENGE =====
+
+// Tipos para Skip vs Save Challenge
+interface SkipVsSaveRequest {
+  dailyExpense: number; // Gasto diario (ej: café RD$150)
+  frequency: 'daily' | 'weekly' | 'monthly'; // Frecuencia del gasto
+  timeframe: number; // Meses de comparación
+  investmentReturn?: number; // Tasa de retorno anual opcional
+}
+
+interface SkipVsSaveResult {
+  dailyAmount: number;
+  frequency: string;
+  timeframe: number;
+  totalSpent: number; // Total gastado en el periodo
+  totalSaved: number; // Total ahorrado (sin inversión)
+  totalInvested: number; // Total con inversión
+  savingsAdvantage: number; // Diferencia entre gastar y ahorrar
+  investmentAdvantage: number; // Diferencia entre ahorrar y invertir
+  equivalencies: string[]; // Qué podrías comprar con ese dinero
+  monthlyBreakdown: Array<{
+    month: number;
+    spent: number;
+    saved: number;
+    invested: number;
+  }>;
+  challenge: {
+    title: string;
+    description: string;
+    icon: string;
+  };
+}
+
+// Gastos típicos dominicanos Gen Z
+const commonExpenses = [
+  { 
+    amount: 150, 
+    name: "Café en Starbucks/Juan Valdez", 
+    icon: "☕", 
+    frequency: "daily",
+    alternatives: ["Café casero (RD$25)", "Café colado tradicional (RD$15)"]
+  },
+  { 
+    amount: 300, 
+    name: "Almuerzo delivery", 
+    icon: "🍔", 
+    frequency: "daily",
+    alternatives: ["Almuerzo casero (RD$100)", "Comedor universitario (RD$80)"]
+  },
+  { 
+    amount: 200, 
+    name: "Uber corto", 
+    icon: "🚗", 
+    frequency: "daily",
+    alternatives: ["Transporte público (RD$25)", "Caminar/bicicleta (RD$0)"]
+  },
+  { 
+    amount: 500, 
+    name: "Salida nocturna fin de semana", 
+    icon: "🍻", 
+    frequency: "weekly",
+    alternatives: ["Reunión en casa (RD$150)", "Actividad gratuita (RD$0)"]
+  },
+  { 
+    amount: 800, 
+    name: "Streaming (Netflix + Spotify + Disney)", 
+    icon: "📱", 
+    frequency: "monthly",
+    alternatives: ["Un servicio (RD$300)", "Compartir cuentas (RD$200)"]
+  },
+  { 
+    amount: 2000, 
+    name: "Compras online impulsivas", 
+    icon: "🛍️", 
+    frequency: "monthly",
+    alternatives: ["Compras planificadas", "Lista de deseos mensual"]
+  }
+];
+
+// Función para calcular Skip vs Save
+function calculateSkipVsSave(
+  dailyAmount: number,
+  frequency: 'daily' | 'weekly' | 'monthly',
+  months: number,
+  annualReturn: number = 0
+): { totalSpent: number; totalSaved: number; totalInvested: number; monthlyBreakdown: any[] } {
+  
+  // Convertir a cantidad mensual
+  let monthlyAmount = 0;
+  switch (frequency) {
+    case 'daily':
+      monthlyAmount = dailyAmount * 30; // Aproximadamente 30 días por mes
+      break;
+    case 'weekly':
+      monthlyAmount = dailyAmount * 4.33; // Aproximadamente 4.33 semanas por mes
+      break;
+    case 'monthly':
+      monthlyAmount = dailyAmount;
+      break;
+  }
+
+  const totalSpent = monthlyAmount * months;
+  const totalSaved = monthlyAmount * months; // Sin inversión, solo ahorrar
+  
+  // Con inversión usando interés compuesto
+  let totalInvested = 0;
+  const monthlyBreakdown = [];
+  let investmentBalance = 0;
+  const monthlyReturn = annualReturn / 12 / 100;
+
+  for (let month = 1; month <= months; month++) {
+    const monthSpent = monthlyAmount * month;
+    const monthSaved = monthlyAmount * month;
+    
+    // Calcular inversión con interés compuesto
+    investmentBalance += monthlyAmount;
+    if (annualReturn > 0) {
+      investmentBalance *= (1 + monthlyReturn);
+    }
+    
+    monthlyBreakdown.push({
+      month,
+      spent: monthSpent,
+      saved: monthSaved,
+      invested: Math.round(investmentBalance)
+    });
+  }
+  
+  totalInvested = investmentBalance;
+
+  return {
+    totalSpent,
+    totalSaved,
+    totalInvested: Math.round(totalInvested),
+    monthlyBreakdown
+  };
+}
+
+// Endpoint principal para Skip vs Save Challenge
+export const calculateSkipVsSave = async (req: Request, res: Response) => {
+  try {
+    const { 
+      dailyExpense, 
+      frequency, 
+      timeframe, 
+      investmentReturn = 8 
+    }: SkipVsSaveRequest = req.body;
+
+    // Validaciones
+    if (!dailyExpense || dailyExpense <= 0) {
+      return res.status(400).json({ 
+        error: 'El gasto diario debe ser mayor a 0' 
+      });
+    }
+
+    if (!frequency || !['daily', 'weekly', 'monthly'].includes(frequency)) {
+      return res.status(400).json({ 
+        error: 'Frecuencia inválida. Debe ser daily, weekly o monthly' 
+      });
+    }
+
+    if (!timeframe || timeframe <= 0 || timeframe > 240) {
+      return res.status(400).json({ 
+        error: 'El plazo debe estar entre 1 y 240 meses' 
+      });
+    }
+
+    // Calcular resultados
+    const calculations = calculateSkipVsSave(dailyExpense, frequency, timeframe, investmentReturn);
+    
+    // Generar equivalencias
+    const finalAmount = investmentReturn > 0 ? calculations.totalInvested : calculations.totalSaved;
+    const equivalencies = generateEquivalencies(finalAmount);
+    
+    // Encontrar el gasto más similar para el challenge
+    const similarExpense = commonExpenses.find(exp => 
+      Math.abs(exp.amount - dailyExpense) < 100 && exp.frequency === frequency
+    ) || commonExpenses[0];
+
+    // Traducir frecuencia
+    const frequencyText = {
+      daily: 'diario',
+      weekly: 'semanal', 
+      monthly: 'mensual'
+    }[frequency];
+
+    const result: SkipVsSaveResult = {
+      dailyAmount: dailyExpense,
+      frequency: frequencyText,
+      timeframe,
+      totalSpent: calculations.totalSpent,
+      totalSaved: calculations.totalSaved,
+      totalInvested: calculations.totalInvested,
+      savingsAdvantage: calculations.totalSaved - calculations.totalSpent,
+      investmentAdvantage: calculations.totalInvested - calculations.totalSaved,
+      equivalencies,
+      monthlyBreakdown: calculations.monthlyBreakdown,
+      challenge: {
+        title: `Reto: Evita ${similarExpense.name}`,
+        description: `Si evitas gastar RD$${dailyExpense} ${frequencyText} durante ${timeframe} meses...`,
+        icon: similarExpense.icon
+      }
+    };
+
+    console.log(`[Skip vs Save] Challenge: RD$${dailyExpense} ${frequency} for ${timeframe} months`);
+    console.log(`[Skip vs Save] Results: Spent RD$${calculations.totalSpent.toLocaleString()} | Saved RD$${calculations.totalSaved.toLocaleString()} | Invested RD$${calculations.totalInvested.toLocaleString()}`);
+
+    return res.json(result);
+
+  } catch (error) {
+    console.error('Error in skip vs save calculation:', error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor al calcular el reto' 
+    });
+  }
+};
+
+// Endpoint para obtener gastos comunes sugeridos
+export const getCommonExpenses = async (req: Request, res: Response) => {
+  try {
+    return res.json(commonExpenses);
+  } catch (error) {
+    console.error('Error getting common expenses:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor' 
     });
