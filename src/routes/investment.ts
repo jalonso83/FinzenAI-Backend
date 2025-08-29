@@ -6,7 +6,7 @@ import {
   getEquivalencyExamples 
 } from '../controllers/investment';
 
-const router = Router();
+const router: Router = Router();
 
 // Todas las rutas de investment requieren autenticación
 router.use(authenticateToken);
