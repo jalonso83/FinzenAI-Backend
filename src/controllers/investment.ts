@@ -39,19 +39,20 @@ interface RiskProfile {
   volatility: string;
 }
 
-// Data de equivalencias Gen Z para República Dominicana
+// Data de equivalencias Gen Z para República Dominicana (precios actuales 2025)
 const genZEquivalencies = [
-  { amount: 50000, description: "25 iPhones nuevos 📱" },
-  { amount: 100000, description: "Un Yaris nuevo 🚗" },
-  { amount: 200000, description: "2 años de universidad privada 🎓" },
-  { amount: 300000, description: "10 viajes a Miami ✈️" },
-  { amount: 500000, description: "Inicial para apartamento 🏠" },
-  { amount: 800000, description: "40 conciertos de Bad Bunny 🎵" },
-  { amount: 1000000, description: "¡Eres oficialmente millonario! 💎" },
-  { amount: 1500000, description: "Una casa en la playa 🏖️" },
-  { amount: 2000000, description: "Un Jeep Wrangler nuevo 🚙" },
-  { amount: 3000000, description: "3 años viviendo como influencer 📸" },
-  { amount: 5000000, description: "Tu propio negocio exitoso 🏢" }
+  { amount: 60000, description: "Un iPhone 15 Pro Max nuevo 📱" },
+  { amount: 120000, description: "Una moto Honda PCX nueva 🛵" },
+  { amount: 200000, description: "Un semestre de universidad privada 🎓" },
+  { amount: 350000, description: "Un viaje completo por Europa 15 días ✈️" },
+  { amount: 500000, description: "Inicial para apartamento clase media 🏠" },
+  { amount: 800000, description: "Un carro usado en buenas condiciones 🚗" },
+  { amount: 1200000, description: "Un Yaris Cross nuevo 🚙" },
+  { amount: 1800000, description: "Inicial para una casa en Santiago 🏡" },
+  { amount: 3000000, description: "Un apartamento completo en zona popular 🏢" },
+  { amount: 5000000, description: "Inicial para casa en zona residencial 🏘️" },
+  { amount: 8000000, description: "Una casa completa en zona media 🏆" },
+  { amount: 15000000, description: "¡Eres millonario en dólares! 💎" }
 ];
 
 // Perfiles de riesgo
@@ -126,12 +127,16 @@ function generateEquivalencies(amount: number): string[] {
 // Función para generar hitos
 function generateMilestones(monthlyBreakdown: MonthlyData[]): Milestone[] {
   const milestones: Milestone[] = [];
-  const targets = [50000, 100000, 250000, 500000, 1000000, 2000000, 5000000];
+  const targets = [60000, 200000, 500000, 1200000, 3000000, 8000000, 15000000];
   
   targets.forEach(target => {
     const milestone = monthlyBreakdown.find(data => data.total >= target);
     if (milestone) {
-      const equivalency = genZEquivalencies.find(eq => eq.amount <= target);
+      // Encontrar la equivalencia más cercana al target específico
+      const equivalency = genZEquivalencies
+        .filter(eq => eq.amount <= target)
+        .sort((a, b) => b.amount - a.amount)[0]; // La más alta que no exceda el target
+      
       milestones.push({
         amount: target,
         month: milestone.month,
