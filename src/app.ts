@@ -50,7 +50,7 @@ app.use('/api/investment', investmentRoutes);
 app.get('/api/health', (req, res) => {
   return res.json({
     status: 'OK',
-    message: 'FinZen AI Backend is running - Budget Reports Ready',
+    message: 'FinZen AI Backend is running - Budget Reports & Investment Simulator Ready',
     timestamp: new Date().toISOString(),
     version: process.env.APP_VERSION || '1.0.0'
   });
