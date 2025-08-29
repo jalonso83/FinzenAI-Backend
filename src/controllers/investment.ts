@@ -496,53 +496,53 @@ interface SkipVsSaveResult {
 }
 
 // Gastos típicos dominicanos Gen Z
-const commonExpenses = [
+const skipVsSaveExpenses = [
   { 
     amount: 150, 
     name: "Café en Starbucks/Juan Valdez", 
     icon: "☕", 
-    frequency: "daily",
+    frequency: "daily" as const,
     alternatives: ["Café casero (RD$25)", "Café colado tradicional (RD$15)"]
   },
   { 
     amount: 300, 
     name: "Almuerzo delivery", 
     icon: "🍔", 
-    frequency: "daily",
+    frequency: "daily" as const,
     alternatives: ["Almuerzo casero (RD$100)", "Comedor universitario (RD$80)"]
   },
   { 
     amount: 200, 
     name: "Uber corto", 
     icon: "🚗", 
-    frequency: "daily",
+    frequency: "daily" as const,
     alternatives: ["Transporte público (RD$25)", "Caminar/bicicleta (RD$0)"]
   },
   { 
     amount: 500, 
     name: "Salida nocturna fin de semana", 
     icon: "🍻", 
-    frequency: "weekly",
+    frequency: "weekly" as const,
     alternatives: ["Reunión en casa (RD$150)", "Actividad gratuita (RD$0)"]
   },
   { 
     amount: 800, 
     name: "Streaming (Netflix + Spotify + Disney)", 
     icon: "📱", 
-    frequency: "monthly",
+    frequency: "monthly" as const,
     alternatives: ["Un servicio (RD$300)", "Compartir cuentas (RD$200)"]
   },
   { 
     amount: 2000, 
     name: "Compras online impulsivas", 
     icon: "🛍️", 
-    frequency: "monthly",
+    frequency: "monthly" as const,
     alternatives: ["Compras planificadas", "Lista de deseos mensual"]
   }
 ];
 
 // Función para calcular Skip vs Save
-function calculateSkipVsSave(
+function calculateSkipVsAve(
   dailyAmount: number,
   frequency: 'daily' | 'weekly' | 'monthly',
   months: number,
@@ -630,16 +630,16 @@ export const calculateSkipVsSave = async (req: Request, res: Response) => {
     }
 
     // Calcular resultados
-    const calculations = calculateSkipVsSave(dailyExpense, frequency, timeframe, investmentReturn);
+    const calculations = calculateSkipVsAve(dailyExpense, frequency, timeframe, investmentReturn);
     
     // Generar equivalencias
     const finalAmount = investmentReturn > 0 ? calculations.totalInvested : calculations.totalSaved;
     const equivalencies = generateEquivalencies(finalAmount);
     
     // Encontrar el gasto más similar para el challenge
-    const similarExpense = commonExpenses.find(exp => 
+    const similarExpense = skipVsSaveExpenses.find(exp => 
       Math.abs(exp.amount - dailyExpense) < 100 && exp.frequency === frequency
-    ) || commonExpenses[0];
+    ) || skipVsSaveExpenses[0];
 
     // Traducir frecuencia
     const frequencyText = {
@@ -682,7 +682,7 @@ export const calculateSkipVsSave = async (req: Request, res: Response) => {
 // Endpoint para obtener gastos comunes sugeridos
 export const getCommonExpenses = async (req: Request, res: Response) => {
   try {
-    return res.json(commonExpenses);
+    return res.json(skipVsSaveExpenses);
   } catch (error) {
     console.error('Error getting common expenses:', error);
     return res.status(500).json({ 
@@ -690,3 +690,4 @@ export const getCommonExpenses = async (req: Request, res: Response) => {
     });
   }
 };
+
