@@ -1285,9 +1285,9 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
       : 0;
 
     // Análisis comparativo
-    // Mejor presupuesto: alto uso pero sin exceder (eficiencia real)
+    // Mejor presupuesto: uso balanceado entre 50-75% (control ideal)
     const bestBudget = budgetStats
-      .filter(b => b.percentageUsed <= 100 && b.percentageUsed >= 50)
+      .filter(b => b.percentageUsed <= 75 && b.percentageUsed >= 50)
       .sort((a, b) => b.percentageUsed - a.percentageUsed)[0] || null;
     
     // Peor presupuesto: solo los que están excedidos
