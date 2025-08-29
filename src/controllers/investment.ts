@@ -245,3 +245,216 @@ export const getEquivalencyExamples = async (req: Request, res: Response) => {
     });
   }
 };
+
+// ===== CALCULADORA DE METAS =====
+
+// Tipos para la calculadora de metas
+interface GoalCalculationRequest {
+  goalType: 'housing' | 'vehicle' | 'business' | 'education' | 'travel' | 'custom';
+  totalValue: number;
+  percentage: number; // Porcentaje que se quiere ahorrar (ej: 15% para inicial)
+  timeframe: number; // Meses para lograr la meta
+  investmentReturn?: number; // Tasa de retorno anual opcional
+}
+
+interface GoalResult {
+  goalAmount: number; // Monto final que necesita ahorrar
+  totalValue: number; // Valor total de la meta
+  percentage: number; // Porcentaje del total
+  timeframe: number; // Meses
+  monthlySavingsRequired: number; // Sin inversión
+  monthlyInvestmentRequired: number; // Con inversión
+  investmentAdvantage: number; // Cuánto ahorra por mes invirtiendo
+  milestones: GoalMilestone[];
+  goalType: string;
+  description: string;
+}
+
+interface GoalMilestone {
+  month: number;
+  amount: number;
+  percentage: number;
+  description: string;
+}
+
+// Configuraciones predefinidas por tipo de meta
+const goalConfigurations = {
+  housing: {
+    name: "Vivienda",
+    icon: "🏠",
+    percentageOptions: [
+      { value: 10, label: "10% (mínimo FHA)", description: "Financiamiento con seguro hipotecario" },
+      { value: 15, label: "15% (recomendado)", description: "Balance entre inicial y cuota mensual" },
+      { value: 20, label: "20% (ideal)", description: "Sin seguro hipotecario (PMI)" },
+      { value: 30, label: "30% (óptimo)", description: "Mejor tasa de interés" },
+      { value: 100, label: "100% (al contado)", description: "Sin financiamiento" }
+    ],
+    suggestions: [
+      { amount: 800000, description: "Apartamento zona popular" },
+      { amount: 1500000, description: "Apartamento clase media" },
+      { amount: 3000000, description: "Casa en Santiago" },
+      { amount: 5000000, description: "Casa zona residencial" }
+    ]
+  },
+  vehicle: {
+    name: "Vehículo", 
+    icon: "🚗",
+    percentageOptions: [
+      { value: 20, label: "20% inicial", description: "Financiamiento a 5 años" },
+      { value: 30, label: "30% inicial", description: "Mejor tasa de interés" },
+      { value: 50, label: "50% inicial", description: "Cuotas más bajas" },
+      { value: 100, label: "100% al contado", description: "Sin intereses" }
+    ],
+    suggestions: [
+      { amount: 400000, description: "Carro usado en buen estado" },
+      { amount: 800000, description: "Carro nuevo económico" },
+      { amount: 1200000, description: "SUV nuevo" },
+      { amount: 2000000, description: "Vehículo premium" }
+    ]
+  },
+  business: {
+    name: "Negocio",
+    icon: "🏢", 
+    percentageOptions: [
+      { value: 50, label: "50% del capital", description: "Buscar socio/inversionista" },
+      { value: 75, label: "75% del capital", description: "Reserva para imprevistos" },
+      { value: 100, label: "100% del capital", description: "Capital completo propio" }
+    ],
+    suggestions: [
+      { amount: 200000, description: "Negocio pequeño (colmado, cafetería)" },
+      { amount: 500000, description: "Negocio mediano (restaurante)" },
+      { amount: 1000000, description: "Negocio grande (distribuidora)" },
+      { amount: 2000000, description: "Franquicia reconocida" }
+    ]
+  }
+};
+
+// Función para calcular meta
+function calculateGoalSavings(
+  goalAmount: number,
+  months: number, 
+  annualReturn: number = 0
+): { monthlySavings: number; totalContributed: number; totalInterest: number } {
+  if (annualReturn === 0) {
+    // Sin inversión - ahorro simple
+    return {
+      monthlySavings: goalAmount / months,
+      totalContributed: goalAmount,
+      totalInterest: 0
+    };
+  }
+
+  // Con inversión - fórmula de anualidades
+  const monthlyReturn = annualReturn / 12 / 100;
+  const monthlySavings = goalAmount * monthlyReturn / (Math.pow(1 + monthlyReturn, months) - 1);
+  const totalContributed = monthlySavings * months;
+  const totalInterest = goalAmount - totalContributed;
+
+  return {
+    monthlySavings,
+    totalContributed, 
+    totalInterest
+  };
+}
+
+// Endpoint principal para calcular metas
+export const calculateGoal = async (req: Request, res: Response) => {
+  try {
+    const { 
+      goalType, 
+      totalValue, 
+      percentage, 
+      timeframe, 
+      investmentReturn = 0 
+    }: GoalCalculationRequest = req.body;
+
+    // Validaciones
+    if (!goalType || !goalConfigurations[goalType as keyof typeof goalConfigurations]) {
+      return res.status(400).json({ 
+        error: 'Tipo de meta inválido' 
+      });
+    }
+
+    if (!totalValue || totalValue <= 0) {
+      return res.status(400).json({ 
+        error: 'El valor total debe ser mayor a 0' 
+      });
+    }
+
+    if (!percentage || percentage <= 0 || percentage > 100) {
+      return res.status(400).json({ 
+        error: 'El porcentaje debe estar entre 1 y 100' 
+      });
+    }
+
+    if (!timeframe || timeframe <= 0 || timeframe > 360) {
+      return res.status(400).json({ 
+        error: 'El plazo debe estar entre 1 y 360 meses' 
+      });
+    }
+
+    // Cálculos
+    const goalAmount = (totalValue * percentage) / 100;
+    const config = goalConfigurations[goalType as keyof typeof goalConfigurations];
+
+    // Calcular sin inversión
+    const simpleSavings = calculateGoalSavings(goalAmount, timeframe, 0);
+    
+    // Calcular con inversión (si se especifica)
+    const investmentSavings = investmentReturn > 0 
+      ? calculateGoalSavings(goalAmount, timeframe, investmentReturn)
+      : simpleSavings;
+
+    // Generar hitos
+    const milestones: GoalMilestone[] = [];
+    const quarterMilestones = [25, 50, 75, 100];
+    
+    quarterMilestones.forEach(percent => {
+      const milestoneAmount = (goalAmount * percent) / 100;
+      const month = Math.round((timeframe * percent) / 100);
+      
+      milestones.push({
+        month: month,
+        amount: milestoneAmount,
+        percentage: percent,
+        description: percent === 100 ? "¡META ALCANZADA!" : `${percent}% completado`
+      });
+    });
+
+    const result: GoalResult = {
+      goalAmount,
+      totalValue,
+      percentage,
+      timeframe,
+      monthlySavingsRequired: simpleSavings.monthlySavings,
+      monthlyInvestmentRequired: investmentSavings.monthlySavings,
+      investmentAdvantage: simpleSavings.monthlySavings - investmentSavings.monthlySavings,
+      milestones,
+      goalType: config.name,
+      description: `${config.icon} ${config.name} - ${percentage}% del valor total`
+    };
+
+    console.log(`[Goal Calculator] Calculated goal: ${config.name} RD$${goalAmount.toLocaleString()} in ${timeframe} months`);
+    console.log(`[Goal Calculator] Monthly required: Simple RD$${simpleSavings.monthlySavings.toFixed(0)} | Investment RD$${investmentSavings.monthlySavings.toFixed(0)}`);
+
+    return res.json(result);
+
+  } catch (error) {
+    console.error('Error in goal calculation:', error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor al calcular la meta' 
+    });
+  }
+};
+
+// Endpoint para obtener configuraciones de tipos de metas
+export const getGoalTypes = async (req: Request, res: Response) => {
+  try {
+    return res.json(goalConfigurations);
+  } catch (error) {
+    console.error('Error getting goal types:', error);
+    return res.status(500).json({ 
+      error: 'Error interno del servidor' 
+    });
+  }
+};

@@ -3,7 +3,9 @@ import { authenticateToken } from '../middlewares/auth';
 import { 
   calculateInvestment, 
   getRiskProfiles, 
-  getEquivalencyExamples 
+  getEquivalencyExamples,
+  calculateGoal,
+  getGoalTypes
 } from '../controllers/investment';
 
 const router: Router = Router();
@@ -19,5 +21,11 @@ router.get('/risk-profiles', getRiskProfiles);
 
 // GET /api/investment/equivalencies - Obtener ejemplos de equivalencias
 router.get('/equivalencies', getEquivalencyExamples);
+
+// POST /api/investment/calculate-goal - Calcular meta de ahorro
+router.post('/calculate-goal', calculateGoal);
+
+// GET /api/investment/goal-types - Obtener tipos de metas disponibles
+router.get('/goal-types', getGoalTypes);
 
 export default router;
