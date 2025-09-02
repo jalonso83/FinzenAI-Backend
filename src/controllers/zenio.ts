@@ -826,6 +826,9 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
         case 'list_categories':
           result = await executeListCategories(functionArgs, categories);
           break;
+        case 'analyze_ant_expenses':
+          result = await executeAnalyzeAntExpenses(functionArgs, userId);
+          break;
         default:
           throw new Error(`Función no soportada: ${functionName}`);
       }
@@ -1153,6 +1156,94 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
     count: formattedCategories.length,
     module: module
   };
+}
+
+// Función para ejecutar analyze_ant_expenses
+async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any> {
+  const periodMonths = args.period_months || 3;
+  const minFrequency = args.min_frequency || 5;
+  
+  console.log(`[Zenio] Analizando gastos hormiga para usuario ${userId}, período: ${periodMonths} meses`);
+  
+  try {
+    // Calcular fecha de inicio (X meses atrás)
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - periodMonths);
+    
+    // Obtener todas las transacciones de gastos del período
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        userId: parseInt(userId),
+        type: 'EXPENSE',
+        date: {
+          gte: startDate
+        }
+      },
+      select: {
+        id: true,
+        amount: true,
+        category: true,
+        description: true,
+        date: true,
+        type: true
+      },
+      orderBy: {
+        date: 'desc'
+      }
+    });
+    
+    console.log(`[Zenio] Encontradas ${transactions.length} transacciones de gastos en los últimos ${periodMonths} meses`);
+    
+    // Calcular totales y estadísticas básicas
+    const totalSpent = transactions.reduce((sum, t) => sum + t.amount, 0);
+    const averageTransaction = transactions.length > 0 ? totalSpent / transactions.length : 0;
+    
+    // Agrupar por categoría para análisis básico
+    const categoryBreakdown: Record<string, { total: number; count: number; transactions: any[] }> = {};
+    
+    transactions.forEach(transaction => {
+      if (!categoryBreakdown[transaction.category]) {
+        categoryBreakdown[transaction.category] = {
+          total: 0,
+          count: 0,
+          transactions: []
+        };
+      }
+      
+      categoryBreakdown[transaction.category].total += transaction.amount;
+      categoryBreakdown[transaction.category].count += 1;
+      categoryBreakdown[transaction.category].transactions.push(transaction);
+    });
+    
+    // Retornar datos RAW para que Zenio haga el análisis inteligente
+    return {
+      success: true,
+      data: {
+        transactions: transactions,
+        period_months: periodMonths,
+        total_transactions: transactions.length,
+        total_spent: totalSpent,
+        average_transaction: Math.round(averageTransaction),
+        category_breakdown: Object.entries(categoryBreakdown).map(([category, data]) => ({
+          category,
+          total: data.total,
+          count: data.count,
+          average: Math.round(data.total / data.count),
+          percentage: Math.round((data.total / totalSpent) * 100)
+        })).sort((a, b) => b.total - a.total), // Ordenar por total gastado
+        analysis_params: {
+          min_frequency: minFrequency
+        }
+      }
+    };
+    
+  } catch (error) {
+    console.error('[Zenio] Error analizando gastos hormiga:', error);
+    return {
+      success: false,
+      error: 'Error al obtener los datos de transacciones para análisis'
+    };
+  }
 }
 
 // Funciones auxiliares para transacciones

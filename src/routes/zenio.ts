@@ -2,6 +2,7 @@ import express, { Router } from 'express';
 import { chatWithZenio, getChatHistory, createTransactionFromZenio, createBudgetFromZenio } from '../controllers/zenio';
 import { authenticateToken } from '../middlewares/auth';
 import { saveOnboarding } from '../controllers/onboarding';
+import { analyzeAntExpenses } from '../controllers/antExpenseDetective';
 
 const router: Router = express.Router();
 
@@ -20,5 +21,8 @@ router.post('/budget', createBudgetFromZenio);
 
 // Ruta para guardar el onboarding
 router.post('/onboarding', saveOnboarding);
+
+// Ruta para análisis de gastos hormiga con Zenio
+router.get('/ant-expense-analysis', analyzeAntExpenses);
 
 export default router; 
