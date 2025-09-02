@@ -826,6 +826,9 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
         case 'list_categories':
           result = await executeListCategories(functionArgs, categories);
           break;
+        case 'analyze_ant_expenses':
+          result = await executeAnalyzeAntExpenses(functionArgs, userId);
+          break;
         default:
           throw new Error(`Función no soportada: ${functionName}`);
       }
@@ -1153,6 +1156,140 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
     count: formattedCategories.length,
     module: module
   };
+}
+
+// Función para ejecutar análisis de gastos hormiga
+async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any> {
+  console.log('[Zenio] Ejecutando análisis de gastos hormiga');
+  console.log('[Zenio] Argumentos recibidos:', args);
+  
+  const { transactions, period_months = 3 } = args;
+  
+  if (!transactions || !Array.isArray(transactions)) {
+    return {
+      error: true,
+      message: 'No se proporcionaron transacciones para analizar'
+    };
+  }
+  
+  console.log(`[Zenio] Analizando ${transactions.length} transacciones para gastos hormiga`);
+  
+  // Análisis de gastos hormiga
+  const expenseTransactions = transactions.filter(t => t.type === 'EXPENSE' || t.type === 'expense');
+  const totalExpenses = expenseTransactions.reduce((sum, t) => sum + t.amount, 0);
+  
+  // Agrupar por categoría
+  const categoryGroups = expenseTransactions.reduce((groups: any, transaction) => {
+    const category = transaction.category || 'Sin categoría';
+    if (!groups[category]) {
+      groups[category] = {
+        transactions: [],
+        total: 0,
+        count: 0
+      };
+    }
+    groups[category].transactions.push(transaction);
+    groups[category].total += transaction.amount;
+    groups[category].count += 1;
+    return groups;
+  }, {});
+  
+  // Identificar top criminales (categorías con más transacciones pequeñas frecuentes)
+  const topCriminals = Object.entries(categoryGroups)
+    .map(([category, data]: [string, any]) => ({
+      category,
+      amount: data.total,
+      count: data.count,
+      avgAmount: Math.round(data.total / data.count),
+      impact: data.count >= 3 && data.total / totalExpenses > 0.1 ? 'alto' : 
+              data.count >= 2 ? 'medio' : 'bajo',
+      emoji: getCategoryEmoji(category),
+      recommendations: getCategoryRecommendations(category)
+    }))
+    .filter(criminal => criminal.count >= 2) // Solo categorías con al menos 2 transacciones
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 5);
+  
+  const totalAntExpenses = topCriminals.reduce((sum, c) => sum + c.amount, 0);
+  const monthlyPotentialSavings = Math.round(totalAntExpenses * 0.4 / period_months);
+  
+  // Generar equivalencias divertidas
+  const equivalencies = generateEquivalencies(totalAntExpenses);
+  
+  const result = {
+    totalAntExpenses,
+    impactMessage: `Detecté gastos hormiga por $${totalAntExpenses.toLocaleString()} que representan el ${Math.round((totalAntExpenses / totalExpenses) * 100)}% de tus gastos totales`,
+    topCriminals,
+    equivalencies,
+    savingsOpportunity: Math.round(totalAntExpenses * 0.6),
+    monthlyPotentialSavings,
+    motivationalMessage: `¡${getUserName(userId)}! Estos pequeños gastos se están comiendo tu presupuesto como hormigas. Con pequeños cambios puedes ahorrar $${monthlyPotentialSavings.toLocaleString()} al mes.`,
+    insights: generateInsights(topCriminals, totalAntExpenses)
+  };
+  
+  console.log('[Zenio] Análisis de gastos hormiga completado:', result);
+  return result;
+}
+
+// Funciones auxiliares
+function getCategoryEmoji(category: string): string {
+  const emojiMap: { [key: string]: string } = {
+    'Comida': '🍔',
+    'Transporte': '🚗',
+    'Entretenimiento': '🎬',
+    'Salud': '💊',
+    'Ropa': '👕',
+    'Servicios': '💡',
+    'Otros': '❓'
+  };
+  
+  for (const [key, emoji] of Object.entries(emojiMap)) {
+    if (category.toLowerCase().includes(key.toLowerCase())) {
+      return emoji;
+    }
+  }
+  return '💸';
+}
+
+function getCategoryRecommendations(category: string): string[] {
+  const recommendationMap: { [key: string]: string[] } = {
+    'Comida': ['Cocina más en casa', 'Planifica tus comidas', 'Lleva snacks saludables'],
+    'Transporte': ['Usa transporte público', 'Camina distancias cortas', 'Comparte viajes'],
+    'Entretenimiento': ['Busca actividades gratuitas', 'Aprovecha ofertas', 'Limita salidas semanales'],
+    'Default': ['Revisa si realmente lo necesitas', 'Busca alternativas más baratas', 'Establece un límite mensual']
+  };
+  
+  for (const [key, recommendations] of Object.entries(recommendationMap)) {
+    if (category.toLowerCase().includes(key.toLowerCase())) {
+      return recommendations;
+    }
+  }
+  return recommendationMap.Default;
+}
+
+function generateEquivalencies(amount: number): string[] {
+  const equivalencies = [
+    `Con $${amount.toLocaleString()} podrías haberte comprado una PS5`,
+    `Es como comprarte ${Math.round(amount / 200)} cafés de Starbucks al mes`,
+    `Podrías pagar ${Math.round(amount / 1000)} meses de Netflix`,
+    `Es equivalente a ${Math.round(amount / 150)} comidas en restaurante`
+  ];
+  
+  return equivalencies.slice(0, 2);
+}
+
+function generateInsights(topCriminals: any[], totalAmount: number): string {
+  if (topCriminals.length === 0) {
+    return "No detecté patrones significativos de gastos hormiga en este período";
+  }
+  
+  const topCategory = topCriminals[0];
+  return `Tus principales gastos hormiga están en ${topCategory.category.toLowerCase()} con ${topCategory.count} transacciones. Son pequeños pero frecuentes, ¡ahí está tu oportunidad de ahorro más grande!`;
+}
+
+function getUserName(userId: string): string {
+  // Por simplicidad, usar un nombre genérico. En el futuro se puede obtener de la BD
+  return 'José Luis';
 }
 
 
