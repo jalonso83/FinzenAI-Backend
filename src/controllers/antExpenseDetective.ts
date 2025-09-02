@@ -88,6 +88,11 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
     console.log('[Ant Detective] Enviando datos a Zenio para análisis...');
     const zenioResponse = await callZenioForAntExpenseAnalysis(userId);
     
+    // Log de la respuesta cruda para debugging
+    console.log('[Ant Detective] Respuesta cruda de Zenio:', zenioResponse);
+    console.log('[Ant Detective] Tipo de respuesta:', typeof zenioResponse);
+    console.log('[Ant Detective] Longitud de respuesta:', zenioResponse.length);
+    
     // Parsear la respuesta JSON de Zenio
     let zenioData;
     try {
@@ -95,6 +100,7 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
       console.log('[Ant Detective] JSON parseado correctamente de Zenio');
     } catch (error) {
       console.error('[Ant Detective] Error parseando JSON de Zenio:', error);
+      console.log('[Ant Detective] Primeros 200 caracteres de la respuesta:', zenioResponse.substring(0, 200));
       // Fallback si Zenio no devuelve JSON válido
       zenioData = {
         totalAntExpenses: 0,
