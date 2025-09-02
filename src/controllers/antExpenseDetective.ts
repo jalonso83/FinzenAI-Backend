@@ -27,13 +27,46 @@ interface AntExpenseAnalysis {
 // Función para llamar al agente Zenio con la nueva función analyze_ant_expenses
 async function callZenioForAntExpenseAnalysis(userId: string): Promise<string> {
   try {
+    console.log('[Ant Detective] Obteniendo transacciones del usuario...');
+
+    // Obtener transacciones de los últimos 3 meses
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        userId: userId,
+        date: {
+          gte: threeMonthsAgo
+        }
+      },
+      include: {
+        category: true
+      },
+      orderBy: {
+        date: 'desc'
+      }
+    });
+
+    console.log(`[Ant Detective] Encontradas ${transactions.length} transacciones`);
+
+    // Preparar datos para la función
+    const transactionData = transactions.map(t => ({
+      id: t.id,
+      amount: t.amount,
+      description: t.description,
+      date: t.date.toISOString(),
+      category: t.category?.name || 'Sin categoría',
+      type: t.type
+    }));
+
     console.log('[Ant Detective] Llamando al agente Zenio para análisis...');
 
-    // Crear request para llamar a chatWithZenio con mensaje que active la función
+    // Crear request para llamar a chatWithZenio con datos reales
     const mockReq = {
       user: { id: userId },
       body: {
-        message: "Analiza mis gastos hormiga de los últimos 3 meses como Detective Zenio",
+        message: `Analiza mis gastos hormiga usando analyze_ant_expenses con estos datos: ${JSON.stringify(transactionData)}`,
         threadId: undefined, // Crear nuevo thread para análisis
         isOnboarding: false,
         categories: [],
@@ -104,12 +137,12 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
       // Fallback si Zenio no devuelve JSON válido
       zenioData = {
         totalAntExpenses: 0,
-        impactMessage: "Análisis en proceso",
+        impactMessage: "🕵️ Detective Zenio está teniendo problemas técnicos",
         topCriminals: [],
-        equivalencies: [],
+        equivalencies: ["Intenta de nuevo en unos minutos"],
         savingsOpportunity: 0,
-        motivationalMessage: zenioResponse,
-        insights: zenioResponse
+        motivationalMessage: "🚧 La función de análisis de gastos hormiga está temporalmente fuera de servicio. ¡Vuelve a intentarlo pronto!",
+        insights: "Por favor contacta al soporte si el problema persiste"
       };
     }
     
