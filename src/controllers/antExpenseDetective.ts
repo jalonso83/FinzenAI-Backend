@@ -24,7 +24,7 @@ interface AntExpenseAnalysis {
   zenioInsights: string;
 }
 
-// Función para llamar directamente a la función de análisis de gastos hormiga
+// Función para llamar al agente Zenio y capturar el tool call result
 async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
   try {
     console.log('[Ant Detective] Obteniendo transacciones del usuario...');
@@ -60,21 +60,58 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
       type: t.type
     }));
 
-    console.log('[Ant Detective] Ejecutando análisis directo de gastos hormiga...');
+    console.log('[Ant Detective] Llamando al agente Zenio para análisis IA...');
 
-    // Llamar directamente a la función executeAnalyzeAntExpenses
-    const { executeAnalyzeAntExpenses } = await import('./zenio');
+    // Variable para capturar el resultado del tool call
+    let toolCallResult: any = null;
+
+    // Crear request para llamar a chatWithZenio con datos reales
+    const mockReq = {
+      user: { id: userId },
+      body: {
+        message: `Analiza mis gastos hormiga usando la función analyze_ant_expenses. Mis transacciones de los últimos 3 meses: ${JSON.stringify(transactionData)}`,
+        threadId: undefined, // Crear nuevo thread para análisis
+        isOnboarding: false,
+        categories: [],
+        timezone: 'UTC'
+      }
+    } as any;
+
+    // Mock response que captura tanto el mensaje como las acciones ejecutadas
+    const mockRes = {
+      status: (code: number) => mockRes,
+      json: (data: any) => {
+        console.log('[Ant Detective] Respuesta de Zenio recibida:', data);
+        
+        // Si hay acciones ejecutadas, buscar el resultado del análisis
+        if (data.executedActions && Array.isArray(data.executedActions)) {
+          for (const action of data.executedActions) {
+            if (action.action === 'analyze_ant_expenses' || 
+                (action.data && action.data.totalAntExpenses !== undefined)) {
+              console.log('[Ant Detective] ¡Encontrado resultado del tool call!');
+              toolCallResult = action.data;
+              break;
+            }
+          }
+        }
+        
+        return mockRes;
+      }
+    } as any;
+
+    // Importar y llamar al agente Zenio
+    const { chatWithZenio } = await import('./zenio');
+    await chatWithZenio(mockReq, mockRes);
     
-    const analysisResult = await executeAnalyzeAntExpenses({
-      transactions: transactionData,
-      period_months: 3
-    }, userId);
-
-    console.log('[Ant Detective] Análisis directo completado');
-    return analysisResult;
+    if (toolCallResult) {
+      console.log('[Ant Detective] Análisis de Zenio IA completado exitosamente');
+      return toolCallResult;
+    } else {
+      throw new Error('No se recibió resultado del tool call de análisis');
+    }
 
   } catch (error) {
-    console.error('[Ant Detective] Error en análisis directo:', error);
+    console.error('[Ant Detective] Error en análisis con Zenio IA:', error);
     
     // Fallback en caso de error
     return {

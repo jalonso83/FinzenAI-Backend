@@ -1217,6 +1217,7 @@ export async function executeAnalyzeAntExpenses(args: any, userId: string): Prom
   const equivalencies = generateEquivalencies(totalAntExpenses);
   
   const result = {
+    action: 'analyze_ant_expenses',
     totalAntExpenses,
     impactMessage: `Detecté gastos hormiga por $${totalAntExpenses.toLocaleString()} que representan el ${Math.round((totalAntExpenses / totalExpenses) * 100)}% de tus gastos totales`,
     topCriminals,
@@ -2628,14 +2629,17 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       autoGreeting: autoGreeting || false
     };
 
-    // Incluir la última acción ejecutada para el frontend
+    // Incluir TODAS las acciones ejecutadas para el frontend
     if (executedActions.length > 0) {
+      response.executedActions = executedActions;
+      
+      // También mantener compatibilidad con la última acción
       const lastAction = executedActions[executedActions.length - 1];
       response.action = lastAction.action;
       response.transaction = lastAction.data.transaction;
       response.budget = lastAction.data.budget;
       response.goal = lastAction.data.goal; // Incluir la meta si es una acción de meta
-      console.log(`[Zenio] Incluyendo acción en respuesta: ${lastAction.action}`);
+      console.log(`[Zenio] Incluyendo ${executedActions.length} acciones ejecutadas en respuesta`);
       console.log(`[Zenio] Respuesta completa que se envía al frontend:`, JSON.stringify(response, null, 2));
     }
 
