@@ -86,17 +86,43 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
 
     // Llamar a Zenio REAL para análisis inteligente
     console.log('[Ant Detective] Enviando datos a Zenio para análisis...');
-    const zenioInsights = await callZenioForAntExpenseAnalysis(userId);
+    const zenioResponse = await callZenioForAntExpenseAnalysis(userId);
     
-    // Mock de datos para la UI mientras Zenio hace el análisis real
+    // Parsear la respuesta JSON de Zenio
+    let zenioData;
+    try {
+      zenioData = JSON.parse(zenioResponse);
+      console.log('[Ant Detective] JSON parseado correctamente de Zenio');
+    } catch (error) {
+      console.error('[Ant Detective] Error parseando JSON de Zenio:', error);
+      // Fallback si Zenio no devuelve JSON válido
+      zenioData = {
+        totalAntExpenses: 0,
+        impactMessage: "Análisis en proceso",
+        topCriminals: [],
+        equivalencies: [],
+        savingsOpportunity: 0,
+        motivationalMessage: zenioResponse,
+        insights: zenioResponse
+      };
+    }
+    
+    // Convertir datos de Zenio al formato que espera el frontend
     const result: AntExpenseAnalysis = {
-      totalAntExpenses: 0,
-      analysisMessage: `Zenio está analizando tus transacciones`,
-      topCriminals: [],
-      monthlyTrend: [],
-      equivalencies: [],
-      savingsOpportunity: 0,
-      zenioInsights
+      totalAntExpenses: zenioData.totalAntExpenses || 0,
+      analysisMessage: zenioData.impactMessage || "Detecté algunos gastos hormiga",
+      topCriminals: (zenioData.topCriminals || []).map((criminal: any) => ({
+        category: criminal.category,
+        amount: criminal.amount,
+        count: criminal.count,
+        averageAmount: criminal.avgAmount,
+        impact: criminal.impact,
+        suggestions: criminal.recommendations || []
+      })),
+      monthlyTrend: [], // Por ahora vacío, lo llenaremos después
+      equivalencies: zenioData.equivalencies || [],
+      savingsOpportunity: zenioData.monthlyPotentialSavings || 0,
+      zenioInsights: zenioData.motivationalMessage || zenioData.insights || "Análisis completado"
     };
 
     console.log(`[Ant Detective] Analysis complete`);
