@@ -1173,7 +1173,7 @@ async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any
     // Obtener todas las transacciones de gastos del período
     const transactions = await prisma.transaction.findMany({
       where: {
-        userId: parseInt(userId),
+        userId: userId,
         type: 'EXPENSE',
         date: {
           gte: startDate
@@ -1182,10 +1182,14 @@ async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any
       select: {
         id: true,
         amount: true,
-        category: true,
         description: true,
         date: true,
-        type: true
+        type: true,
+        category: {
+          select: {
+            name: true
+          }
+        }
       },
       orderBy: {
         date: 'desc'
@@ -1202,24 +1206,32 @@ async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any
     const categoryBreakdown: Record<string, { total: number; count: number; transactions: any[] }> = {};
     
     transactions.forEach(transaction => {
-      if (!categoryBreakdown[transaction.category]) {
-        categoryBreakdown[transaction.category] = {
+      const categoryName = transaction.category.name;
+      if (!categoryBreakdown[categoryName]) {
+        categoryBreakdown[categoryName] = {
           total: 0,
           count: 0,
           transactions: []
         };
       }
       
-      categoryBreakdown[transaction.category].total += transaction.amount;
-      categoryBreakdown[transaction.category].count += 1;
-      categoryBreakdown[transaction.category].transactions.push(transaction);
+      categoryBreakdown[categoryName].total += transaction.amount;
+      categoryBreakdown[categoryName].count += 1;
+      categoryBreakdown[categoryName].transactions.push(transaction);
     });
     
     // Retornar datos RAW para que Zenio haga el análisis inteligente
     return {
       success: true,
       data: {
-        transactions: transactions,
+        transactions: transactions.map(t => ({
+          id: t.id,
+          amount: t.amount,
+          category: t.category.name,
+          description: t.description,
+          date: t.date,
+          type: t.type
+        })),
         period_months: periodMonths,
         total_transactions: transactions.length,
         total_spent: totalSpent,

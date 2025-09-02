@@ -26,7 +26,7 @@ interface AntExpenseAnalysis {
 }
 
 interface Transaction {
-  id: number;
+  id: string;
   amount: number;
   category: string;
   description: string | null;
@@ -35,7 +35,7 @@ interface Transaction {
 }
 
 // Función para obtener transacciones de gastos de los últimos 3 meses
-async function getRecentExpenseTransactions(userId: number): Promise<Transaction[]> {
+async function getRecentExpenseTransactions(userId: string): Promise<Transaction[]> {
   const threeMonthsAgo = new Date();
   threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
@@ -47,6 +47,9 @@ async function getRecentExpenseTransactions(userId: number): Promise<Transaction
         gte: threeMonthsAgo
       }
     },
+    include: {
+      category: true
+    },
     orderBy: {
       date: 'desc'
     }
@@ -55,7 +58,7 @@ async function getRecentExpenseTransactions(userId: number): Promise<Transaction
   return transactions.map(t => ({
     id: t.id,
     amount: t.amount,
-    category: t.category,
+    category: t.category.name,
     description: t.description,
     date: t.date,
     type: t.type
@@ -173,7 +176,7 @@ NO asumas la moneda - usa la información tal como viene. El usuario puede ser d
 }
 
 // Función para llamar al agente Zenio con la nueva función analyze_ant_expenses
-async function callZenioForAntExpenseAnalysis(userId: number): Promise<string> {
+async function callZenioForAntExpenseAnalysis(userId: string): Promise<string> {
   try {
     console.log('[Ant Detective] Llamando al agente Zenio para análisis...');
 
