@@ -24,8 +24,8 @@ interface AntExpenseAnalysis {
   zenioInsights: string;
 }
 
-// Función para llamar al agente Zenio con la nueva función analyze_ant_expenses
-async function callZenioForAntExpenseAnalysis(userId: string): Promise<string> {
+// Función para llamar directamente a la función de análisis de gastos hormiga
+async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
   try {
     console.log('[Ant Detective] Obteniendo transacciones del usuario...');
 
@@ -60,49 +60,32 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<string> {
       type: t.type
     }));
 
-    console.log('[Ant Detective] Llamando al agente Zenio para análisis...');
+    console.log('[Ant Detective] Ejecutando análisis directo de gastos hormiga...');
 
-    // Crear request para llamar a chatWithZenio con datos reales
-    const mockReq = {
-      user: { id: userId },
-      body: {
-        message: `Analiza mis gastos hormiga. Mis transacciones de los últimos 3 meses: ${JSON.stringify(transactionData)}`,
-        threadId: undefined, // Crear nuevo thread para análisis
-        isOnboarding: false,
-        categories: [],
-        timezone: 'UTC'
-      }
-    } as any;
-
-    // Capturar la respuesta del agente
-    let zenioResponse = '';
+    // Llamar directamente a la función executeAnalyzeAntExpenses
+    const { executeAnalyzeAntExpenses } = await import('./zenio');
     
-    const mockRes = {
-      status: (code: number) => mockRes,
-      json: (data: any) => {
-        if (data.message) {
-          zenioResponse = data.message;
-        }
-        return mockRes;
-      }
-    } as any;
+    const analysisResult = await executeAnalyzeAntExpenses({
+      transactions: transactionData,
+      period_months: 3
+    }, userId);
 
-    // Importar y llamar al agente Zenio
-    const { chatWithZenio } = await import('./zenio');
-    await chatWithZenio(mockReq, mockRes);
-    
-    if (zenioResponse) {
-      console.log('[Ant Detective] Análisis de Zenio completado');
-      return zenioResponse;
-    } else {
-      throw new Error('No se recibió respuesta del agente Zenio');
-    }
+    console.log('[Ant Detective] Análisis directo completado');
+    return analysisResult;
 
   } catch (error) {
-    console.error('[Ant Detective] Error en análisis con Zenio:', error);
+    console.error('[Ant Detective] Error en análisis directo:', error);
     
     // Fallback en caso de error
-    return `🕵️ Detective Zenio aquí. Tuve un problema técnico, pero basándome en tus patrones de gasto, te recomiendo revisar las categorías con más transacciones frecuentes. ¡Vuelve a intentarlo en un momento! 💪`;
+    return {
+      totalAntExpenses: 0,
+      impactMessage: "🕵️ Detective Zenio aquí. Tuve un problema técnico, pero basándome en tus patrones de gasto, te recomiendo revisar las categorías con más transacciones frecuentes. ¡Vuelve a intentarlo en un momento! 💪",
+      topCriminals: [],
+      equivalencies: ["Intenta de nuevo en unos minutos"],
+      savingsOpportunity: 0,
+      motivationalMessage: "🚧 La función de análisis de gastos hormiga está temporalmente fuera de servicio. ¡Vuelve a intentarlo pronto!",
+      insights: "Por favor contacta al soporte si el problema persiste"
+    };
   }
 }
 
@@ -117,36 +100,13 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
 
     console.log(`[Ant Detective] Starting analysis for user ${userId}`);
 
-    // Llamar a Zenio REAL para análisis inteligente
-    console.log('[Ant Detective] Enviando datos a Zenio para análisis...');
-    const zenioResponse = await callZenioForAntExpenseAnalysis(userId);
+    // Llamar directamente a la función de análisis
+    console.log('[Ant Detective] Ejecutando análisis directo...');
+    const zenioData = await callZenioForAntExpenseAnalysis(userId);
     
-    // Log de la respuesta cruda para debugging
-    console.log('[Ant Detective] Respuesta cruda de Zenio:', zenioResponse);
-    console.log('[Ant Detective] Tipo de respuesta:', typeof zenioResponse);
-    console.log('[Ant Detective] Longitud de respuesta:', zenioResponse.length);
+    console.log('[Ant Detective] Análisis completado, formateando para frontend...');
     
-    // Parsear la respuesta JSON de Zenio
-    let zenioData;
-    try {
-      zenioData = JSON.parse(zenioResponse);
-      console.log('[Ant Detective] JSON parseado correctamente de Zenio');
-    } catch (error) {
-      console.error('[Ant Detective] Error parseando JSON de Zenio:', error);
-      console.log('[Ant Detective] Primeros 200 caracteres de la respuesta:', zenioResponse.substring(0, 200));
-      // Fallback si Zenio no devuelve JSON válido
-      zenioData = {
-        totalAntExpenses: 0,
-        impactMessage: "🕵️ Detective Zenio está teniendo problemas técnicos",
-        topCriminals: [],
-        equivalencies: ["Intenta de nuevo en unos minutos"],
-        savingsOpportunity: 0,
-        motivationalMessage: "🚧 La función de análisis de gastos hormiga está temporalmente fuera de servicio. ¡Vuelve a intentarlo pronto!",
-        insights: "Por favor contacta al soporte si el problema persiste"
-      };
-    }
-    
-    // Convertir datos de Zenio al formato que espera el frontend
+    // Convertir datos al formato que espera el frontend
     const result: AntExpenseAnalysis = {
       totalAntExpenses: zenioData.totalAntExpenses || 0,
       analysisMessage: zenioData.impactMessage || "Detecté algunos gastos hormiga",
@@ -154,17 +114,17 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
         category: criminal.category,
         amount: criminal.amount,
         count: criminal.count,
-        averageAmount: criminal.avgAmount,
+        averageAmount: criminal.avgAmount || criminal.averageAmount,
         impact: criminal.impact,
-        suggestions: criminal.recommendations || []
+        suggestions: criminal.recommendations || criminal.suggestions || []
       })),
-      monthlyTrend: [], // Por ahora vacío, lo llenaremos después
+      monthlyTrend: [], // Por ahora vacío, se puede llenar después
       equivalencies: zenioData.equivalencies || [],
-      savingsOpportunity: zenioData.monthlyPotentialSavings || 0,
+      savingsOpportunity: zenioData.savingsOpportunity || 0,
       zenioInsights: zenioData.motivationalMessage || zenioData.insights || "Análisis completado"
     };
 
-    console.log(`[Ant Detective] Analysis complete`);
+    console.log(`[Ant Detective] Enviando resultado al frontend:`, result);
     return res.json(result);
 
   } catch (error) {

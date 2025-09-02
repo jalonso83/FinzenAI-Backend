@@ -1159,7 +1159,7 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
 }
 
 // Función para ejecutar análisis de gastos hormiga
-async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any> {
+export async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any> {
   console.log('[Zenio] Ejecutando análisis de gastos hormiga');
   console.log('[Zenio] Argumentos recibidos:', args);
   
