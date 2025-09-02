@@ -66,7 +66,7 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<string> {
     const mockReq = {
       user: { id: userId },
       body: {
-        message: `Analiza mis gastos hormiga usando analyze_ant_expenses con estos datos: ${JSON.stringify(transactionData)}`,
+        message: `Analiza mis gastos hormiga. Mis transacciones de los últimos 3 meses: ${JSON.stringify(transactionData)}`,
         threadId: undefined, // Crear nuevo thread para análisis
         isOnboarding: false,
         categories: [],
