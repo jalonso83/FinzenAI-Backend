@@ -795,7 +795,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
 }
 
 // Función para ejecutar tool calls y enviar resultados
-async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: any[], timezone?: string, transactionData?: any[]): Promise<any> {
+async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: any[], timezone?: string, transactions?: any[]): Promise<any> {
   const executedActions: any[] = [];
   const toolOutputs: any[] = [];
 
@@ -827,8 +827,8 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
           result = await executeListCategories(functionArgs, categories);
           break;
         case 'analyze_ant_expenses':
-          // Si tenemos transactionData del backend, usarla en lugar de los argumentos
-          const antArgs = transactionData ? { ...functionArgs, transactions: transactionData } : functionArgs;
+          // Usar transacciones cargadas (igual que categorías)
+          const antArgs = transactions ? { ...functionArgs, transactions: transactions } : functionArgs;
           console.log('🔄 ARGUMENTOS FINALES PARA executeAnalyzeAntExpenses:', JSON.stringify(antArgs, null, 2));
           result = await executeAnalyzeAntExpenses(antArgs, userId);
           break;
@@ -2351,7 +2351,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // 3. Obtener datos de la petición
-    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactionData } = req.body;
+    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactionData, transactions } = req.body;
     
     // Debug log para verificar transactionData
     if (transactionData) {
@@ -2501,7 +2501,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         userName,
         categories, // Pasar las categorías disponibles
         userTimezone, // Pasar la zona horaria del usuario
-        transactionData // Pasar datos de transacciones para análisis hormiga
+        transactions || transactionData // Pasar transacciones cargadas (igual que categorías)
       );
 
       // Extraer las acciones ejecutadas

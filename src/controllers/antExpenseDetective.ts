@@ -51,6 +51,7 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
 
     // Filtrar solo transacciones de GASTOS y preparar datos
     const expenseTransactions = transactions.filter((t: any) => t.type === 'EXPENSE');
+    console.log('🔍 EXPENSE TRANSACTIONS AFTER FILTER:', expenseTransactions.length);
     
     // Deduplicar por ID y validar datos
     const seenIds = new Set();
@@ -71,6 +72,9 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
         type: t.type
       }));
 
+    console.log('🔍 FINAL TRANSACTION DATA AFTER MAPPING:', transactionData.length);
+    console.log('🔍 FIRST 2 MAPPED TRANSACTIONS:', JSON.stringify(transactionData.slice(0, 2), null, 2));
+
     console.log('📊 TRANSACCIONES ENVIADAS A ZENIO:', JSON.stringify(transactionData, null, 2));
 
     // Variable para capturar el resultado del tool call
@@ -82,6 +86,7 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
       body: {
         message: `Analiza mis gastos hormiga`,
         transactionData: transactionData,
+        transactions: transactionData, // Cargar transacciones igual que categorías  
         threadId: undefined, // Crear nuevo thread para análisis
         isOnboarding: false,
         categories: [],
@@ -132,7 +137,30 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
   } catch (error) {
     console.error('[Ant Detective] Error en análisis con Zenio IA:', error);
     
-    // Fallback en caso de error
+    // FALLBACK: Llamar directamente a executeAnalyzeAntExpenses
+    console.log('[Ant Detective] Intentando análisis directo como fallback...');
+    try {
+      const { executeAnalyzeAntExpenses } = await import('./zenio');
+      const directResult = await executeAnalyzeAntExpenses({ transactions: transactionData }, userId);
+      
+      if (directResult && directResult.action === 'analyze_ant_expenses') {
+        console.log('✅ Análisis directo exitoso');
+        // Simular el resultado esperado para el frontend
+        return {
+          totalAntExpenses: directResult.transactions?.reduce((sum: number, t: any) => sum + t.amount, 0) || 0,
+          analysisMessage: "Análisis completado usando método directo",
+          topCriminals: [],
+          monthlyTrend: [],
+          equivalencies: ["Análisis directo - funcionalidad de respaldo activa"],
+          savingsOpportunity: 0,
+          zenioInsights: "Análisis procesado directamente sin AI. Para análisis completo, contacta soporte."
+        };
+      }
+    } catch (fallbackError) {
+      console.error('[Ant Detective] Error en fallback:', fallbackError);
+    }
+    
+    // Fallback final en caso de error
     return {
       totalAntExpenses: 0,
       impactMessage: "🕵️ Detective Zenio aquí. Tuve un problema técnico, pero basándome en tus patrones de gasto, te recomiendo revisar las categorías con más transacciones frecuentes. ¡Vuelve a intentarlo en un momento! 💪",
