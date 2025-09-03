@@ -78,16 +78,23 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
     const mockRes = {
       status: (code: number) => mockRes,
       json: (data: any) => {
+        console.log('📥 RESPUESTA COMPLETA DE ZENIO:', JSON.stringify(data, null, 2));
+        
         // Si hay acciones ejecutadas, buscar el resultado del análisis
         if (data.executedActions && Array.isArray(data.executedActions)) {
+          console.log(`📋 ENCONTRADAS ${data.executedActions.length} ACCIONES EJECUTADAS`);
+          
           for (const action of data.executedActions) {
-            if (action.action === 'analyze_ant_expenses' || 
-                (action.data && action.data.totalAntExpenses !== undefined)) {
+            console.log(`🔍 ACCIÓN: ${action.action}`);
+            
+            if (action.action === 'analyze_ant_expenses') {
               toolCallResult = action.data;
               console.log('🤖 JSON RESPUESTA DE ZENIO:', JSON.stringify(toolCallResult, null, 2));
               break;
             }
           }
+        } else {
+          console.log('❌ NO HAY ACCIONES EJECUTADAS EN LA RESPUESTA');
         }
         
         return mockRes;
