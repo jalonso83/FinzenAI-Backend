@@ -46,8 +46,9 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
       }
     });
 
-    // Preparar datos para la función
-    const transactionData = transactions.map(t => ({
+    // Filtrar solo transacciones de GASTOS y preparar datos
+    const expenseTransactions = transactions.filter(t => t.type === 'EXPENSE');
+    const transactionData = expenseTransactions.map(t => ({
       id: t.id,
       amount: t.amount,
       description: t.description,

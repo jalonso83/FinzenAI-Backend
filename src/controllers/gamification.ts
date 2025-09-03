@@ -27,7 +27,6 @@ export class GamificationController {
         breakdown: finScoreData.breakdown
       };
       
-      console.log(`[DEBUG] Nueva escala - Score: ${finScoreData.score}, Nivel: ${finScore.level}, Faltan: ${finScore.pointsToNextLevel}`);
       
       res.json({
         success: true,
@@ -111,23 +110,18 @@ export class GamificationController {
         return;
       }
 
-      console.log(`[GamificationController] Obteniendo racha para usuario: ${userId}`);
       const streak = await GamificationService.getUserStreak(userId);
-      console.log(`[GamificationController] Racha obtenida:`, streak);
 
       // Debug: Verificar si necesitamos crear racha inicial
       if (!streak) {
-        console.log(`[GamificationController] No existe racha para usuario ${userId}, verificando historial...`);
         
         // Verificar si el usuario tiene transacciones
         const transactionCount = await prisma.transaction.count({
           where: { userId }
         });
         
-        console.log(`[GamificationController] Usuario tiene ${transactionCount} transacciones`);
         
         if (transactionCount > 0) {
-          console.log(`[GamificationController] Usuario tiene transacciones pero no racha, creando racha inicial...`);
           // Crear racha inicial si tiene transacciones pero no racha
           const newStreak = await prisma.userStreak.create({
             data: {
@@ -138,7 +132,6 @@ export class GamificationController {
               streakType: 'daily'
             }
           });
-          console.log(`[GamificationController] Racha inicial creada:`, newStreak);
           
           res.json({
             success: true,
@@ -305,7 +298,6 @@ export class GamificationController {
         }
       });
 
-      console.log(`[GamificationController] Eventos recientes para usuario ${userId}:`, {
         since: sinceDate.toISOString(),
         eventosEncontrados: events.length,
         totalPuntos: events.reduce((sum, e) => sum + (e.pointsAwarded || 0), 0)

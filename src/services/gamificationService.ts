@@ -31,7 +31,6 @@ export class GamificationService {
         }
       });
 
-      console.log(`[Gamification] Evento creado: ${eventData.eventType} para usuario ${eventData.userId}`);
 
       // Procesar el evento según su tipo
       await this.processEvent(event);
@@ -82,7 +81,6 @@ export class GamificationService {
           await this.handleTipIgnored(event);
           break;
         default:
-          console.log(`[Gamification] Tipo de evento no reconocido: ${event.eventType}`);
       }
 
       // Recalcular FinScore después de cada evento
@@ -112,7 +110,6 @@ export class GamificationService {
 
   private static async handleTransactionDeleted(event: any): Promise<void> {
     // No otorgar puntos por eliminar, pero registrar actividad
-    console.log(`[Gamification] Transacción eliminada por usuario ${event.userId}`);
   }
 
   private static async handleBudgetCreated(event: any): Promise<void> {
@@ -157,7 +154,6 @@ export class GamificationService {
 
   private static async handleTipIgnored(event: any): Promise<void> {
     // No penalizar por ignorar consejos, solo registrar
-    console.log(`[Gamification] Consejo ignorado por usuario ${event.userId}`);
   }
 
   // Sistema de puntos
@@ -172,7 +168,6 @@ export class GamificationService {
             pointsAwarded: points
           }
         });
-        console.log(`[Gamification] ${points > 0 ? 'Otorgados' : 'Deducidos'} ${Math.abs(points)} puntos a ${userId}: ${reason}`);
       }
     } catch (error) {
       console.error('[Gamification] Error otorgando puntos:', error);
@@ -196,7 +191,6 @@ export class GamificationService {
         }
       });
 
-      console.log(`[Gamification] FinScore actualizado para ${userId}: ${Math.round(totalScore)}`);
       return totalScore;
     } catch (error) {
       console.error('[Gamification] Error calculando FinScore:', error);
@@ -442,7 +436,6 @@ export class GamificationService {
         }
       });
       
-      console.log(`[Gamification] Badge otorgado: ${badgeId} a usuario ${userId}`);
       
       // Otorgar puntos bonus por el badge
       await this.awardPoints(userId, 50, `Badge desbloqueado: ${badgeId}`);
@@ -595,13 +588,6 @@ export class GamificationService {
         });
       }
       
-      console.log(`[Gamification] Calculando isActive para usuario ${userId}:`);
-      console.log(`  - Ahora: ${now.toISOString()}`);
-      console.log(`  - Última actividad: ${lastActivity.toISOString()}`);
-      console.log(`  - Diferencia en días: ${diffDays}`);
-      console.log(`  - isActive: ${isActive}`);
-      console.log(`  - currentStreak original: ${streak.currentStreak}`);
-      console.log(`  - currentStreak calculado: ${currentStreak}`);
 
       return {
         ...streak,
