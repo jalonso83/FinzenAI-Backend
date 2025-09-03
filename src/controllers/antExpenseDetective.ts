@@ -44,7 +44,7 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
       orderBy: {
         date: 'desc'
       }
-    });
+    }) as any[];
 
     // Filtrar solo transacciones de GASTOS y preparar datos
     const expenseTransactions = transactions.filter((t: any) => t.type === 'EXPENSE');

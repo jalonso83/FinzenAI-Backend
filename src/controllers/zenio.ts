@@ -1162,7 +1162,6 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
 // Función para ejecutar análisis de gastos hormiga
 export async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any> {
   console.log('[Zenio] Ejecutando análisis de gastos hormiga');
-  console.log('[Zenio] Argumentos recibidos:', args);
   
   const { transactions, period_months = 3 } = args;
   
@@ -1173,38 +1172,18 @@ export async function executeAnalyzeAntExpenses(args: any, userId: string): Prom
     };
   }
   
-  console.log(`[Zenio] Analizando ${transactions.length} transacciones para gastos hormiga`);
+  console.log(`[Zenio] Recibidas ${transactions.length} transacciones para análisis hormiga`);
   
-  // Análisis de gastos hormiga
-  const expenseTransactions = transactions.filter((t: any) => t.type === 'EXPENSE' || t.type === 'expense');
-  const totalExpenses = expenseTransactions.reduce((sum, t: any) => sum + t.amount, 0);
-  
-  // Agrupar por categoría
-  const categoryGroups = expenseTransactions.reduce((groups: any, transaction: any) => {
-    const category = transaction.category || 'Sin categoría';
-    if (!groups[category]) {
-      groups[category] = {
-        transactions: [],
-        total: 0,
-        count: 0
-      };
-    }
-    groups[category].transactions.push(transaction);
-    groups[category].total += transaction.amount;
-    groups[category].count += 1;
-    return groups;
-  }, {});
-  
-  // SOLO retornar las transacciones de GASTOS para que Zenio IA las analice
+  // Las transacciones ya vienen filtradas como EXPENSE desde el backend
+  // Solo retornar para que Zenio IA las analice completamente
   const result = {
     action: 'analyze_ant_expenses',
-    transactions: expenseTransactions,
+    transactions: transactions,
     period_months: period_months,
-    totalTransactions: expenseTransactions.length,
-    message: 'Solo transacciones de GASTOS enviadas a Zenio IA para análisis completo'
+    totalTransactions: transactions.length,
+    message: 'Transacciones enviadas a Zenio IA para análisis de gastos hormiga'
   };
   
-  console.log('[Zenio] Análisis de gastos hormiga completado:', result);
   return result;
 }
 
