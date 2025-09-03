@@ -829,6 +829,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
         case 'analyze_ant_expenses':
           // Si tenemos transactionData del backend, usarla en lugar de los argumentos
           const antArgs = transactionData ? { ...functionArgs, transactions: transactionData } : functionArgs;
+          console.log('🔄 ARGUMENTOS FINALES PARA executeAnalyzeAntExpenses:', JSON.stringify(antArgs, null, 2));
           result = await executeAnalyzeAntExpenses(antArgs, userId);
           break;
         default:
@@ -2351,6 +2352,13 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // 3. Obtener datos de la petición
     let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactionData } = req.body;
+    
+    // Log para verificar transactionData
+    if (transactionData) {
+      console.log('🔍 TRANSACTION DATA RECIBIDA EN ZENIO:', JSON.stringify(transactionData, null, 2));
+    } else {
+      console.log('❌ NO SE RECIBIÓ TRANSACTION DATA EN ZENIO');
+    }
     threadId = incomingThreadId;
     
     // Usar zona horaria del usuario o default a UTC
