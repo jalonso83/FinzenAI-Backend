@@ -51,7 +51,6 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
     const transactionData = expenseTransactions.map((t: any) => ({
       id: t.id,
       amount: t.amount,
-      description: t.description,
       date: t.date.toISOString(),
       category: t.category?.name || 'Sin categoría',
       type: t.type
@@ -66,7 +65,8 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
     const mockReq = {
       user: { id: userId },
       body: {
-        message: `Analiza mis gastos hormiga usando la función analyze_ant_expenses. Mis transacciones de los últimos 3 meses: ${JSON.stringify(transactionData)}`,
+        message: `Analiza mis gastos hormiga usando la función analyze_ant_expenses.`,
+        transactionData: transactionData,
         threadId: undefined, // Crear nuevo thread para análisis
         isOnboarding: false,
         categories: [],

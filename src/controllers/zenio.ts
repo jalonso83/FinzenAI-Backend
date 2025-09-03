@@ -795,7 +795,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
 }
 
 // Función para ejecutar tool calls y enviar resultados
-async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: any[], timezone?: string): Promise<any> {
+async function executeToolCalls(threadId: string, runId: string, toolCalls: any[], userId: string, userName: string, categories?: any[], timezone?: string, transactionData?: any[]): Promise<any> {
   const executedActions: any[] = [];
   const toolOutputs: any[] = [];
 
@@ -827,7 +827,9 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
           result = await executeListCategories(functionArgs, categories);
           break;
         case 'analyze_ant_expenses':
-          result = await executeAnalyzeAntExpenses(functionArgs, userId);
+          // Si tenemos transactionData del backend, usarla en lugar de los argumentos
+          const antArgs = transactionData ? { ...functionArgs, transactions: transactionData } : functionArgs;
+          result = await executeAnalyzeAntExpenses(antArgs, userId);
           break;
         default:
           throw new Error(`Función no soportada: ${functionName}`);
@@ -2369,7 +2371,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // 3. Obtener datos de la petición
-    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting } = req.body;
+    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactionData } = req.body;
     threadId = incomingThreadId;
     
     // Usar zona horaria del usuario o default a UTC
@@ -2510,7 +2512,8 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         userId,
         userName,
         categories, // Pasar las categorías disponibles
-        userTimezone // Pasar la zona horaria del usuario
+        userTimezone, // Pasar la zona horaria del usuario
+        transactionData // Pasar datos de transacciones para análisis hormiga
       );
 
       // Extraer las acciones ejecutadas
