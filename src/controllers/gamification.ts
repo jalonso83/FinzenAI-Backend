@@ -298,10 +298,7 @@ export class GamificationController {
         }
       });
 
-        since: sinceDate.toISOString(),
-        eventosEncontrados: events.length,
-        totalPuntos: events.reduce((sum, e) => sum + (e.pointsAwarded || 0), 0)
-      });
+        // Debug info removido
 
       res.json({
         success: true,
