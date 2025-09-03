@@ -706,8 +706,6 @@ export const getIncomeReport = async (req: Request, res: Response): Promise<Resp
 // Obtener reporte por fechas - Análisis temporal
 export const getDateReport = async (req: Request, res: Response): Promise<Response> => {
   try {
-    console.log('[Reports] getDateReport iniciado para usuario:', req.user?.id);
-    console.log('[Reports] Parámetros recibidos:', req.query);
     
     const userId = req.user?.id;
     if (!userId) {
@@ -895,14 +893,6 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
     const currentBalance = totalIncome - totalExpenses;
     const runway = (burnRate > 0 && currentBalance > 0) ? Math.ceil(currentBalance / burnRate) : 0;
     
-    console.log('[Reports] Métricas calculadas:');
-    console.log('  - Total Income:', totalIncome);
-    console.log('  - Total Expenses:', totalExpenses);
-    console.log('  - Current Balance:', currentBalance);
-    console.log('  - Days in Period:', daysInPeriod);
-    console.log('  - Burn Rate:', burnRate);
-    console.log('  - Runway:', runway);
-    console.log('  - Volatility:', volatility);
 
     // Heatmap data (actividad por día de la semana)
     const weekdayActivity = [0, 0, 0, 0, 0, 0, 0]; // Dom, Lun, Mar, Mie, Jue, Vie, Sab

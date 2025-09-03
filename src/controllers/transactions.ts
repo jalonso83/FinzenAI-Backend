@@ -386,13 +386,6 @@ export const getTransactions = async (req: Request, res: Response) => {
       prisma.transaction.count({ where })
     ]);
 
-    // Debug: log de resultados
-    console.log('Transacciones encontradas:', transactions.length);
-    console.log('Total en BD:', total);
-    console.log('Limitnum aplicado:', limitNum);
-    console.log('Skip aplicado:', skip);
-    console.log('Páginas calculadas:', Math.ceil(total / limitNum));
-    console.log('===============================');
 
     return res.json({
       transactions,
