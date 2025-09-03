@@ -2353,9 +2353,10 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     // 3. Obtener datos de la petición
     let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactionData } = req.body;
     
-    // Log para verificar transactionData
+    // Debug log para verificar transactionData
     if (transactionData) {
-      console.log('🔍 TRANSACTION DATA RECIBIDA EN ZENIO:', JSON.stringify(transactionData, null, 2));
+      console.log('🔍 TRANSACTION DATA RECIBIDA EN ZENIO - Count:', transactionData.length);
+      console.log('🔍 SAMPLE TRANSACTION DATA:', JSON.stringify(transactionData.slice(0, 2), null, 2));
     } else {
       console.log('❌ NO SE RECIBIÓ TRANSACTION DATA EN ZENIO');
     }

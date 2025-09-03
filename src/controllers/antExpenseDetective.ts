@@ -46,8 +46,8 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
       }
     }) as any[];
 
-    console.log('🔍 RAW TRANSACTIONS FROM DB:', transactions.length);
-    console.log('🔍 FIRST 3 RAW TRANSACTIONS:', JSON.stringify(transactions.slice(0, 3), null, 2));
+    console.log('🔍 RAW TRANSACTIONS FROM DB - Total:', transactions.length);
+    console.log('🔍 SAMPLE RAW TRANSACTIONS:', JSON.stringify(transactions.slice(0, 3), null, 2));
 
     // Filtrar solo transacciones de GASTOS y preparar datos
     const expenseTransactions = transactions.filter((t: any) => t.type === 'EXPENSE');
