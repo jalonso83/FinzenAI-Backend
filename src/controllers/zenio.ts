@@ -2351,14 +2351,23 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // 3. Obtener datos de la petición
+    console.log('🔍 PAYLOAD COMPLETO RECIBIDO EN ZENIO:', Object.keys(req.body));
+    console.log('🔍 CAMPO TRANSACTIONS EN PAYLOAD:', !!req.body.transactions);
+    
     let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactionData, transactions } = req.body;
     
-    // Debug log para verificar transactionData
+    // Debug log para verificar transactionData Y transactions  
     if (transactionData) {
       console.log('🔍 TRANSACTION DATA RECIBIDA EN ZENIO - Count:', transactionData.length);
       console.log('🔍 SAMPLE TRANSACTION DATA:', JSON.stringify(transactionData.slice(0, 2), null, 2));
     } else {
       console.log('❌ NO SE RECIBIÓ TRANSACTION DATA EN ZENIO');
+    }
+    
+    if (transactions) {
+      console.log('🔍 TRANSACTIONS CAMPO RECIBIDO EN ZENIO - Count:', transactions.length);
+    } else {
+      console.log('❌ NO SE RECIBIÓ CAMPO TRANSACTIONS EN ZENIO');
     }
     threadId = incomingThreadId;
     
