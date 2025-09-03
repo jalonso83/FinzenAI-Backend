@@ -864,7 +864,6 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
   // Enviar outputs a OpenAI
   if (toolOutputs.length > 0) {
     console.log('[Zenio] Enviando tool outputs a OpenAI...');
-    console.log('[Zenio] Tool outputs a enviar:', JSON.stringify(toolOutputs, null, 2));
     
     try {
       const submitResponse = await axios.post(
@@ -1194,13 +1193,13 @@ export async function executeAnalyzeAntExpenses(args: any, userId: string): Prom
     return groups;
   }, {});
   
-  // SOLO retornar las transacciones para que Zenio IA las analice
+  // SOLO retornar las transacciones de GASTOS para que Zenio IA las analice
   const result = {
     action: 'analyze_ant_expenses',
-    transactions: transactions,
+    transactions: expenseTransactions,
     period_months: period_months,
-    totalTransactions: transactions.length,
-    message: 'Transacciones enviadas a Zenio IA para análisis completo'
+    totalTransactions: expenseTransactions.length,
+    message: 'Solo transacciones de GASTOS enviadas a Zenio IA para análisis completo'
   };
   
   console.log('[Zenio] Análisis de gastos hormiga completado:', result);
@@ -2558,7 +2557,6 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       response.budget = lastAction.data.budget;
       response.goal = lastAction.data.goal; // Incluir la meta si es una acción de meta
       console.log(`[Zenio] Incluyendo ${executedActions.length} acciones ejecutadas en respuesta`);
-      console.log(`[Zenio] Respuesta completa que se envía al frontend:`, JSON.stringify(response, null, 2));
     }
 
     console.log('[Zenio] Enviando respuesta final al frontend...');
