@@ -155,10 +155,10 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
         impact: criminal.impact,
         suggestions: criminal.recommendations || criminal.suggestions || []
       })),
-      monthlyTrend: [], // Por ahora vacío, se puede llenar después
+      monthlyTrend: zenioData.monthlyTrend || [],
       equivalencies: zenioData.equivalencies || [],
       savingsOpportunity: zenioData.savingsOpportunity || 0,
-      zenioInsights: zenioData.motivationalMessage || zenioData.insights || "Análisis completado"
+      zenioInsights: zenioData.insights || zenioData.motivationalMessage || "Análisis completado"
     };
 
     console.log(`[Ant Detective] Enviando resultado al frontend:`, result);
