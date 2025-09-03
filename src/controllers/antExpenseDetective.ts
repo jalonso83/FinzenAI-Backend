@@ -137,28 +137,7 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
   } catch (error) {
     console.error('[Ant Detective] Error en análisis con Zenio IA:', error);
     
-    // FALLBACK: Llamar directamente a executeAnalyzeAntExpenses
-    console.log('[Ant Detective] Intentando análisis directo como fallback...');
-    try {
-      const { executeAnalyzeAntExpenses } = await import('./zenio');
-      const directResult = await executeAnalyzeAntExpenses({ transactions: transactionData }, userId);
-      
-      if (directResult && directResult.action === 'analyze_ant_expenses') {
-        console.log('✅ Análisis directo exitoso');
-        // Simular el resultado esperado para el frontend
-        return {
-          totalAntExpenses: directResult.transactions?.reduce((sum: number, t: any) => sum + t.amount, 0) || 0,
-          analysisMessage: "Análisis completado usando método directo",
-          topCriminals: [],
-          monthlyTrend: [],
-          equivalencies: ["Análisis directo - funcionalidad de respaldo activa"],
-          savingsOpportunity: 0,
-          zenioInsights: "Análisis procesado directamente sin AI. Para análisis completo, contacta soporte."
-        };
-      }
-    } catch (fallbackError) {
-      console.error('[Ant Detective] Error en fallback:', fallbackError);
-    }
+    // Sin fallback directo disponible por scope de variables
     
     // Fallback final en caso de error
     return {
