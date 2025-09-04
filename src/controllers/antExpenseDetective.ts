@@ -49,22 +49,42 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
     console.log('🔍 RAW TRANSACTIONS FROM DB - Total:', transactions.length);
     console.log('🔍 SAMPLE RAW TRANSACTIONS:', JSON.stringify(transactions.slice(0, 3), null, 2));
 
-    // SIMPLE: Crear array limpio con solo los 4 campos
+    // CREAR ARRAY LIMPIO - CON LOGS DETALLADOS
     const transactionData = [];
+    
+    console.log('🔍 INICIANDO MAPEO DE', transactions.length, 'TRANSACCIONES');
     
     for (let i = 0; i < transactions.length; i++) {
       const t = transactions[i];
       
-      if (t.type === 'EXPENSE' && t.id && t.amount) {
-        transactionData.push({
-          id: t.id,
-          amount: t.amount,
-          date: t.date.toISOString(),
-          category: t.category.name,
-          type: t.type
+      if (t && t.type === 'EXPENSE' && t.id && t.amount && t.date && t.category) {
+        try {
+          const cleanTransaction = {
+            id: String(t.id),
+            amount: Number(t.amount),
+            date: new Date(t.date).toISOString(),
+            category: String(t.category.name),
+            type: String(t.type)
+          };
+          
+          transactionData.push(cleanTransaction);
+          console.log(`✅ Transacción ${i+1} procesada:`, cleanTransaction.id, cleanTransaction.amount, cleanTransaction.category);
+          
+        } catch (error) {
+          console.log(`❌ Error procesando transacción ${i+1}:`, error, 'Data:', t);
+        }
+      } else {
+        console.log(`⚠️ Transacción ${i+1} omitida - datos incompletos:`, {
+          hasId: !!t?.id, 
+          hasAmount: !!t?.amount, 
+          hasDate: !!t?.date, 
+          hasCategory: !!t?.category,
+          type: t?.type
         });
       }
     }
+    
+    console.log('🔍 MAPEO COMPLETADO:', transactionData.length, 'transacciones válidas');
 
     console.log('✅ TRANSACCIONES LIMPIAS CREADAS:', transactionData.length);
 
