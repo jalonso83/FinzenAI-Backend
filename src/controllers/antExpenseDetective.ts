@@ -49,46 +49,22 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
     console.log('🔍 RAW TRANSACTIONS FROM DB - Total:', transactions.length);
     console.log('🔍 SAMPLE RAW TRANSACTIONS:', JSON.stringify(transactions.slice(0, 3), null, 2));
 
-    // Filtrar solo transacciones de GASTOS y preparar datos
-    const expenseTransactions = transactions.filter((t: any) => t.type === 'EXPENSE');
-    console.log('🔍 EXPENSE TRANSACTIONS AFTER FILTER:', expenseTransactions.length);
+    // SIMPLE: Crear array limpio con solo los 4 campos
+    const transactionData = [];
     
-    // Limpiar y deduplicar datos completamente
-    const cleanTransactions: any[] = [];
-    const seenIds = new Set();
-
-    for (const t of expenseTransactions as any[]) {
-      // Validar que el objeto tenga estructura básica
-      if (!t || typeof t !== 'object' || !t.id || !t.amount) {
-        console.log('⚠️ Transacción inválida ignorada:', t);
-        continue;
-      }
-
-      // Deduplicar por ID
-      if (seenIds.has(t.id)) {
-        console.log('⚠️ Transacción duplicada ignorada:', t.id);
-        continue;
-      }
-
-      // Crear objeto limpio
-      const cleanTransaction = {
-        id: String(t.id),
-        amount: Number(t.amount) || 0,
-        date: t.date ? new Date(t.date).toISOString() : new Date().toISOString(),
-        category: t.category?.name || 'Sin categoría',
-        type: String(t.type) || 'EXPENSE'
-      };
-
-      // Validar que los campos requeridos no estén vacíos
-      if (cleanTransaction.amount > 0 && cleanTransaction.id && cleanTransaction.category) {
-        cleanTransactions.push(cleanTransaction);
-        seenIds.add(t.id);
-      } else {
-        console.log('⚠️ Transacción con datos inválidos ignorada:', cleanTransaction);
+    for (let i = 0; i < transactions.length; i++) {
+      const t = transactions[i];
+      
+      if (t.type === 'EXPENSE' && t.id && t.amount) {
+        transactionData.push({
+          id: t.id,
+          amount: t.amount,
+          date: t.date.toISOString(),
+          category: t.category.name,
+          type: t.type
+        });
       }
     }
-
-    const transactionData = cleanTransactions;
 
     console.log('🔍 FINAL TRANSACTION DATA AFTER MAPPING:', transactionData.length);
     console.log('🔍 FIRST 2 MAPPED TRANSACTIONS:', JSON.stringify(transactionData.slice(0, 2), null, 2));
