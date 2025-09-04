@@ -2354,20 +2354,13 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     console.log('🔍 PAYLOAD COMPLETO RECIBIDO EN ZENIO:', Object.keys(req.body));
     console.log('🔍 CAMPO TRANSACTIONS EN PAYLOAD:', !!req.body.transactions);
     
-    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactionData, transactions } = req.body;
+    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactions } = req.body;
     
-    // Debug log para verificar transactionData Y transactions  
-    if (transactionData) {
-      console.log('🔍 TRANSACTION DATA RECIBIDA EN ZENIO - Count:', transactionData.length);
-      console.log('🔍 SAMPLE TRANSACTION DATA:', JSON.stringify(transactionData.slice(0, 2), null, 2));
-    } else {
-      console.log('❌ NO SE RECIBIÓ TRANSACTION DATA EN ZENIO');
-    }
-    
+    // Debug log para verificar transactions
     if (transactions) {
-      console.log('🔍 TRANSACTIONS CAMPO RECIBIDO EN ZENIO - Count:', transactions.length);
+      console.log('🔍 TRANSACTIONS RECIBIDAS EN ZENIO - Count:', transactions.length);
     } else {
-      console.log('❌ NO SE RECIBIÓ CAMPO TRANSACTIONS EN ZENIO');
+      console.log('❌ NO SE RECIBIERON TRANSACTIONS EN ZENIO');
     }
     threadId = incomingThreadId;
     
@@ -2510,7 +2503,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         userName,
         categories, // Pasar las categorías disponibles
         userTimezone, // Pasar la zona horaria del usuario
-        transactions || transactionData // Pasar transacciones cargadas (igual que categorías)
+        transactions // Pasar transacciones cargadas (igual que categorías)
       );
 
       // Extraer las acciones ejecutadas

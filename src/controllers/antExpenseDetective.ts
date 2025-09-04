@@ -66,10 +66,7 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
       }
     }
 
-    console.log('🔍 FINAL TRANSACTION DATA AFTER MAPPING:', transactionData.length);
-    console.log('🔍 FIRST 2 MAPPED TRANSACTIONS:', JSON.stringify(transactionData.slice(0, 2), null, 2));
-
-    console.log('📊 TRANSACCIONES ENVIADAS A ZENIO:', JSON.stringify(transactionData, null, 2));
+    console.log('✅ TRANSACCIONES LIMPIAS CREADAS:', transactionData.length);
 
     // Variable para capturar el resultado del tool call
     let toolCallResult: any = null;
@@ -79,8 +76,7 @@ async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
       user: { id: userId },
       body: {
         message: `Analiza mis gastos hormiga`,
-        transactionData: transactionData,
-        transactions: transactionData, // Cargar transacciones igual que categorías  
+        transactions: transactionData, // Solo este campo
         threadId: undefined, // Crear nuevo thread para análisis
         isOnboarding: false,
         categories: [],
