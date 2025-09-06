@@ -3,6 +3,7 @@ import { BudgetRenewalService } from './budgetRenewalService';
 
 export class BudgetScheduler {
   private static isRunning: boolean = false;
+  private static cronTask: cron.ScheduledTask | null = null;
 
   /**
    * Inicia el scheduler de renovación de presupuestos
@@ -19,7 +20,7 @@ export class BudgetScheduler {
 
     // Ejecutar todos los días a la 1 AM UTC
     // Esto asegura que se chequeen presupuestos en todas las zonas horarias
-    cron.schedule('0 1 * * *', async () => {
+    this.cronTask = cron.schedule('0 1 * * *', async () => {
       console.log('[BudgetScheduler] 🔄 Ejecutando renovación de presupuestos...');
       
       try {
@@ -49,12 +50,13 @@ export class BudgetScheduler {
    * Detiene el scheduler (útil para testing o shutdown)
    */
   static stopScheduler(): void {
-    if (!this.isRunning) {
+    if (!this.isRunning || !this.cronTask) {
       console.log('[BudgetScheduler] Scheduler no está ejecutándose');
       return;
     }
 
-    cron.destroy();
+    this.cronTask.destroy();
+    this.cronTask = null;
     this.isRunning = false;
     console.log('[BudgetScheduler] ⏹️ Scheduler detenido');
   }
