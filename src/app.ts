@@ -2,6 +2,7 @@ import express, { Application } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
+import { BudgetScheduler } from './services/budgetScheduler';
 
 // Importar rutas
 import authRoutes from './routes/auth';
@@ -13,6 +14,7 @@ import goalRoutes from './routes/goals';
 import reportRoutes from './routes/reports';
 import gamificationRoutes from './routes/gamification';
 import investmentRoutes from './routes/investment';
+import budgetSchedulerRoutes from './routes/budgetScheduler';
 
 // Configurar variables de entorno
 dotenv.config();
@@ -45,6 +47,7 @@ app.use('/api/goals', goalRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/investment', investmentRoutes);
+app.use('/api/scheduler', budgetSchedulerRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
@@ -85,6 +88,9 @@ async function startServer() {
     await prisma.$connect();
     console.log('✅ Database connected successfully');
 
+    // Iniciar scheduler de renovación de presupuestos
+    BudgetScheduler.startScheduler();
+
     // Iniciar servidor
     app.listen(PORT, () => {
       console.log(`🚀 FinZen AI Backend running on port ${PORT}`);
@@ -100,12 +106,14 @@ async function startServer() {
 // Manejo de señales de terminación
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down server...');
+  BudgetScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('\n🛑 Shutting down server...');
+  BudgetScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
