@@ -55,7 +55,7 @@ export class BudgetScheduler {
       return;
     }
 
-    this.cronTask.destroy();
+    this.cronTask.stop();
     this.cronTask = null;
     this.isRunning = false;
     console.log('[BudgetScheduler] ⏹️ Scheduler detenido');
