@@ -32,6 +32,9 @@ importers:
       express:
         specifier: ^4.18.2
         version: 4.21.2
+      form-data:
+        specifier: ^4.0.4
+        version: 4.0.4
       jsonwebtoken:
         specifier: ^9.0.2
         version: 9.0.2
