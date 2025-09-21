@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
+import FormData from 'form-data';
 
 const prisma = new PrismaClient();
 const API_KEY = process.env.OPENAI_API_KEY;
@@ -2946,53 +2947,69 @@ export const createGoalFromZenio = async (req: Request, res: Response) => {
 
 // Función para transcribir audio usando OpenAI Whisper
 export const transcribeAudio = async (req: Request, res: Response) => {
+  console.log('[Transcribe] Petición recibida desde app móvil');
+
   try {
     if (!req.file) {
+      console.log('[Transcribe] Error: No se recibió archivo de audio');
       return res.status(400).json({
         error: 'No audio file provided',
         message: 'Por favor, envía un archivo de audio'
       });
     }
 
-    const formData = new FormData();
-    const audioBuffer = fs.readFileSync(req.file.path);
-    const audioBlob = new Blob([audioBuffer], { type: req.file.mimetype });
+    console.log('[Transcribe] Archivo recibido:', {
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      path: req.file.path
+    });
 
-    formData.append('file', audioBlob, req.file.originalname || 'audio.wav');
+    // Crear FormData para Node.js
+    const formData = new FormData();
+    const audioStream = fs.createReadStream(req.file.path);
+
+    formData.append('file', audioStream, {
+      filename: req.file.originalname || 'audio.wav',
+      contentType: req.file.mimetype || 'audio/wav'
+    });
     formData.append('model', 'whisper-1');
     formData.append('language', 'es');
 
-    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
+    console.log('[Transcribe] Enviando a OpenAI Whisper API...');
+
+    // Usar axios en lugar de fetch para Node.js
+    const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        ...formData.getHeaders()
       },
-      body: formData,
+      timeout: 30000 // 30 segundos timeout
     });
 
     // Limpiar archivo temporal
     fs.unlinkSync(req.file.path);
+    console.log('[Transcribe] Archivo temporal eliminado');
 
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.statusText}`);
-    }
-
-    const result = await response.json() as any;
+    const transcription = response.data.text || '';
+    console.log('[Transcribe] Transcripción completada:', transcription.substring(0, 100) + '...');
 
     return res.json({
-      transcription: result.text,
+      transcription,
       success: true
     });
 
   } catch (error) {
-    console.error('Error transcribing audio:', error);
+    console.error('[Transcribe] Error:', error);
 
     // Limpiar archivo temporal si existe
     if (req.file?.path) {
       try {
         fs.unlinkSync(req.file.path);
+        console.log('[Transcribe] Archivo temporal eliminado tras error');
       } catch (cleanupError) {
-        console.error('Error cleaning up temp file:', cleanupError);
+        console.error('[Transcribe] Error limpiando archivo temporal:', cleanupError);
       }
     }
 
