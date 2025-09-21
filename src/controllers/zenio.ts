@@ -2977,7 +2977,7 @@ export const transcribeAudio = async (req: Request, res: Response) => {
       throw new Error(`OpenAI API error: ${response.statusText}`);
     }
 
-    const result: any = await response.json();
+    const result = await response.json() as any;
 
     return res.json({
       transcription: result.text,
