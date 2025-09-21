@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import fs from 'fs';
 
 const prisma = new PrismaClient();
 const API_KEY = process.env.OPENAI_API_KEY;
@@ -2939,6 +2940,65 @@ export const createGoalFromZenio = async (req: Request, res: Response) => {
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Error al crear la meta'
+    });
+  }
+};
+
+// Función para transcribir audio usando OpenAI Whisper
+export const transcribeAudio = async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        error: 'No audio file provided',
+        message: 'Por favor, envía un archivo de audio'
+      });
+    }
+
+    const formData = new FormData();
+    const audioBuffer = fs.readFileSync(req.file.path);
+    const audioBlob = new Blob([audioBuffer], { type: req.file.mimetype });
+
+    formData.append('file', audioBlob, req.file.originalname || 'audio.wav');
+    formData.append('model', 'whisper-1');
+    formData.append('language', 'es');
+
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: formData,
+    });
+
+    // Limpiar archivo temporal
+    fs.unlinkSync(req.file.path);
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.statusText}`);
+    }
+
+    const result: any = await response.json();
+
+    return res.json({
+      transcription: result.text,
+      success: true
+    });
+
+  } catch (error) {
+    console.error('Error transcribing audio:', error);
+
+    // Limpiar archivo temporal si existe
+    if (req.file?.path) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (cleanupError) {
+        console.error('Error cleaning up temp file:', cleanupError);
+      }
+    }
+
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: 'Error al transcribir el audio'
     });
   }
 }; 

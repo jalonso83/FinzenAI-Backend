@@ -11,7 +11,8 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "db:seed": "tsx src/seed/categories.ts"
+    "db:seed": "tsx src/seed/categories.ts",
+    "migrate:budgets": "tsx src/scripts/migrateBudgets.ts"
   },
   "keywords": [
     "finanzas",
@@ -25,12 +26,14 @@
   "dependencies": {
     "@prisma/client": "^5.7.1",
     "@sendgrid/mail": "^8.1.5",
+    "@types/multer": "^2.0.0",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.7",
     "openai": "^5.8.2",
