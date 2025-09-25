@@ -184,12 +184,26 @@ function normalizarFecha(fecha: string): string | null {
   }
   // 5. Si es fecha en español: '12 de julio de 2025'
   const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-  const match = fecha.match(/(\d{1,2})\s*de\s*([a-záéíóúñ]+)\s*de\s*(\d{4})/i);
-  if (match) {
-    const d = match[1].padStart(2, '0');
-    const m = (meses.findIndex(mes => mes === match[2].toLowerCase()) + 1).toString().padStart(2, '0');
-    const y = match[3];
+  const matchConAño = fecha.match(/(\d{1,2})\s*de\s*([a-záéíóúñ]+)\s*de\s*(\d{4})/i);
+  if (matchConAño) {
+    const d = matchConAño[1].padStart(2, '0');
+    const m = (meses.findIndex(mes => mes === matchConAño[2].toLowerCase()) + 1).toString().padStart(2, '0');
+    const y = matchConAño[3];
     return `${y}-${m}-${d}`;
+  }
+
+  // 5a. Si es fecha en español SIN año: '23 de septiembre' - asumir año actual dinámico
+  const matchSinAño = fecha.match(/(\d{1,2})\s*de\s*([a-záéíóúñ]+)$/i);
+  if (matchSinAño) {
+    const d = matchSinAño[1].padStart(2, '0');
+    const mesIndex = meses.findIndex(mes => mes === matchSinAño[2].toLowerCase());
+    if (mesIndex !== -1) {
+      const m = (mesIndex + 1).toString().padStart(2, '0');
+      // Usar fecha actual del servidor (dinámico, no hardcodeado)
+      const fechaActual = new Date();
+      const y = fechaActual.getFullYear().toString();
+      return `${y}-${m}-${d}`;
+    }
   }
   // 6. Si es YYYY.MM.DD
   if (/^\d{4}\.\d{2}\.\d{2}$/.test(fecha)) return fecha.replace(/\./g, '-');
@@ -809,7 +823,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
     console.log(`[Zenio] Ejecutando tool call: ${functionName} con ID: ${toolCallId}`);
     console.log(`[Zenio] Argumentos de la función:`, functionArgs);
 
-    let result: any;
+    let result: any = null; // Fixed TS error
 
     try {
       switch (functionName) {
@@ -839,9 +853,9 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
       }
 
       // Registrar la acción ejecutada
-      if (result && result.action) {
+      if (result && (result as any).action) {
         executedActions.push({
-          action: result.action,
+          action: (result as any).action,
           data: result
         });
       }
@@ -850,7 +864,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
 
       toolOutputs.push({
         tool_call_id: toolCallId,
-        output: JSON.stringify(result)
+        output: JSON.stringify(result as any)
       });
 
     } catch (error: any) {
@@ -2980,7 +2994,7 @@ export const transcribeAudio = async (req: Request, res: Response) => {
     console.log('[Transcribe] Enviando a OpenAI Whisper API...');
 
     // Usar axios en lugar de fetch para Node.js
-    const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
+    const response = await axios.post<{ text: string }>('https://api.openai.com/v1/audio/transcriptions', formData, {
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
         ...formData.getHeaders()
