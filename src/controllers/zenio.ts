@@ -688,7 +688,7 @@ function sleep(ms: number): Promise<void> {
 async function ensureNoActiveRuns(threadId: string): Promise<void> {
   try {
     console.log('[Zenio] Verificando runs activos en el thread...');
-    const runsResponse = await axios.get(
+    const runsResponse: any = await axios.get(
       `${OPENAI_BASE_URL}/threads/${threadId}/runs`,
       { headers: OPENAI_HEADERS }
     );
@@ -732,7 +732,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
 
   while (retries < maxRetries) {
     try {
-      const response = await axios.get(
+      const response: any = await axios.get(
         `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}`,
         { headers: OPENAI_HEADERS }
       );
@@ -885,7 +885,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
     console.log('[Zenio] Enviando tool outputs a OpenAI...');
     
     try {
-      const submitResponse = await axios.post(
+      const submitResponse: any = await axios.post(
         `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
         { tool_outputs: toolOutputs },
         { headers: OPENAI_HEADERS }
@@ -2433,7 +2433,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     if (isFirstMessage) {
       // Crear thread vacío
-      const threadRes = await axios.post(
+      const threadRes: any = await axios.post(
         `${OPENAI_BASE_URL}/threads`,
         {},
         { headers: OPENAI_HEADERS }
@@ -2492,7 +2492,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // 6. Crear run con el assistant
     console.log('[Zenio] Creando run...');
-    const runRes = await axios.post(
+    const runRes: any = await axios.post(
       `${OPENAI_BASE_URL}/threads/${threadId}/runs`,
       {
         assistant_id: ASSISTANT_ID
@@ -2536,7 +2536,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // 9. Obtener la respuesta final del assistant
     console.log('[Zenio] Obteniendo respuesta final...');
-    const messagesRes = await axios.get(
+    const messagesRes: any = await axios.get(
       `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
       { headers: OPENAI_HEADERS }
     );
@@ -2994,7 +2994,7 @@ export const transcribeAudio = async (req: Request, res: Response) => {
     console.log('[Transcribe] Enviando a OpenAI Whisper API...');
 
     // Usar axios en lugar de fetch para Node.js
-    const response = await axios.post<{ text: string }>('https://api.openai.com/v1/audio/transcriptions', formData, {
+    const response: any = await axios.post<{ text: string }>('https://api.openai.com/v1/audio/transcriptions', formData, {
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
         ...formData.getHeaders()

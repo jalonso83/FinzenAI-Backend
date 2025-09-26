@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { BudgetScheduler } from './services/budgetScheduler';
 
+// Force deployment trigger - TypeScript fixes applied
+
 // Importar rutas
 import authRoutes from './routes/auth';
 import transactionRoutes from './routes/transactions';
