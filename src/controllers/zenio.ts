@@ -2492,10 +2492,27 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // 6. Crear run con el assistant
     console.log('[Zenio] Creando run...');
+
+    // Fecha actual dinámica para el Assistant
+    const ahora = new Date();
+    const offsetRD = -4; // UTC-4 para República Dominicana
+    const utc = ahora.getTime() + (ahora.getTimezoneOffset() * 60000);
+    const fechaRD = new Date(utc + (offsetRD * 60 * 60 * 1000));
+    const fechaActual = fechaRD.toISOString().split('T')[0]; // YYYY-MM-DD
+    const fechaHumana = fechaRD.toLocaleDateString('es-ES', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const additionalInstructions = `FECHA ACTUAL: Hoy es ${fechaHumana} (${fechaActual}). Estamos en el año ${fechaRD.getFullYear()}. Zona horaria: República Dominicana (UTC-4). Cuando el usuario mencione "hoy", "ayer", "mañana", etc., usa esta fecha como referencia.`;
+
     const runRes: any = await axios.post(
       `${OPENAI_BASE_URL}/threads/${threadId}/runs`,
       {
-        assistant_id: ASSISTANT_ID
+        assistant_id: ASSISTANT_ID,
+        additional_instructions: additionalInstructions
       },
       { headers: OPENAI_HEADERS }
     );
