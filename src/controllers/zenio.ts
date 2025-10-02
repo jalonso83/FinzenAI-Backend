@@ -2559,8 +2559,20 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     );
     
     const messages = messagesRes.data.data;
+
+    // 🔍 LOG: Mostrar todos los mensajes del thread
+    console.log('🧵 [Zenio] TODOS LOS MENSAJES EN EL THREAD:');
+    messages.forEach((msg: any, index: number) => {
+      console.log(`   Mensaje ${index + 1}: ${msg.role} - "${msg.content?.[0]?.text?.value || 'Sin contenido'}"`);
+    });
+
     const lastAssistantMessage = messages.find((msg: any) => msg.role === 'assistant');
     const assistantResponse = lastAssistantMessage?.content?.[0]?.text?.value || 'No se pudo obtener respuesta del asistente.';
+
+    // 🔍 LOG: Mensaje específico del asistente
+    console.log('🤖 [Zenio] MENSAJE DEL ASISTENTE QUE SE ENVIARÁ AL FRONTEND:');
+    console.log(`   "${assistantResponse}"`);
+    console.log(`   Longitud: ${assistantResponse.length} caracteres`);
 
     // 10. Responder al frontend
     console.log('[Zenio] Enviando respuesta al frontend');
@@ -2575,7 +2587,14 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     // Incluir TODAS las acciones ejecutadas para el frontend
     if (executedActions.length > 0) {
       response.executedActions = executedActions;
-      
+
+      // 🔍 LOG: Mostrar acciones ejecutadas
+      console.log('⚡ [Zenio] ACCIONES EJECUTADAS:');
+      executedActions.forEach((action, index) => {
+        console.log(`   Acción ${index + 1}: ${action.action}`);
+        console.log(`   Data: ${JSON.stringify(action.data, null, 2)}`);
+      });
+
       // También mantener compatibilidad con la última acción
       const lastAction = executedActions[executedActions.length - 1];
       response.action = lastAction.action;
@@ -2583,9 +2602,20 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       response.budget = lastAction.data.budget;
       response.goal = lastAction.data.goal; // Incluir la meta si es una acción de meta
       console.log(`[Zenio] Incluyendo ${executedActions.length} acciones ejecutadas en respuesta`);
+    } else {
+      console.log('❌ [Zenio] NO SE EJECUTARON ACCIONES');
     }
 
     console.log('[Zenio] Enviando respuesta final al frontend...');
+
+    // 🔍 LOG: Respuesta completa que se envía al frontend
+    console.log('📤 [Zenio] RESPUESTA COMPLETA AL FRONTEND:');
+    console.log(`   message: "${response.message}"`);
+    console.log(`   threadId: ${response.threadId}`);
+    console.log(`   autoGreeting: ${response.autoGreeting}`);
+    if (response.action) console.log(`   action: ${response.action}`);
+    if (response.executedActions) console.log(`   executedActions: ${response.executedActions.length} acciones`);
+
     return res.json(response);
 
   } catch (error) {
