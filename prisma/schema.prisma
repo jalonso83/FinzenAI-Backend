@@ -27,6 +27,10 @@ model User {
   updatedAt           DateTime      @updatedAt
   onboarding          Boolean       @default(false)
   onboardingCompleted Boolean       @default(false)
+
+  // Password Reset Fields
+  resetCode           String?
+  resetCodeExpires    DateTime?
   onboardingData      Onboarding?
   budgets             Budget[]
   transactions        Transaction[]

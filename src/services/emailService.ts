@@ -313,14 +313,218 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
   }
 };
 
-export const sendPasswordResetEmail = async (email: string, resetToken: string) => {
+// Template HTML para código de reseteo de contraseña
+const getPasswordResetTemplate = (name: string, resetCode: string) => {
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recupera tu contraseña - FinZen AI</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f6f9;
+            color: #333;
+            line-height: 1.6;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .header {
+            background-color: #204274;
+            padding: 40px 20px;
+            text-align: center;
+            color: white;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .header p {
+            margin: 10px 0 0 0;
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 40px 30px;
+        }
+        .reset-code-container {
+            background-color: #f8f9fa;
+            border: 2px solid #204274;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            margin: 25px 0;
+        }
+        .reset-code {
+            font-size: 48px;
+            font-weight: bold;
+            color: #204274;
+            letter-spacing: 8px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+        }
+        .code-label {
+            font-size: 18px;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        .expiry-warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .expiry-text {
+            color: #856404;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .security-note {
+            background-color: #e7f3ff;
+            border-left: 4px solid #204274;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .security-text {
+            color: #1f4e79;
+            font-size: 14px;
+            margin: 0;
+        }
+        .footer {
+            padding: 20px;
+            text-align: center;
+            background-color: #f8f9fa;
+            color: #6c757d;
+            font-size: 14px;
+        }
+        .footer a {
+            color: #204274;
+            text-decoration: none;
+        }
+        @media (max-width: 600px) {
+            .content {
+                padding: 20px 15px;
+            }
+            .reset-code {
+                font-size: 36px;
+                letter-spacing: 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🔐 Recupera tu contraseña</h1>
+            <p>FinZen AI - Tu copiloto financiero</p>
+        </div>
+
+        <!-- Content -->
+        <div class="content">
+            <p>Hola <strong>${name}</strong>,</p>
+
+            <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta de FinZen AI.</p>
+
+            <div class="reset-code-container">
+                <div class="code-label">Tu código de verificación es:</div>
+                <div class="reset-code">${resetCode}</div>
+                <p style="margin: 10px 0 0 0; font-size: 14px; color: #6c757d;">
+                    Ingresa este código en la aplicación para continuar
+                </p>
+            </div>
+
+            <div class="expiry-warning">
+                <div class="expiry-text">
+                    ⏰ Este código expirará en 15 minutos por seguridad
+                </div>
+            </div>
+
+            <div class="security-note">
+                <p class="security-text">
+                    <strong>🛡️ Nota de seguridad:</strong><br>
+                    • No compartas este código con nadie<br>
+                    • Si no solicitaste este cambio, ignora este email<br>
+                    • Tu contraseña actual sigue siendo válida hasta que la cambies
+                </p>
+            </div>
+
+            <p style="text-align: center; margin-top: 30px;">
+                Si tienes problemas, contáctanos en
+                <a href="mailto:support@finzenai.com" style="color: #204274;">support@finzenai.com</a>
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>
+                <strong>FinZen AI</strong> - Transformando vidas a través de la inteligencia financiera<br>
+                <a href="https://finzenai.com">finzenai.com</a>
+            </p>
+            <p style="margin-top: 15px; font-size: 12px;">
+                © 2025 FinZen AI. Todos los derechos reservados.
+            </p>
+        </div>
+    </div>
+</body>
+</html>`;
+};
+
+export const sendPasswordResetEmail = async (email: string, resetCode: string, name?: string) => {
   try {
-    // TEMPORALMENTE DESHABILITADO
-    console.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
-    
-    // TODO: Implementar cuando SendGrid esté instalado
+    console.log('🔍 Verificando configuración de SendGrid para reset...');
+
+    // Verificar si SendGrid está configurado
+    if (!process.env.SENDGRID_API_KEY || process.env.SENDGRID_API_KEY === 'SG.placeholder_key_for_development') {
+      // Modo simulación para desarrollo y producción sin SendGrid
+      console.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
+      console.log(`[SIMULACIÓN] Código de 6 dígitos: ${resetCode}`);
+      console.log(`[SIMULACIÓN] El código expirará en 15 minutos`);
+      return;
+    }
+
+    // Envío real con SendGrid
+    console.log('📧 Intentando enviar email de reset con SendGrid...');
+    const htmlContent = getPasswordResetTemplate(name || 'Usuario', resetCode);
+    const msg = {
+      to: email,
+      from: process.env.FROM_EMAIL!,
+      subject: '🔐 Código de recuperación - FinZen AI',
+      html: htmlContent
+    };
+
+    console.log('📤 Enviando email de reset a:', email);
+    console.log('📤 Código:', resetCode);
+
+    try {
+      await sgMail.send(msg);
+      console.log(`✅ Password reset email sent to ${email}`);
+    } catch (sendError: any) {
+      console.error('❌ Error detallado de SendGrid en reset:');
+      console.error('Código:', sendError.code);
+      console.error('Mensaje:', sendError.message);
+      if (sendError.response) {
+        console.error('Response body:', sendError.response.body);
+      }
+      throw sendError;
+    }
   } catch (error) {
-    console.error('Error sending password reset email:', error);
-    throw new Error('Failed to send password reset email');
+    console.error('❌ Error sending password reset email:', error);
+    // No fallar en ningún entorno, solo simular
+    console.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
+    console.log(`[SIMULACIÓN] Código de 6 dígitos: ${resetCode}`);
   }
 }; 

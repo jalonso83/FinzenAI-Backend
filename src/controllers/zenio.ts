@@ -1835,7 +1835,10 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
 }
 
 async function listBudgets(category: string | undefined, userId: string, categories?: any[], filtros?: any): Promise<any> {
-  let where: any = { user_id: userId };
+  let where: any = {
+    user_id: userId,
+    is_active: true // Solo mostrar presupuestos activos
+  };
   let limit: number | undefined;
 
   // Usar filtros_busqueda si están disponibles
@@ -1900,6 +1903,15 @@ async function listBudgets(category: string | undefined, userId: string, categor
       where.category_id = cat.id;
     }
   }
+
+  // Agregar filtro de fechas para presupuestos del período actual
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  // Solo mostrar presupuestos del mes actual que no hayan expirado
+  where.start_date = { lte: monthEnd };
+  where.end_date = { gte: monthStart };
 
   const budgetList = await prisma.budget.findMany({
     where,
@@ -2195,7 +2207,10 @@ async function deleteGoal(criterios: any, userId: string, categories?: string[])
 }
 
 async function listGoals(goalData: any, userId: string, categories?: string[], filtros?: any): Promise<any> {
-  let where: any = { userId };
+  let where: any = {
+    userId,
+    isActive: true // Solo mostrar metas activas
+  };
   let limit: number | undefined;
 
   // Usar filtros_busqueda si están disponibles

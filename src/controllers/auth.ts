@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
-import { sendVerificationEmail } from '../services/emailService';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../services/emailService';
 
 const prisma = new PrismaClient();
 
@@ -256,6 +256,11 @@ export const verifyEmail = async (req: Request, res: Response) => {
   }
 };
 
+// Función para generar código de 6 dígitos
+const generateResetCode = (): string => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
 export const forgotPassword = async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
@@ -274,22 +279,28 @@ export const forgotPassword = async (req: Request, res: Response) => {
     if (!user) {
       // Por seguridad, no revelamos si el email existe o no
       return res.json({
-        message: 'If an account with that email exists, a password reset link has been sent'
+        message: 'Si existe una cuenta con ese email, se ha enviado un código de recuperación'
       });
     }
 
-    // Generar token de reset (implementación simplificada)
-    const resetToken = jwt.sign(
-      { userId: user.id },
-      process.env.JWT_SECRET!,
-      { expiresIn: '1h' }
-    );
+    // Generar código de 6 dígitos
+    const resetCode = generateResetCode();
+    const resetCodeExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
 
-    // Enviar email de reset (implementar en emailService)
-    // await sendPasswordResetEmail(user.email, resetToken);
+    // Guardar código en la base de datos
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetCode,
+        resetCodeExpires
+      }
+    });
+
+    // Enviar email con código de 6 dígitos
+    await sendPasswordResetEmail(user.email, resetCode, user.name);
 
     return res.json({
-      message: 'If an account with that email exists, a password reset link has been sent'
+      message: 'Si existe una cuenta con ese email, se ha enviado un código de recuperación'
     });
   } catch (error) {
     console.error('Forgot password error:', error);
@@ -302,53 +313,71 @@ export const forgotPassword = async (req: Request, res: Response) => {
 
 export const resetPassword = async (req: Request, res: Response) => {
   try {
-    const { token, newPassword } = req.body;
+    const { email, resetCode, newPassword } = req.body;
 
-    if (!token || !newPassword) {
+    if (!email || !resetCode || !newPassword) {
       return res.status(400).json({
         error: 'Validation error',
-        message: 'Token and new password are required'
+        message: 'Email, código de verificación y nueva contraseña son requeridos'
       });
     }
 
     if (newPassword.length < 6) {
       return res.status(400).json({
         error: 'Validation error',
-        message: 'Password must be at least 6 characters long'
+        message: 'La contraseña debe tener al menos 6 caracteres'
       });
     }
 
-    // Verificar token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
-    
+    // Buscar el usuario con el código de reset válido
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
+      where: { email }
     });
 
-    if (!user) {
+    if (!user || !user.resetCode || !user.resetCodeExpires) {
       return res.status(400).json({
-        error: 'Invalid token',
-        message: 'Invalid or expired reset token'
+        error: 'Invalid request',
+        message: 'Código de verificación inválido o expirado'
       });
     }
 
-    // Encriptar nueva contraseña
+    // Verificar si el código coincide
+    if (user.resetCode !== resetCode) {
+      return res.status(400).json({
+        error: 'Invalid code',
+        message: 'El código de verificación es incorrecto'
+      });
+    }
+
+    // Verificar si el código no ha expirado
+    if (new Date() > user.resetCodeExpires) {
+      return res.status(400).json({
+        error: 'Expired code',
+        message: 'El código de verificación ha expirado. Solicita uno nuevo'
+      });
+    }
+
+    // Hashear la nueva contraseña
     const hashedPassword = await bcrypt.hash(newPassword, 12);
 
-    // Actualizar contraseña
+    // Actualizar la contraseña y limpiar los campos de reset
     await prisma.user.update({
       where: { id: user.id },
-      data: { password: hashedPassword }
+      data: {
+        password: hashedPassword,
+        resetCode: null,
+        resetCodeExpires: null
+      }
     });
 
     return res.json({
-      message: 'Password reset successfully'
+      message: 'Tu contraseña ha sido actualizada exitosamente'
     });
   } catch (error) {
     console.error('Reset password error:', error);
     return res.status(500).json({
       error: 'Internal server error',
-      message: 'Failed to reset password'
+      message: 'Error al restablecer la contraseña'
     });
   }
 };
