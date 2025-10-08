@@ -41,7 +41,8 @@ interface RiskProfile {
 
 // Data de equivalencias Gen Z para República Dominicana (precios actuales 2025)
 const genZEquivalencies = [
-  { amount: 60000, description: "Un iPhone 15 Pro Max nuevo 📱" },
+  { amount: 50000, description: "Una laptop gaming de gama media 💻" },
+  { amount: 75000, description: "Un iPhone 17 Pro Max nuevo 📱" },
   { amount: 120000, description: "Una moto Honda PCX nueva 🛵" },
   { amount: 200000, description: "Un semestre de universidad privada 🎓" },
   { amount: 350000, description: "Un viaje completo por Europa 15 días ✈️" },
@@ -718,7 +719,7 @@ interface InflationResult {
 
 // Ejemplos de precios actuales dominicanos Gen Z (2025)
 const currentPricesDR = [
-  { item: "iPhone 15 Pro Max", price: 60000, icon: "📱" },
+  { item: "iPhone 17 Pro Max", price: 75000, icon: "📱" },
   { item: "Gasolina Regular (galón)", price: 290, icon: "⛽" },
   { item: "Combo McDonald's", price: 650, icon: "🍔" },
   { item: "Entrada cine (Palacio del Cine)", price: 450, icon: "🎬" },
