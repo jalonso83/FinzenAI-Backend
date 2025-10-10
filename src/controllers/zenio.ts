@@ -1034,8 +1034,17 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
     throw new Error('La categoría es requerida');
   }
 
-  if (!amount && !['list'].includes(operation)) {
-    throw new Error('El monto es requerido');
+  // Validar amount según la operación
+  if (operation === 'insert' && !amount) {
+    throw new Error('El monto es requerido para crear un presupuesto');
+  }
+
+  if (operation === 'update' && (!amount || !previous_amount)) {
+    throw new Error('El monto anterior y el nuevo monto son requeridos para actualizar');
+  }
+
+  if (operation === 'delete' && !previous_amount) {
+    throw new Error('El monto del presupuesto a eliminar es requerido');
   }
 
   if (recurrence && !['semanal', 'mensual', 'anual'].includes(recurrence)) {
@@ -1722,15 +1731,26 @@ async function insertBudget(category: string, amount: string, recurrence: string
 }
 
 async function updateBudget(category: string, previous_amount: string, amount: string, userId: string, categories?: any[]): Promise<any> {
-  const where: any = { 
+  console.log('[updateBudget] Parámetros recibidos:', { category, previous_amount, amount, userId });
+
+  // Validar que previous_amount y amount existan
+  if (!previous_amount) {
+    throw new Error('El monto anterior del presupuesto es requerido');
+  }
+
+  if (!amount) {
+    throw new Error('El nuevo monto del presupuesto es requerido');
+  }
+
+  const where: any = {
     user_id: userId,
-    amount: parseFloat(previous_amount)
+    is_active: true
   };
 
   const cat = await prisma.category.findFirst({
     where: { name: { equals: category, mode: 'insensitive' } }
   });
-  
+
   if (cat) {
     where.category_id = cat.id;
   } else {
@@ -1744,6 +1764,7 @@ async function updateBudget(category: string, previous_amount: string, amount: s
     };
   }
 
+  // Buscar el presupuesto más reciente de esa categoría
   const budget = await prisma.budget.findFirst({
     where,
     orderBy: { created_at: 'desc' },
@@ -1760,10 +1781,13 @@ async function updateBudget(category: string, previous_amount: string, amount: s
     }
   });
 
+  console.log('[updateBudget] Presupuesto encontrado:', budget ? `ID: ${budget.id}, Monto actual: ${budget.amount}` : 'No encontrado');
+
   if (!budget) {
-    throw new Error(`No encontré un presupuesto de ${category} con monto ${previous_amount}`);
+    throw new Error(`No encontré un presupuesto activo de ${category}. Verifica que exista el presupuesto que quieres actualizar.`);
   }
 
+  // Actualizar el presupuesto
   const updated = await prisma.budget.update({
     where: { id: budget.id },
     data: { amount: parseFloat(amount) },
@@ -1779,31 +1803,39 @@ async function updateBudget(category: string, previous_amount: string, amount: s
       }
     }
   });
-  
+
   return {
     success: true,
-    message: `Presupuesto de ${category} actualizado de RD$${previous_amount} a RD$${amount}`,
+    message: `Presupuesto de ${category} actualizado de RD$${budget.amount} a RD$${amount}`,
     budget: updated,
     action: 'budget_updated'
   };
 }
 
 async function deleteBudget(category: string, previous_amount: string, userId: string, categories?: any[]): Promise<any> {
-  const where: any = { 
+  console.log('[deleteBudget] Parámetros recibidos:', { category, previous_amount, userId });
+
+  // Validar que previous_amount exista
+  if (!previous_amount) {
+    throw new Error('El monto del presupuesto a eliminar es requerido');
+  }
+
+  const where: any = {
     user_id: userId,
-    amount: parseFloat(previous_amount)
+    is_active: true
   };
 
   const cat = await prisma.category.findFirst({
     where: { name: { equals: category, mode: 'insensitive' } }
   });
-  
+
   if (cat) {
     where.category_id = cat.id;
   } else {
     throw new Error(`No encontré la categoría "${category}"`);
   }
 
+  // Buscar el presupuesto más reciente de esa categoría
   const budget = await prisma.budget.findFirst({
     where,
     orderBy: { created_at: 'desc' },
@@ -1820,15 +1852,18 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
     }
   });
 
+  console.log('[deleteBudget] Presupuesto encontrado:', budget ? `ID: ${budget.id}, Monto: ${budget.amount}` : 'No encontrado');
+
   if (!budget) {
-    throw new Error(`No encontré un presupuesto de ${category} con monto ${previous_amount}`);
+    throw new Error(`No encontré un presupuesto activo de ${category}. Verifica que exista el presupuesto que quieres eliminar.`);
   }
-  
+
+  // Eliminar el presupuesto
   await prisma.budget.delete({ where: { id: budget.id } });
-  
+
   return {
     success: true,
-    message: `Presupuesto de ${category} eliminado exitosamente`,
+    message: `Presupuesto de ${category} (${previous_amount}) eliminado exitosamente`,
     budget: budget,
     action: 'budget_deleted'
   };
