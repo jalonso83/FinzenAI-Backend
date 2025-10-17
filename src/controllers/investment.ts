@@ -41,7 +41,7 @@ interface RiskProfile {
 
 // Data de equivalencias Gen Z para República Dominicana (precios actuales 2025)
 const genZEquivalencies = [
-  { amount: 50000, description: "Una laptop gaming de gama media 💻" },
+  { amount: 50000, description: "Una laptop gamer de gama media 💻" },
   { amount: 75000, description: "Un iPhone 17 Pro Max nuevo 📱" },
   { amount: 120000, description: "Una moto Honda PCX nueva 🛵" },
   { amount: 200000, description: "Un semestre de universidad privada 🎓" },
