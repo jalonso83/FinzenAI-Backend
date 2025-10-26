@@ -2574,31 +2574,43 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     console.log('[Zenio] Iniciando polling del run...');
     const run = await pollRunStatus(threadId!, runId);
 
-    // 8. Manejar tool calls si los hay
+    // 8. Manejar tool calls si los hay - LOOP hasta que no haya más tool calls
     let executedActions: any[] = [];
-    if (run.status === 'requires_action' && run.required_action?.submit_tool_outputs?.tool_calls) {
-      console.log('[Zenio] Tool calls detectados, ejecutando...');
+    let currentRun = run;
+    let toolCallIterations = 0;
+    const maxToolCallIterations = 10; // Prevenir loops infinitos
+
+    while (currentRun.status === 'requires_action' && currentRun.required_action?.submit_tool_outputs?.tool_calls && toolCallIterations < maxToolCallIterations) {
+      toolCallIterations++;
+      console.log(`[Zenio] Tool calls detectados (iteración ${toolCallIterations}/${maxToolCallIterations}), ejecutando...`);
+
       const toolCallResult = await executeToolCalls(
-        threadId!, 
-        runId, 
-        run.required_action.submit_tool_outputs.tool_calls,
+        threadId!,
+        runId,
+        currentRun.required_action.submit_tool_outputs.tool_calls,
         userId,
         userName,
-        categories, // Pasar las categorías disponibles
-        userTimezone, // Pasar la zona horaria del usuario
-        transactions // Pasar transacciones cargadas (igual que categorías)
+        categories,
+        userTimezone,
+        transactions
       );
 
-      // Extraer las acciones ejecutadas
+      // Acumular las acciones ejecutadas
       if (toolCallResult.executedActions) {
-        executedActions = toolCallResult.executedActions;
+        executedActions = executedActions.concat(toolCallResult.executedActions);
       }
 
-      // Si después de ejecutar tool calls el run aún requiere acción, hacer polling nuevamente
-      if (toolCallResult.run.status === 'requires_action') {
-        console.log('[Zenio] Run aún requiere acción después de tool calls, continuando polling...');
-        await pollRunStatus(threadId!, runId);
-      }
+      // Actualizar el run actual para la siguiente iteración
+      currentRun = toolCallResult.run;
+
+      console.log(`[Zenio] Iteración ${toolCallIterations} completada. Run status: ${currentRun.status}`);
+
+      // Si aún requiere acción, el loop continuará
+      // Si está completado o en otro estado, el loop terminará
+    }
+
+    if (toolCallIterations >= maxToolCallIterations) {
+      console.log('[Zenio] ⚠️ ADVERTENCIA: Se alcanzó el límite máximo de iteraciones de tool calls');
     }
 
     // 9. Obtener la respuesta final del assistant
