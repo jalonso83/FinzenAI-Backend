@@ -67,8 +67,22 @@ export const getBudgets = async (req: Request, res: Response) => {
       prisma.budget.count({ where })
     ]);
 
+    // Log para debugging
+    console.log('🔍 [getBudgets] Raw budgets from Prisma:', JSON.stringify(budgets, null, 2));
+    budgets.forEach((budget, index) => {
+      console.log(`🔍 [Budget ${index}] spent field:`, budget.spent, 'type:', typeof budget.spent);
+    });
+
+    // Convertir Decimal a number para asegurar serialización correcta
+    const serializedBudgets = budgets.map(budget => ({
+      ...budget,
+      amount: Number(budget.amount),
+      spent: Number(budget.spent || 0),
+      alert_percentage: budget.alert_percentage ? Number(budget.alert_percentage) : null
+    }));
+
     return res.json({
-      budgets,
+      budgets: serializedBudgets,
       pagination: {
         page: pageNum,
         limit: limitNum,
@@ -115,7 +129,15 @@ export const getBudgetById = async (req: Request, res: Response) => {
       });
     }
 
-    return res.json({ budget });
+    // Serializar budget para asegurar números correctos
+    const serializedBudget = {
+      ...budget,
+      amount: Number(budget.amount),
+      spent: Number(budget.spent || 0),
+      alert_percentage: budget.alert_percentage ? Number(budget.alert_percentage) : null
+    };
+
+    return res.json({ budget: serializedBudget });
   } catch (error) {
     console.error('Get budget by ID error:', error);
     return res.status(500).json({
@@ -214,6 +236,14 @@ export const createBudget = async (req: Request, res: Response) => {
       }
     });
 
+    // Serializar budget antes de enviar
+    const serializedBudget = {
+      ...budget,
+      amount: Number(budget.amount),
+      spent: Number(budget.spent || 0),
+      alert_percentage: budget.alert_percentage ? Number(budget.alert_percentage) : null
+    };
+
     // Disparar evento de gamificación
     try {
       await GamificationService.dispatchEvent({
@@ -221,7 +251,7 @@ export const createBudget = async (req: Request, res: Response) => {
         eventType: 'create_budget',
         eventData: {
           budgetId: budget.id,
-          amount: budget.amount,
+          amount: Number(budget.amount),
           period: budget.period,
           categoryId: budget.category_id
         },
@@ -234,7 +264,7 @@ export const createBudget = async (req: Request, res: Response) => {
 
     return res.status(201).json({
       message: 'Budget created successfully',
-      budget
+      budget: serializedBudget
     });
   } catch (error) {
     console.error('Create budget error:', error);
@@ -341,9 +371,17 @@ export const updateBudget = async (req: Request, res: Response) => {
       }
     });
 
+    // Serializar budget antes de enviar
+    const serializedBudget = {
+      ...budget,
+      amount: Number(budget.amount),
+      spent: Number(budget.spent || 0),
+      alert_percentage: budget.alert_percentage ? Number(budget.alert_percentage) : null
+    };
+
     return res.json({
       message: 'Budget updated successfully',
-      budget
+      budget: serializedBudget
     });
   } catch (error) {
     console.error('Update budget error:', error);
