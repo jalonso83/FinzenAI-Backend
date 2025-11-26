@@ -144,7 +144,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   console.log('✅ Payment succeeded:', invoice.id);
 
-  const userId = invoice.subscription_metadata?.userId;
+  const userId = (invoice as any).subscription_metadata?.userId;
   if (!userId) {
     console.error('❌ No userId in invoice metadata');
     return;
@@ -153,11 +153,11 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   // Registrar pago
   await subscriptionService.recordPayment({
     userId,
-    subscriptionId: invoice.subscription as string,
+    subscriptionId: (invoice as any).subscription as string,
     amount: invoice.amount_paid / 100, // Convertir de centavos a dólares
     currency: invoice.currency,
     status: 'SUCCEEDED',
-    stripePaymentIntentId: invoice.payment_intent as string,
+    stripePaymentIntentId: (invoice as any).payment_intent as string,
     stripeInvoiceId: invoice.id,
     description: `Payment for subscription`,
   });
@@ -172,7 +172,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
   console.log('❌ Payment failed:', invoice.id);
 
-  const userId = invoice.subscription_metadata?.userId;
+  const userId = (invoice as any).subscription_metadata?.userId;
   if (!userId) {
     console.error('❌ No userId in invoice metadata');
     return;
@@ -181,7 +181,7 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
   // Registrar pago fallido
   await subscriptionService.recordPayment({
     userId,
-    subscriptionId: invoice.subscription as string,
+    subscriptionId: (invoice as any).subscription as string,
     amount: invoice.amount_due / 100,
     currency: invoice.currency,
     status: 'FAILED',
@@ -246,8 +246,8 @@ async function updateSubscriptionFromStripe(
     stripeCustomerId: subscription.customer as string,
     stripeSubscriptionId: subscription.id,
     stripePriceId: priceId,
-    currentPeriodStart: new Date(subscription.current_period_start * 1000),
-    currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+    currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
+    currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
     trialEndsAt: subscription.trial_end
       ? new Date(subscription.trial_end * 1000)
       : null,
