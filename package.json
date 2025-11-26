@@ -38,7 +38,8 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.7",
     "openai": "^5.8.2",
-    "prisma": "^5.7.1"
+    "prisma": "^5.7.1",
+    "stripe": "^19.3.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

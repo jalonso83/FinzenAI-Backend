@@ -212,6 +212,65 @@ export const createBudget = async (req: Request, res: Response) => {
       });
     }
 
+    // Verificar si ya existe un presupuesto activo con la misma categoría y período
+    const existingBudget = await prisma.budget.findFirst({
+      where: {
+        user_id: userId,
+        category_id,
+        period,
+        is_active: true,
+        OR: [
+          // Caso 1: El nuevo presupuesto empieza durante un presupuesto existente
+          {
+            AND: [
+              { start_date: { lte: startDate } },
+              { end_date: { gte: startDate } }
+            ]
+          },
+          // Caso 2: El nuevo presupuesto termina durante un presupuesto existente
+          {
+            AND: [
+              { start_date: { lte: endDate } },
+              { end_date: { gte: endDate } }
+            ]
+          },
+          // Caso 3: El nuevo presupuesto contiene completamente un presupuesto existente
+          {
+            AND: [
+              { start_date: { gte: startDate } },
+              { end_date: { lte: endDate } }
+            ]
+          }
+        ]
+      },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            icon: true
+          }
+        }
+      }
+    });
+
+    if (existingBudget) {
+      return res.status(409).json({
+        error: 'Duplicate budget',
+        message: `Ya existe un presupuesto activo para "${existingBudget.category?.name}" (${existingBudget.period})`,
+        existingBudget: {
+          id: existingBudget.id,
+          name: existingBudget.name,
+          amount: Number(existingBudget.amount),
+          spent: Number(existingBudget.spent || 0),
+          period: existingBudget.period,
+          start_date: existingBudget.start_date,
+          end_date: existingBudget.end_date,
+          category: existingBudget.category
+        }
+      });
+    }
+
     const budget = await prisma.budget.create({
       data: {
         user_id: userId,

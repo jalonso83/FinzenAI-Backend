@@ -17,6 +17,10 @@ import reportRoutes from './routes/reports';
 import gamificationRoutes from './routes/gamification';
 import investmentRoutes from './routes/investment';
 import budgetSchedulerRoutes from './routes/budgetScheduler';
+import subscriptionRoutes from './routes/subscriptions';
+
+// Importar webhooks
+import { handleStripeWebhook } from './webhooks/stripeWebhook';
 
 // Configurar variables de entorno
 dotenv.config();
@@ -24,6 +28,13 @@ dotenv.config();
 const app: Application = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
+
+// Webhook de Stripe - DEBE ir ANTES de express.json() para recibir raw body
+app.post(
+  '/webhooks/stripe',
+  express.raw({ type: 'application/json' }),
+  handleStripeWebhook
+);
 
 // Middleware
 app.use(cors({
@@ -50,6 +61,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/investment', investmentRoutes);
 app.use('/api/scheduler', budgetSchedulerRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {

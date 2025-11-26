@@ -43,6 +43,11 @@ model User {
   userBadges          UserBadge[]
   challengeParticipants ChallengeParticipant[]
 
+  // Suscripciones y Pagos
+  subscription        Subscription?
+  payments            Payment[]
+  stripeCustomerId    String?       @unique
+
   @@map("users")
 }
 
@@ -272,4 +277,73 @@ enum BadgeType {
   AHORRADOR_NOVATO
   PRESUPUESTO_MAESTRO
   META_CRUSHER
+}
+
+// =============================================
+// MODELOS DE SUSCRIPCIONES Y PAGOS
+// =============================================
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               String             @unique
+  plan                 SubscriptionPlan   @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  trialEndsAt          DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+  @@index([userId])
+  @@index([status])
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  userId                String
+  subscriptionId        String?
+  amount                Float
+  currency              String        @default("usd")
+  status                PaymentStatus
+  stripePaymentIntentId String?       @unique
+  stripeInvoiceId       String?       @unique
+  description           String?
+  createdAt             DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+  @@index([userId])
+  @@index([status])
+}
+
+enum SubscriptionPlan {
+  FREE
+  PREMIUM
+  PRO
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  TRIALING
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  UNPAID
+}
+
+enum PaymentStatus {
+  SUCCEEDED
+  FAILED
+  PENDING
+  REFUNDED
+  CANCELED
 }
