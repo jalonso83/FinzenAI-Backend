@@ -1,5 +1,5 @@
 import express from 'express';
-import { auth } from '../middlewares/auth';
+import { authenticateToken as auth } from '../middlewares/auth';
 import {
   createCheckout,
   getSubscription,
