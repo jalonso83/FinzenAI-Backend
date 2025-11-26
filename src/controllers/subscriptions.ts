@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { stripeService } from '../services/stripeService';
 import { subscriptionService } from '../services/subscriptionService';
-import { PLANS, PlanType } from '../config/stripe';
+import { PLANS, PlanType, stripe } from '../config/stripe';
 
 /**
  * Crear sesión de checkout para upgrade de plan
@@ -265,7 +265,7 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
     const { sessionId } = req.params;
     const userId = (req as any).user!.id;
 
-    const session = await stripeService['stripe'].checkout.sessions.retrieve(sessionId);
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
 
     if (session.metadata?.userId !== userId) {
       return res.status(403).json({ message: 'No autorizado' });

@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Router } from 'express';
 import { authenticateToken as auth } from '../middlewares/auth';
 import {
   createCheckout,
@@ -12,7 +12,7 @@ import {
   checkCheckoutSession,
 } from '../controllers/subscriptions';
 
-const router = express.Router();
+const router: Router = express.Router();
 
 /**
  * @route   GET /api/subscriptions/plans
