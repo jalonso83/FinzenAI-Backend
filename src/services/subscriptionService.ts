@@ -1,6 +1,8 @@
-import { prisma } from '../lib/prisma';
+import { PrismaClient } from '@prisma/client';
 import { PLANS, PlanType } from '../config/stripe';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 export class SubscriptionService {
   /**

@@ -1,6 +1,8 @@
 import { stripe } from '../config/stripe';
-import { prisma } from '../lib/prisma';
+import { PrismaClient } from '@prisma/client';
 import Stripe from 'stripe';
+
+const prisma = new PrismaClient();
 
 export class StripeService {
   /**

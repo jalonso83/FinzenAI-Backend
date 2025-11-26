@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { subscriptionService } from '../services/subscriptionService';
-import { prisma } from '../lib/prisma';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 /**
  * Middleware: Verificar límite de presupuestos
