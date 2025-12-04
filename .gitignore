@@ -71,4 +71,4 @@ build/
 *.sqlite3
 
 # Prisma
-prisma/migrations/
+prisma/migrations/nul

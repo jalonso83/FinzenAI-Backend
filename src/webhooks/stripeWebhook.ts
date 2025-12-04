@@ -242,12 +242,20 @@ async function updateSubscriptionFromStripe(
   const status = statusMap[subscription.status] || SubscriptionStatus.ACTIVE;
 
   // Actualizar en BD
+  const sub = subscription as any;
+  const currentPeriodStart = sub.current_period_start
+    ? new Date(sub.current_period_start * 1000)
+    : new Date();
+  const currentPeriodEnd = sub.current_period_end
+    ? new Date(sub.current_period_end * 1000)
+    : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 días por defecto
+
   await subscriptionService.updateSubscriptionAfterPayment(userId, plan, {
     stripeCustomerId: subscription.customer as string,
     stripeSubscriptionId: subscription.id,
     stripePriceId: priceId,
-    currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
-    currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
+    currentPeriodStart,
+    currentPeriodEnd,
     trialEndsAt: subscription.trial_end
       ? new Date(subscription.trial_end * 1000)
       : null,

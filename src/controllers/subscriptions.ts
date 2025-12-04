@@ -258,17 +258,75 @@ export const getPaymentHistory = async (req: Request, res: Response) => {
 };
 
 /**
- * Verificar estado de sesión de checkout
+ * Verificar estado de sesión de checkout Y sincronizar suscripción
  */
 export const checkCheckoutSession = async (req: Request, res: Response) => {
   try {
     const { sessionId } = req.params;
     const userId = (req as any).user!.id;
 
+    console.log(`🔄 Verificando sesión ${sessionId} para usuario ${userId}`);
+
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
     if (session.metadata?.userId !== userId) {
       return res.status(403).json({ message: 'No autorizado' });
+    }
+
+    // Si el checkout se completó y hay suscripción, sincronizar
+    if (session.status === 'complete' && session.subscription) {
+      console.log(`✅ Sesión completada, sincronizando suscripción ${session.subscription}`);
+
+      try {
+        const subscription = await stripe.subscriptions.retrieve(
+          session.subscription as string
+        );
+
+        // Determinar el plan basado en el price ID
+        const priceId = subscription.items.data[0].price.id;
+        let plan: 'PREMIUM' | 'PRO' = 'PREMIUM';
+
+        const premiumPriceId = PLANS.PREMIUM.stripePriceId;
+        const proPriceId = PLANS.PRO.stripePriceId;
+
+        if (priceId === proPriceId) {
+          plan = 'PRO';
+        } else if (priceId === premiumPriceId) {
+          plan = 'PREMIUM';
+        }
+
+        // Actualizar suscripción en BD
+        const sub = subscription as any;
+        const currentPeriodStart = sub.current_period_start
+          ? new Date(sub.current_period_start * 1000)
+          : new Date();
+        const currentPeriodEnd = sub.current_period_end
+          ? new Date(sub.current_period_end * 1000)
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+        await subscriptionService.updateSubscriptionAfterPayment(userId, plan, {
+          stripeCustomerId: subscription.customer as string,
+          stripeSubscriptionId: subscription.id,
+          stripePriceId: priceId,
+          currentPeriodStart,
+          currentPeriodEnd,
+          trialEndsAt: subscription.trial_end
+            ? new Date(subscription.trial_end * 1000)
+            : null,
+        });
+
+        // Actualizar status
+        const statusMap: { [key: string]: any } = {
+          'active': 'ACTIVE',
+          'trialing': 'TRIALING',
+        };
+        const status = statusMap[subscription.status] || 'ACTIVE';
+        await subscriptionService.updateSubscriptionStatus(userId, status);
+
+        console.log(`✅ Suscripción sincronizada: ${plan} (${status})`);
+      } catch (syncError) {
+        console.error('❌ Error sincronizando suscripción:', syncError);
+      }
     }
 
     res.json({
