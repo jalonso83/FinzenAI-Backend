@@ -11,7 +11,7 @@ export const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 // Definición de planes y límites
 export const PLANS = {
   FREE: {
-    name: 'Free',
+    name: 'Gratis',
     price: 0,
     stripePriceId: null,
     limits: {
@@ -42,7 +42,7 @@ export const PLANS = {
       exportData: true,
     },
     features: [
-      'Todo lo de Free',
+      'Todo lo de Gratis',
       'Presupuestos ilimitados',
       'Metas ilimitadas',
       'Zenio ilimitado',
