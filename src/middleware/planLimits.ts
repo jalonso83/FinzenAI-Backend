@@ -107,7 +107,7 @@ export const checkZenioLimit = async (
   try {
     const userId = (req as any).user!.id;
 
-    // Obtener suscripción
+    // Obtener suscripción con contador de Zenio
     const subscription = await subscriptionService.getUserSubscription(userId);
     const limits = subscription.limits as any;
     const zenioLimit = limits.zenioQueries;
@@ -117,31 +117,54 @@ export const checkZenioLimit = async (
       return next();
     }
 
-    // Contar consultas de Zenio este mes
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-
-    const zenioQueryCount = await prisma.gamificationEvent.count({
-      where: {
-        userId,
-        eventType: 'TIP_ACCEPTED', // Asumiendo que registramos consultas de Zenio aquí
-        createdAt: {
-          gte: startOfMonth,
-        },
-      },
+    // Obtener datos de la suscripción desde la BD para el contador
+    const subscriptionData = await prisma.subscription.findUnique({
+      where: { userId },
     });
 
-    if (zenioQueryCount >= zenioLimit) {
+    if (!subscriptionData) {
+      return next(); // Si no hay suscripción, permitir (se creará después)
+    }
+
+    // Verificar si necesitamos resetear el contador (nuevo mes)
+    const now = new Date();
+    const resetAt = new Date(subscriptionData.zenioQueriesResetAt);
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const resetMonth = resetAt.getMonth();
+    const resetYear = resetAt.getFullYear();
+
+    let currentCount = subscriptionData.zenioQueriesUsed;
+
+    // Si cambió el mes, resetear contador
+    if (currentYear > resetYear || (currentYear === resetYear && currentMonth > resetMonth)) {
+      await prisma.subscription.update({
+        where: { userId },
+        data: {
+          zenioQueriesUsed: 0,
+          zenioQueriesResetAt: now,
+        },
+      });
+      currentCount = 0;
+    }
+
+    // Verificar límite
+    if (currentCount >= zenioLimit) {
+      // Calcular fecha de próximo reset (primer día del próximo mes)
+      const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
       return res.status(403).json({
         message: `Has alcanzado el límite de ${zenioLimit} consultas de Zenio este mes`,
         upgrade: true,
         currentPlan: subscription.plan,
         limit: zenioLimit,
-        current: zenioQueryCount,
-        resetDate: new Date(startOfMonth.getFullYear(), startOfMonth.getMonth() + 1, 1),
+        current: currentCount,
+        resetDate: nextMonth.toISOString(),
       });
     }
+
+    // Guardar el conteo actual en el request para usarlo después
+    (req as any).zenioCurrentCount = currentCount;
 
     next();
   } catch (error: any) {

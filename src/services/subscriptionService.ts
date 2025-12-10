@@ -23,15 +23,70 @@ export class SubscriptionService {
       const limits = PLANS[plan].limits;
       const features = PLANS[plan].features;
 
+      // Verificar si necesitamos resetear el contador de Zenio (nuevo mes)
+      const zenioUsage = await this.getZenioUsage(userId, subscription);
+
       return {
         ...subscription,
         limits,
         features,
         planDetails: PLANS[plan],
+        zenioUsage,
       };
     } catch (error) {
       console.error('Error obteniendo suscripción:', error);
       throw new Error('No se pudo obtener la suscripción');
+    }
+  }
+
+  /**
+   * Obtener uso actual de Zenio (con reset automático mensual)
+   */
+  async getZenioUsage(userId: string, subscription?: any) {
+    try {
+      if (!subscription) {
+        subscription = await prisma.subscription.findUnique({
+          where: { userId },
+        });
+      }
+
+      if (!subscription) {
+        return { used: 0, limit: 10, remaining: 10 };
+      }
+
+      const plan = subscription.plan as PlanType;
+      const zenioLimit = PLANS[plan]?.limits?.zenioQueries ?? 10;
+
+      // Verificar si necesitamos resetear (nuevo mes)
+      const now = new Date();
+      const resetAt = new Date(subscription.zenioQueriesResetAt);
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+      const resetMonth = resetAt.getMonth();
+      const resetYear = resetAt.getFullYear();
+
+      let currentCount = subscription.zenioQueriesUsed;
+
+      // Si cambió el mes, resetear contador
+      if (currentYear > resetYear || (currentYear === resetYear && currentMonth > resetMonth)) {
+        await prisma.subscription.update({
+          where: { userId },
+          data: {
+            zenioQueriesUsed: 0,
+            zenioQueriesResetAt: now,
+          },
+        });
+        currentCount = 0;
+      }
+
+      return {
+        used: currentCount,
+        limit: zenioLimit,
+        remaining: zenioLimit === -1 ? -1 : Math.max(0, zenioLimit - currentCount),
+      };
+    } catch (error) {
+      console.error('Error obteniendo uso de Zenio:', error);
+      return { used: 0, limit: 10, remaining: 10 };
     }
   }
 

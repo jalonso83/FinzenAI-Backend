@@ -2636,14 +2636,49 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     console.log(`   "${assistantResponse}"`);
     console.log(`   Longitud: ${assistantResponse.length} caracteres`);
 
-    // 10. Responder al frontend
+    // 10. Incrementar contador de consultas de Zenio y obtener uso actual
+    let zenioUsage = { used: 0, limit: 10, remaining: 10 };
+    try {
+      const subscription = await prisma.subscription.findUnique({
+        where: { userId },
+      });
+
+      if (subscription) {
+        // Incrementar contador
+        const updatedSubscription = await prisma.subscription.update({
+          where: { userId },
+          data: {
+            zenioQueriesUsed: { increment: 1 },
+          },
+        });
+
+        // Obtener límite del plan
+        const { PLANS } = await import('../config/stripe');
+        const planLimits = PLANS[subscription.plan as keyof typeof PLANS]?.limits;
+        const limit = planLimits?.zenioQueries ?? 10;
+
+        zenioUsage = {
+          used: updatedSubscription.zenioQueriesUsed,
+          limit: limit,
+          remaining: limit === -1 ? -1 : Math.max(0, limit - updatedSubscription.zenioQueriesUsed),
+        };
+
+        console.log(`[Zenio] Consulta registrada. Uso: ${zenioUsage.used}/${zenioUsage.limit === -1 ? '∞' : zenioUsage.limit}`);
+      }
+    } catch (usageError) {
+      console.error('[Zenio] Error actualizando contador de uso:', usageError);
+      // No fallar la respuesta si hay error en el contador
+    }
+
+    // 11. Responder al frontend
     console.log('[Zenio] Enviando respuesta al frontend');
-    
+
     // Preparar respuesta con acciones ejecutadas
     const response: any = {
       message: assistantResponse,
       threadId,
-      autoGreeting: autoGreeting || false
+      autoGreeting: autoGreeting || false,
+      zenioUsage, // Incluir información de uso
     };
 
     // Incluir TODAS las acciones ejecutadas para el frontend

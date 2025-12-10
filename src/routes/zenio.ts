@@ -3,6 +3,7 @@ import { chatWithZenio, getChatHistory, createTransactionFromZenio, createBudget
 import { authenticateToken } from '../middlewares/auth';
 import { saveOnboarding } from '../controllers/onboarding';
 import { analyzeAntExpenses } from '../controllers/antExpenseDetective';
+import { checkZenioLimit } from '../middleware/planLimits';
 import multer from 'multer';
 
 const router: Router = express.Router();
@@ -23,8 +24,8 @@ const upload = multer({
 // Todas las rutas requieren autenticación
 router.use(authenticateToken);
 
-// Rutas de Zenio (Asistente IA)
-router.post('/chat', chatWithZenio);
+// Rutas de Zenio (Asistente IA) - con validación de límite
+router.post('/chat', checkZenioLimit, chatWithZenio);
 router.get('/history', getChatHistory);
 
 // Ruta para crear transacciones desde Zenio

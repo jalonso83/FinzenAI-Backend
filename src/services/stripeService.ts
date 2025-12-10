@@ -72,6 +72,11 @@ export class StripeService {
           metadata: { userId },
         },
         allow_promotion_codes: true, // Permitir códigos promocionales
+        custom_text: {
+          submit: {
+            message: 'Suscribirse', // Cambiar texto del botón
+          },
+        },
       });
 
       console.log(`✅ Checkout session creada: ${session.id} para usuario ${userId}`);
