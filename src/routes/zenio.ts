@@ -2,7 +2,7 @@ import express, { Router } from 'express';
 import { chatWithZenio, getChatHistory, createTransactionFromZenio, createBudgetFromZenio, transcribeAudio } from '../controllers/zenio';
 import { authenticateToken } from '../middlewares/auth';
 import { saveOnboarding } from '../controllers/onboarding';
-import { analyzeAntExpenses } from '../controllers/antExpenseDetective';
+import { analyzeAntExpenses, getAntExpenseConfig } from '../controllers/antExpenseDetective';
 import { checkZenioLimit } from '../middleware/planLimits';
 import multer from 'multer';
 
@@ -37,7 +37,11 @@ router.post('/budget', createBudgetFromZenio);
 // Ruta para guardar el onboarding
 router.post('/onboarding', saveOnboarding);
 
-// Ruta para análisis de gastos hormiga con Zenio
+// Rutas para análisis de gastos hormiga con Zenio
+// GET /api/zenio/ant-expense-config - Obtener configuración y opciones disponibles
+router.get('/ant-expense-config', getAntExpenseConfig);
+// GET /api/zenio/ant-expense-analysis - Analizar gastos hormiga
+// Query params opcionales: antThreshold, minFrequency, monthsToAnalyze, useAI
 router.get('/ant-expense-analysis', analyzeAntExpenses);
 
 // Ruta para transcribir audio con Whisper

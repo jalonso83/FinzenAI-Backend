@@ -1,202 +1,411 @@
+/**
+ * Controlador del Detective de Gastos Hormiga
+ * FinZen AI
+ *
+ * Este controlador maneja las peticiones del análisis de gastos hormiga.
+ * Utiliza el servicio antExpenseService para cálculos y Zenio IA para insights.
+ */
+
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { antExpenseService } from '../services/antExpenseService';
+import {
+  AntExpenseConfig,
+  DEFAULT_ANT_EXPENSE_CONFIG,
+  CONFIG_LIMITS,
+  AntExpenseAnalysisResponse,
+  ZenioInsights,
+  AntExpenseCalculations,
+} from '../types/antExpense';
 
-const prisma = new PrismaClient();
+// =============================================
+// FUNCIÓN PARA GENERAR INSIGHTS CON ZENIO IA
+// =============================================
 
-// Tipos para el detective de gastos hormiga
-interface AntExpenseAnalysis {
-  totalAntExpenses: number;
-  analysisMessage: string;
-  topCriminals: Array<{
-    category: string;
-    amount: number;
-    count: number;
-    averageAmount: number;
-    impact: string;
-    suggestions: string[];
-  }>;
-  monthlyTrend: Array<{
-    month: string;
-    amount: number;
-  }>;
-  equivalencies: string[];
-  savingsOpportunity: number;
-  zenioInsights: string;
+/**
+ * Genera insights creativos usando Zenio IA
+ * Recibe datos pre-calculados y genera texto personalizado
+ */
+async function generateZenioInsights(
+  calculations: AntExpenseCalculations,
+  userId: string
+): Promise<ZenioInsights> {
+  try {
+    // Preparar datos resumidos para la IA
+    const dataForZenio = antExpenseService.prepareDataForZenio(calculations);
+
+    console.log('[AntDetective] Preparando datos para Zenio IA...');
+
+    // Importar el controlador de Zenio
+    const { chatWithZenio } = await import('./zenio');
+
+    // Crear el prompt específico para análisis de gastos hormiga
+    const analysisPrompt = `
+Analiza estos datos de gastos hormiga y genera insights creativos en español:
+
+DATOS CALCULADOS:
+${JSON.stringify(dataForZenio, null, 2)}
+
+Genera una respuesta JSON con esta estructura exacta:
+{
+  "impactMessage": "Mensaje principal de impacto (2-3 oraciones, usa emojis)",
+  "equivalencies": ["Array de 3-4 equivalencias creativas de qué podría comprar con ese dinero"],
+  "categorySuggestions": [
+    {
+      "category": "nombre de categoría",
+      "suggestions": ["2-3 sugerencias específicas para reducir gastos en esta categoría"]
+    }
+  ],
+  "motivationalMessage": "Mensaje motivacional final (1-2 oraciones con emoji)",
+  "severityLevel": número del 1 al 5 según qué tan grave es el problema,
+  "summary": "Resumen ejecutivo en una oración"
 }
 
-// Función para llamar al agente Zenio y capturar el tool call result
-async function callZenioForAntExpenseAnalysis(userId: string): Promise<any> {
-  try {
-    // Obtener transacciones de los últimos 3 meses
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+Considera:
+- El usuario está en República Dominicana (usa RD$ para montos)
+- Sé específico con las sugerencias según las categorías detectadas
+- Las equivalencias deben ser relevantes y motivadoras
+- El severityLevel: 1=muy bien, 2=bien, 3=regular, 4=preocupante, 5=crítico
+`;
 
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        userId: userId,
-        date: {
-          gte: threeMonthsAgo
-        }
-      },
-      include: {
-        category: true
-      },
-      orderBy: {
-        date: 'desc'
-      }
-    }) as any[];
+    // Variable para capturar la respuesta
+    let zenioResponse: any = null;
 
-    console.log('🔍 RAW TRANSACTIONS FROM DB - Total:', transactions.length);
-    console.log('🔍 SAMPLE RAW TRANSACTIONS:', JSON.stringify(transactions.slice(0, 3), null, 2));
-
-    // CREAR ARRAY LIMPIO - CON LOGS DETALLADOS
-    const transactionData = [];
-    
-    console.log('🔍 INICIANDO MAPEO DE', transactions.length, 'TRANSACCIONES');
-    
-    for (let i = 0; i < transactions.length; i++) {
-      const t = transactions[i];
-      
-      if (t && t.type === 'EXPENSE' && t.id && t.amount && t.date && t.category) {
-        try {
-          const cleanTransaction = {
-            id: String(t.id),
-            amount: Number(t.amount),
-            date: new Date(t.date).toISOString(),
-            category: String(t.category.name),
-            type: String(t.type)
-          };
-          
-          transactionData.push(cleanTransaction);
-          console.log(`✅ Transacción ${i+1} procesada:`, cleanTransaction.id, cleanTransaction.amount, cleanTransaction.category);
-          
-        } catch (error) {
-          console.log(`❌ Error procesando transacción ${i+1}:`, error, 'Data:', t);
-        }
-      } else {
-        console.log(`⚠️ Transacción ${i+1} omitida - datos incompletos:`, {
-          hasId: !!t?.id, 
-          hasAmount: !!t?.amount, 
-          hasDate: !!t?.date, 
-          hasCategory: !!t?.category,
-          type: t?.type
-        });
-      }
-    }
-    
-    console.log('🔍 MAPEO COMPLETADO:', transactionData.length, 'transacciones válidas');
-
-    console.log('✅ TRANSACCIONES LIMPIAS CREADAS:', transactionData.length);
-
-    // Variable para capturar el resultado del tool call
-    let toolCallResult: any = null;
-
-    // Crear request para llamar a chatWithZenio con datos reales
+    // Mock request y response para llamar a chatWithZenio
     const mockReq = {
       user: { id: userId },
       body: {
-        message: `Analiza mis gastos hormiga`,
-        transactions: transactionData, // Solo este campo
-        threadId: undefined, // Crear nuevo thread para análisis
+        message: analysisPrompt,
+        threadId: undefined,
         isOnboarding: false,
         categories: [],
-        timezone: 'UTC'
-      }
+        transactions: [],
+        timezone: 'America/Santo_Domingo',
+      },
     } as any;
 
-    console.log('🚀 ENVIANDO A ZENIO - transactionData length:', transactionData?.length || 0);
-    console.log('🚀 ENVIANDO A ZENIO - mensaje:', mockReq.body.message);
-
-    // Mock response que captura tanto el mensaje como las acciones ejecutadas
     const mockRes = {
       status: (code: number) => mockRes,
       json: (data: any) => {
-        console.log('📥 RESPUESTA COMPLETA DE ZENIO:', JSON.stringify(data, null, 2));
-        
-        // Si hay acciones ejecutadas, buscar el resultado del análisis
-        if (data.executedActions && Array.isArray(data.executedActions)) {
-          console.log(`📋 ENCONTRADAS ${data.executedActions.length} ACCIONES EJECUTADAS`);
-          
-          for (const action of data.executedActions) {
-            console.log(`🔍 ACCIÓN: ${action.action}`);
-            
-            if (action.action === 'analyze_ant_expenses') {
-              toolCallResult = action.data;
-              console.log('🤖 JSON RESPUESTA DE ZENIO:', JSON.stringify(toolCallResult, null, 2));
-              break;
-            }
-          }
-        } else {
-          console.log('❌ NO HAY ACCIONES EJECUTADAS EN LA RESPUESTA');
-        }
-        
+        zenioResponse = data;
         return mockRes;
-      }
+      },
     } as any;
 
-    // Importar y llamar al agente Zenio
-    const { chatWithZenio } = await import('./zenio');
+    // Llamar a Zenio
     await chatWithZenio(mockReq, mockRes);
-    
-    if (toolCallResult) {
-      return toolCallResult;
-    } else {
-      throw new Error('No se recibió resultado del tool call de análisis');
+
+    // Extraer respuesta JSON de Zenio
+    if (zenioResponse?.message) {
+      try {
+        // Intentar extraer JSON de la respuesta
+        const jsonMatch = zenioResponse.message.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return {
+            impactMessage: parsed.impactMessage || generateFallbackImpactMessage(calculations),
+            equivalencies: parsed.equivalencies || generateFallbackEquivalencies(calculations),
+            categorySuggestions: parsed.categorySuggestions || [],
+            motivationalMessage: parsed.motivationalMessage || '💪 ¡Pequeños cambios hacen grandes diferencias!',
+            severityLevel: parsed.severityLevel || calculateSeverityLevel(calculations),
+            summary: parsed.summary || `Detectamos RD$${calculations.totalAntExpenses.toLocaleString()} en gastos hormiga.`,
+          };
+        }
+      } catch (parseError) {
+        console.error('[AntDetective] Error parseando respuesta de Zenio:', parseError);
+      }
     }
 
+    // Si falla, usar fallback
+    console.log('[AntDetective] Usando insights de fallback');
+    return generateFallbackInsights(calculations);
+
   } catch (error) {
-    console.error('[Ant Detective] Error en análisis con Zenio IA:', error);
-    
-    // Sin fallback directo disponible por scope de variables
-    
-    // Fallback final en caso de error
-    return {
-      totalAntExpenses: 0,
-      impactMessage: "🕵️ Detective Zenio aquí. Tuve un problema técnico, pero basándome en tus patrones de gasto, te recomiendo revisar las categorías con más transacciones frecuentes. ¡Vuelve a intentarlo en un momento! 💪",
-      topCriminals: [],
-      equivalencies: ["Intenta de nuevo en unos minutos"],
-      savingsOpportunity: 0,
-      motivationalMessage: "🚧 La función de análisis de gastos hormiga está temporalmente fuera de servicio. ¡Vuelve a intentarlo pronto!",
-      insights: "Por favor contacta al soporte si el problema persiste"
-    };
+    console.error('[AntDetective] Error generando insights con Zenio:', error);
+    return generateFallbackInsights(calculations);
   }
 }
 
-// Endpoint principal para análisis de gastos hormiga
+// =============================================
+// FUNCIONES DE FALLBACK (Sin IA)
+// =============================================
+
+/**
+ * Calcula el nivel de severidad basado en los datos
+ */
+function calculateSeverityLevel(calculations: AntExpenseCalculations): number {
+  const percentage = calculations.percentageOfTotal;
+
+  if (percentage < 10) return 1;
+  if (percentage < 20) return 2;
+  if (percentage < 30) return 3;
+  if (percentage < 40) return 4;
+  return 5;
+}
+
+/**
+ * Genera mensaje de impacto de fallback
+ */
+function generateFallbackImpactMessage(calculations: AntExpenseCalculations): string {
+  const { percentageOfTotal, totalAntExpenses, topCriminals } = calculations;
+  const mainCategory = topCriminals[0]?.category || 'varios gastos pequeños';
+
+  if (percentageOfTotal >= 30) {
+    return `🚨 ¡Alerta! Tus gastos hormiga representan el ${percentageOfTotal}% de tus gastos totales. ${mainCategory} es el principal culpable con RD$${topCriminals[0]?.total.toLocaleString() || 0}.`;
+  } else if (percentageOfTotal >= 20) {
+    return `⚠️ Atención: El ${percentageOfTotal}% de tus gastos son "hormiga". Principalmente en ${mainCategory}. ¡Es hora de tomar acción!`;
+  } else if (percentageOfTotal >= 10) {
+    return `📊 Tus gastos hormiga representan el ${percentageOfTotal}% del total. ${mainCategory} lidera con RD$${topCriminals[0]?.total.toLocaleString() || 0}.`;
+  }
+  return `✅ Tus gastos hormiga están bajo control: solo el ${percentageOfTotal}% del total. ¡Sigue así!`;
+}
+
+/**
+ * Genera equivalencias de fallback
+ */
+function generateFallbackEquivalencies(calculations: AntExpenseCalculations): string[] {
+  const monthly = calculations.savingsOpportunityPerMonth;
+  const total = calculations.totalAntExpenses;
+  const equivalencies: string[] = [];
+
+  // Equivalencias basadas en el ahorro mensual
+  if (monthly >= 5000) {
+    equivalencies.push(`RD$${monthly.toLocaleString()}/mes = Una suscripción de gimnasio premium`);
+  }
+  if (monthly >= 2000) {
+    equivalencies.push(`RD$${monthly.toLocaleString()}/mes = Netflix + Spotify + Disney+ combinados`);
+  }
+  if (monthly >= 1000) {
+    equivalencies.push(`RD$${monthly.toLocaleString()}/mes = 2 cenas en un buen restaurante`);
+  }
+
+  // Equivalencias basadas en el total del período
+  if (total >= 10000) {
+    equivalencies.push(`RD$${total.toLocaleString()} en ${calculations.metadata.actualMonthsAnalyzed} meses = Un vuelo de ida y vuelta nacional`);
+  }
+  if (total >= 5000) {
+    equivalencies.push(`Con RD$${total.toLocaleString()} podrías abrir un fondo de emergencia`);
+  }
+
+  // Si no hay suficientes equivalencias
+  if (equivalencies.length < 2) {
+    equivalencies.push(`Ahorrando estos gastos por 1 año = RD$${(monthly * 12).toLocaleString()}`);
+    equivalencies.push(`Cada RD$100 ahorrado hoy, invertido al 10% anual = RD$110 en un año`);
+  }
+
+  return equivalencies.slice(0, 4);
+}
+
+/**
+ * Genera sugerencias de fallback por categoría
+ */
+function generateFallbackCategorySuggestions(calculations: AntExpenseCalculations): Array<{category: string; suggestions: string[]}> {
+  const suggestions: Array<{category: string; suggestions: string[]}> = [];
+
+  const categoryTips: Record<string, string[]> = {
+    'Comida y restaurantes': [
+      'Prepara almuerzo en casa al menos 3 días a la semana',
+      'Lleva snacks saludables para evitar compras impulsivas',
+      'Usa apps de delivery solo con cupones de descuento',
+    ],
+    'Entretenimiento': [
+      'Busca alternativas gratuitas de entretenimiento',
+      'Establece un presupuesto semanal para ocio',
+      'Aprovecha días de descuento en cines y eventos',
+    ],
+    'Suscripciones': [
+      'Revisa qué suscripciones realmente usas cada semana',
+      'Considera planes familiares o compartidos',
+      'Cancela las que no uses en los últimos 30 días',
+    ],
+    'Transporte': [
+      'Considera usar transporte público algunos días',
+      'Agrupa diligencias para hacer menos viajes',
+      'Comparte viajes con compañeros de trabajo',
+    ],
+    'Compras': [
+      'Espera 24 horas antes de compras impulsivas',
+      'Haz una lista antes de ir de compras',
+      'Compara precios en al menos 3 lugares',
+    ],
+  };
+
+  for (const criminal of calculations.topCriminals.slice(0, 3)) {
+    const tips = categoryTips[criminal.category] || [
+      `Revisa si realmente necesitas todos estos gastos en ${criminal.category}`,
+      'Establece un límite mensual para esta categoría',
+      'Busca alternativas más económicas',
+    ];
+
+    suggestions.push({
+      category: criminal.category,
+      suggestions: tips,
+    });
+  }
+
+  return suggestions;
+}
+
+/**
+ * Genera insights completos de fallback (sin IA)
+ */
+function generateFallbackInsights(calculations: AntExpenseCalculations): ZenioInsights {
+  return {
+    impactMessage: generateFallbackImpactMessage(calculations),
+    equivalencies: generateFallbackEquivalencies(calculations),
+    categorySuggestions: generateFallbackCategorySuggestions(calculations),
+    motivationalMessage: '💪 Recuerda: pequeños cambios en tus hábitos pueden generar grandes ahorros. ¡Tú puedes!',
+    severityLevel: calculateSeverityLevel(calculations),
+    summary: `Detectamos RD$${calculations.totalAntExpenses.toLocaleString()} en gastos hormiga (${calculations.percentageOfTotal}% del total).`,
+  };
+}
+
+// =============================================
+// ENDPOINTS
+// =============================================
+
+/**
+ * GET /api/zenio/ant-expense-analysis
+ * Analiza los gastos hormiga del usuario
+ */
 export const analyzeAntExpenses = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
-    
+
     if (!userId) {
-      return res.status(401).json({ error: 'Usuario no autenticado' });
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado',
+      });
     }
 
-    const zenioData = await callZenioForAntExpenseAnalysis(userId);
-    
-    // Convertir datos al formato que espera el frontend
-    const result: AntExpenseAnalysis = {
-      totalAntExpenses: zenioData.totalAntExpenses || 0,
-      analysisMessage: zenioData.impactMessage || "Detecté algunos gastos hormiga",
-      topCriminals: (zenioData.topCriminals || []).map((criminal: any) => ({
-        category: criminal.category,
-        amount: criminal.amount,
-        count: criminal.count,
-        averageAmount: criminal.avgAmount || criminal.averageAmount,
-        impact: criminal.impact,
-        suggestions: criminal.recommendations || criminal.suggestions || []
-      })),
-      monthlyTrend: zenioData.monthlyTrend || [],
-      equivalencies: zenioData.equivalencies || [],
-      savingsOpportunity: zenioData.savingsOpportunity || 0,
-      zenioInsights: zenioData.insights || zenioData.motivationalMessage || "Análisis completado"
+    // Obtener configuración de query params
+    const userConfig: Partial<AntExpenseConfig> = {};
+
+    if (req.query.antThreshold) {
+      userConfig.antThreshold = parseInt(req.query.antThreshold as string);
+    }
+    if (req.query.minFrequency) {
+      userConfig.minFrequency = parseInt(req.query.minFrequency as string);
+    }
+    if (req.query.monthsToAnalyze) {
+      userConfig.monthsToAnalyze = parseInt(req.query.monthsToAnalyze as string);
+    }
+
+    console.log(`[AntDetective] Análisis solicitado por usuario ${userId}`);
+    console.log(`[AntDetective] Config recibida: ${JSON.stringify(userConfig)}`);
+
+    // 1. Realizar cálculos
+    const {
+      calculations,
+      warnings,
+      canAnalyze,
+      cannotAnalyzeReason,
+    } = await antExpenseService.calculateAntExpenseStats(userId, userConfig);
+
+    // Si no puede analizar, retornar respuesta informativa
+    if (!canAnalyze || !calculations) {
+      const response: AntExpenseAnalysisResponse = {
+        success: true,
+        canAnalyze: false,
+        cannotAnalyzeReason,
+        calculations: null,
+        insights: null,
+        warnings,
+        recommendedConfig: DEFAULT_ANT_EXPENSE_CONFIG,
+        configOptions: CONFIG_LIMITS,
+      };
+
+      return res.json(response);
+    }
+
+    // 2. Generar insights con Zenio IA (o fallback)
+    let insights: ZenioInsights;
+
+    // Determinar si usar IA o fallback
+    const useAI = req.query.useAI !== 'false'; // Por defecto usa IA
+
+    if (useAI) {
+      insights = await generateZenioInsights(calculations, userId);
+    } else {
+      insights = generateFallbackInsights(calculations);
+    }
+
+    // 3. Construir respuesta completa
+    const response: AntExpenseAnalysisResponse = {
+      success: true,
+      canAnalyze: true,
+      calculations,
+      insights,
+      warnings,
+      recommendedConfig: DEFAULT_ANT_EXPENSE_CONFIG,
+      configOptions: CONFIG_LIMITS,
     };
 
-    return res.json(result);
+    console.log(`[AntDetective] Análisis completado exitosamente`);
 
-  } catch (error) {
-    console.error('Error in ant expense analysis:', error);
-    return res.status(500).json({ 
-      error: 'Error interno del servidor al analizar gastos hormiga' 
+    return res.json(response);
+
+  } catch (error: any) {
+    console.error('[AntDetective] Error en análisis:', error);
+
+    return res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor al analizar gastos hormiga',
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * GET /api/zenio/ant-expense-config
+ * Obtiene la configuración disponible y valores por defecto
+ */
+export const getAntExpenseConfig = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado',
+      });
+    }
+
+    // Obtener info del historial del usuario
+    const userHistory = await antExpenseService.getUserHistoryInfo(userId);
+
+    return res.json({
+      success: true,
+      defaultConfig: DEFAULT_ANT_EXPENSE_CONFIG,
+      configOptions: CONFIG_LIMITS,
+      userHistory: {
+        monthsWithData: userHistory.monthsWithData,
+        hasEnoughData: userHistory.hasEnoughData,
+        totalExpenses: userHistory.totalExpensesInPeriod,
+      },
+      recommendations: {
+        antThreshold: {
+          value: DEFAULT_ANT_EXPENSE_CONFIG.antThreshold,
+          reason: 'Montos hasta RD$500 son típicamente gastos pequeños y frecuentes',
+        },
+        minFrequency: {
+          value: DEFAULT_ANT_EXPENSE_CONFIG.minFrequency,
+          reason: 'Al menos 3 repeticiones indican un patrón de comportamiento',
+        },
+        monthsToAnalyze: {
+          value: Math.min(DEFAULT_ANT_EXPENSE_CONFIG.monthsToAnalyze, userHistory.monthsWithData),
+          reason: '3 meses permiten detectar patrones mensuales consistentes',
+          maxAvailable: userHistory.monthsWithData,
+        },
+      },
+    });
+
+  } catch (error: any) {
+    console.error('[AntDetective] Error obteniendo config:', error);
+
+    return res.status(500).json({
+      success: false,
+      error: 'Error obteniendo configuración',
     });
   }
 };

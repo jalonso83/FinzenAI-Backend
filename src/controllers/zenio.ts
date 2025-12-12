@@ -842,12 +842,6 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
         case 'list_categories':
           result = await executeListCategories(functionArgs, categories);
           break;
-        case 'analyze_ant_expenses':
-          // Usar transacciones cargadas (igual que categorías)
-          const antArgs = transactions ? { ...functionArgs, transactions: transactions } : functionArgs;
-          console.log('🔄 ARGUMENTOS FINALES PARA executeAnalyzeAntExpenses:', JSON.stringify(antArgs, null, 2));
-          result = await executeAnalyzeAntExpenses(antArgs, userId);
-          break;
         default:
           throw new Error(`Función no soportada: ${functionName}`);
       }
@@ -1185,35 +1179,10 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
   };
 }
 
-// Función para ejecutar análisis de gastos hormiga
-export async function executeAnalyzeAntExpenses(args: any, userId: string): Promise<any> {
-  console.log('[Zenio] Ejecutando análisis de gastos hormiga');
-  
-  const { transactions, period_months = 3 } = args;
-  
-  if (!transactions || !Array.isArray(transactions)) {
-    return {
-      error: true,
-      message: 'No se proporcionaron transacciones para analizar'
-    };
-  }
-  
-  console.log(`[Zenio] Recibidas ${transactions.length} transacciones para análisis hormiga`);
-  
-  // Las transacciones ya vienen filtradas como EXPENSE desde el backend
-  // Solo retornar para que Zenio IA las analice completamente
-  const result = {
-    action: 'analyze_ant_expenses',
-    transactions: transactions,
-    period_months: period_months,
-    totalTransactions: transactions.length,
-    message: 'Transacciones enviadas a Zenio IA para análisis de gastos hormiga'
-  };
-  
-  return result;
-}
-
-// FUNCIONES HARDCODEADAS ELIMINADAS - TODO VIENE DE ZENIO IA
+// NOTA: La función executeAnalyzeAntExpenses fue removida.
+// El análisis de gastos hormiga ahora se maneja en:
+// - src/services/antExpenseService.ts (cálculos)
+// - src/controllers/antExpenseDetective.ts (endpoint)
 
 
 
