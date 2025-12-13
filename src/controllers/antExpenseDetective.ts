@@ -34,6 +34,7 @@ async function generateZenioInsights(
     const dataForZenio = antExpenseService.prepareDataForZenio(calculations);
 
     console.log('[AntDetective] Preparando datos para Zenio IA...');
+    console.log('[AntDetective] Datos para Zenio:', JSON.stringify(dataForZenio, null, 2));
 
     // Importar el controlador de Zenio
     const { chatWithZenio } = await import('./zenio');
@@ -67,8 +68,9 @@ Considera:
 - El severityLevel: 1=muy bien, 2=bien, 3=regular, 4=preocupante, 5=crítico
 `;
 
-    // Variable para capturar la respuesta
+    // Variable para capturar la respuesta y el estado
     let zenioResponse: any = null;
+    let responseStatus: number = 200;
 
     // Mock request y response para llamar a chatWithZenio
     const mockReq = {
@@ -84,35 +86,103 @@ Considera:
     } as any;
 
     const mockRes = {
-      status: (code: number) => mockRes,
+      status: (code: number) => {
+        responseStatus = code;
+        return mockRes;
+      },
       json: (data: any) => {
         zenioResponse = data;
         return mockRes;
       },
     } as any;
 
-    // Llamar a Zenio
-    await chatWithZenio(mockReq, mockRes);
+    // Llamar a Zenio con timeout de 30 segundos
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout: Zenio tardó más de 30 segundos')), 30000);
+    });
+
+    try {
+      await Promise.race([
+        chatWithZenio(mockReq, mockRes),
+        timeoutPromise
+      ]);
+    } catch (timeoutError) {
+      console.error('[AntDetective] Timeout o error en llamada a Zenio:', timeoutError);
+      console.log('[AntDetective] Usando fallback por timeout');
+      return generateFallbackInsights(calculations);
+    }
+
+    // Verificar si hubo error en la respuesta
+    if (responseStatus >= 400) {
+      console.error('[AntDetective] Zenio retornó error:', responseStatus, zenioResponse);
+      console.log('[AntDetective] Usando fallback por error de Zenio');
+      return generateFallbackInsights(calculations);
+    }
 
     // Extraer respuesta JSON de Zenio
     if (zenioResponse?.message) {
+      console.log('[AntDetective] Respuesta de Zenio recibida, longitud:', zenioResponse.message.length);
       try {
-        // Intentar extraer JSON de la respuesta
-        const jsonMatch = zenioResponse.message.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          return {
-            impactMessage: parsed.impactMessage || generateFallbackImpactMessage(calculations),
-            equivalencies: parsed.equivalencies || generateFallbackEquivalencies(calculations),
-            categorySuggestions: parsed.categorySuggestions || [],
-            motivationalMessage: parsed.motivationalMessage || '💪 ¡Pequeños cambios hacen grandes diferencias!',
-            severityLevel: parsed.severityLevel || calculateSeverityLevel(calculations),
-            summary: parsed.summary || `Detectamos RD$${calculations.totalAntExpenses.toLocaleString()} en gastos hormiga.`,
-          };
+        // Buscar el JSON que contiene "impactMessage" (el JSON correcto)
+        // Primero intentar encontrar un bloque JSON que empiece con {"impactMessage"
+        let jsonString: string | null = null;
+
+        // Método 1: Buscar JSON que contenga impactMessage
+        const impactMatch = zenioResponse.message.match(/\{[^{}]*"impactMessage"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/s);
+        if (impactMatch) {
+          jsonString = impactMatch[0];
+        }
+
+        // Método 2: Si no funciona, buscar el JSON más grande (probablemente el correcto)
+        if (!jsonString) {
+          const allJsonMatches = zenioResponse.message.match(/\{[^{}]*(?:\[[^\[\]]*\]|"[^"]*"|\{[^{}]*\}|[^{}])*\}/g);
+          if (allJsonMatches && allJsonMatches.length > 0) {
+            // Buscar el que contenga "impactMessage"
+            jsonString = allJsonMatches.find(j => j.includes('impactMessage')) || null;
+
+            // Si no, tomar el más largo
+            if (!jsonString) {
+              jsonString = allJsonMatches.reduce((a, b) => a.length > b.length ? a : b);
+            }
+          }
+        }
+
+        // Método 3: Fallback - regex greedy original
+        if (!jsonString) {
+          const greedyMatch = zenioResponse.message.match(/\{[\s\S]*\}/);
+          if (greedyMatch) {
+            jsonString = greedyMatch[0];
+          }
+        }
+
+        if (jsonString) {
+          console.log('[AntDetective] JSON encontrado, intentando parsear...');
+          const parsed = JSON.parse(jsonString);
+
+          // Verificar que tenga los campos esperados
+          if (parsed.impactMessage || parsed.equivalencies || parsed.summary) {
+            console.log('[AntDetective] JSON parseado exitosamente con campos válidos');
+            return {
+              impactMessage: parsed.impactMessage || generateFallbackImpactMessage(calculations),
+              equivalencies: parsed.equivalencies || generateFallbackEquivalencies(calculations),
+              categorySuggestions: parsed.categorySuggestions || [],
+              motivationalMessage: parsed.motivationalMessage || '💪 ¡Pequeños cambios hacen grandes diferencias!',
+              severityLevel: parsed.severityLevel || calculateSeverityLevel(calculations),
+              summary: parsed.summary || `Detectamos RD$${calculations.totalAntExpenses.toLocaleString()} en gastos hormiga.`,
+            };
+          } else {
+            console.log('[AntDetective] JSON parseado pero no tiene campos esperados:', Object.keys(parsed));
+          }
+        } else {
+          console.log('[AntDetective] No se encontró JSON en la respuesta de Zenio');
         }
       } catch (parseError) {
         console.error('[AntDetective] Error parseando respuesta de Zenio:', parseError);
+        // Log parte de la respuesta para debug
+        console.log('[AntDetective] Primeros 500 chars de respuesta:', zenioResponse.message.substring(0, 500));
       }
+    } else {
+      console.log('[AntDetective] Zenio no retornó mensaje, zenioResponse:', zenioResponse);
     }
 
     // Si falla, usar fallback
