@@ -456,13 +456,23 @@ export class AntExpenseService {
         calculations: null,
         warnings,
         canAnalyze: false,
-        cannotAnalyzeReason: `No tienes transacciones en los últimos ${config.monthsToAnalyze} mes(es).`,
+        cannotAnalyzeReason: `No tienes gastos registrados en los últimos ${config.monthsToAnalyze} mes(es). Tus transacciones pueden ser más antiguas o solo tienes ingresos registrados.`,
       };
     }
 
     // 6. Filtrar gastos hormiga
     const antExpenses = this.filterAntExpenses(allExpenses, config.antThreshold);
-    console.log(`[AntExpenseService] Gastos hormiga encontrados: ${antExpenses.length}`);
+    console.log(`[AntExpenseService] Gastos hormiga encontrados: ${antExpenses.length} de ${allExpenses.length} gastos totales`);
+
+    // Si no hay gastos que califiquen como "hormiga"
+    if (antExpenses.length === 0) {
+      return {
+        calculations: null,
+        warnings,
+        canAnalyze: false,
+        cannotAnalyzeReason: `Tienes ${allExpenses.length} gastos registrados, pero ninguno es menor o igual a RD$${config.antThreshold.toLocaleString()}. Ajusta el umbral de monto máximo o registra gastos más pequeños.`,
+      };
+    }
 
     // Calcular totales
     const totalAllExpenses = allExpenses.reduce((sum, t) => sum + t.amount, 0);
