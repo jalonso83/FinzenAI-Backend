@@ -1,8 +1,0 @@
-# Nixpacks configuration for Railway
-# Forces clean install without cache
-
-[phases.install]
-cmds = ["pnpm install --force"]
-
-[phases.build]
-cmds = ["pnpm run build"]

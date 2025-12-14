@@ -1,6 +1,6 @@
 {
   "name": "finzen-ai-backend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Backend para FinZen AI - Aplicación de finanzas personales con IA - Updated for Railway deployment",
   "main": "dist/app.js",
   "scripts": {

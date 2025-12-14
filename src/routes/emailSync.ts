@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authMiddleware } from '../middlewares/auth';
+import { authenticateToken } from '../middlewares/auth';
 import {
   getGmailAuthUrl,
   handleGmailCallback,
@@ -13,7 +13,7 @@ import {
   getSupportedBanks
 } from '../controllers/emailSync';
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 // =============================================
 // RUTAS PUBLICAS (Sin autenticacion)
@@ -30,27 +30,27 @@ router.get('/supported-banks', getSupportedBanks);
 // =============================================
 
 // Obtener URL de autorizacion de Gmail
-router.get('/gmail/auth-url', authMiddleware, getGmailAuthUrl);
+router.get('/gmail/auth-url', authenticateToken, getGmailAuthUrl);
 
 // Obtener estado de conexion
-router.get('/status', authMiddleware, getConnectionStatus);
+router.get('/status', authenticateToken, getConnectionStatus);
 
 // Iniciar sincronizacion manual
-router.post('/sync', authMiddleware, triggerSync);
+router.post('/sync', authenticateToken, triggerSync);
 
 // Desconectar email
-router.delete('/disconnect', authMiddleware, disconnectEmail);
+router.delete('/disconnect', authenticateToken, disconnectEmail);
 
 // Historial de emails importados
-router.get('/history', authMiddleware, getImportHistory);
+router.get('/history', authenticateToken, getImportHistory);
 
 // Logs de sincronizacion
-router.get('/logs', authMiddleware, getSyncLogs);
+router.get('/logs', authenticateToken, getSyncLogs);
 
 // Bancos configurados del usuario
-router.get('/banks', authMiddleware, getConfiguredBanks);
+router.get('/banks', authenticateToken, getConfiguredBanks);
 
 // Activar/desactivar filtro de banco
-router.patch('/banks/:bankId/toggle', authMiddleware, toggleBankFilter);
+router.patch('/banks/:bankId/toggle', authenticateToken, toggleBankFilter);
 
 export default router;
