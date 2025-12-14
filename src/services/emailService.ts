@@ -1,8 +1,7 @@
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const sgMail = require('@sendgrid/mail');
+import { Resend } from 'resend';
 
-// Configurar SendGrid
-sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
+// Configurar Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Template HTML personalizado de FinZen AI
 const getEmailTemplate = (name: string, token: string, email: string) => {
@@ -173,7 +172,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
     <div class="email-container">
         <!-- Header -->
         <div class="header">
-            <img src="http://cdn.mcauto-images-production.sendgrid.net/a3cd1c1f26183c37/7c61e557-f2f9-4865-9687-7c5b75cfeee2/3592x996.png" width="150"
+            <img src="https://i.imgur.com/N1mxVXn.png" width="150"
     style="display: block; margin: 0 auto 20px; border: none; outline: none; text-decoration: none;"
   />
             <p>Tu copiloto financiero</p>
@@ -261,50 +260,37 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
 
 export const sendVerificationEmail = async (email: string, userId: string, name: string) => {
   try {
-    console.log('🔍 Verificando configuración de SendGrid...');
-    console.log('SENDGRID_API_KEY existe:', !!process.env.SENDGRID_API_KEY);
-    console.log('SENDGRID_API_KEY longitud:', process.env.SENDGRID_API_KEY?.length || 0);
-    console.log('SENDGRID_API_KEY empieza con SG:', process.env.SENDGRID_API_KEY?.startsWith('SG.') || false);
-    console.log('SENDGRID_API_KEY es placeholder:', process.env.SENDGRID_API_KEY === 'SG.placeholder_key_for_development');
-    console.log('FROM_EMAIL existe:', !!process.env.FROM_EMAIL);
-    console.log('FROM_EMAIL valor:', process.env.FROM_EMAIL);
-    
-    // Verificar si SendGrid está configurado
-    if (!process.env.SENDGRID_API_KEY || process.env.SENDGRID_API_KEY === 'SG.placeholder_key_for_development') {
-      // Modo simulación para desarrollo y producción sin SendGrid
+    console.log('🔍 Verificando configuración de Resend...');
+    console.log('RESEND_API_KEY existe:', !!process.env.RESEND_API_KEY);
+
+    // Verificar si Resend está configurado
+    if (!process.env.RESEND_API_KEY) {
+      // Modo simulación para desarrollo
       console.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
       console.log(`[SIMULACIÓN] Enlace: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${userId}&email=${email}`);
       return;
     }
 
-    // Envío real con SendGrid
-    console.log('📧 Intentando enviar email real con SendGrid...');
+    // Envío real con Resend
+    console.log('📧 Intentando enviar email real con Resend...');
     const htmlContent = getEmailTemplate(name, userId, email);
-    const msg = {
-      to: email,
-      from: process.env.FROM_EMAIL!,
-      subject: '¡Bienvenido a FinZen AI! - Confirma tu cuenta',
-      html: htmlContent
-    };
 
     console.log('📤 Enviando email a:', email);
-    console.log('📤 Desde:', process.env.FROM_EMAIL);
-    console.log('📤 Asunto:', msg.subject);
-    console.log('📤 HTML length:', htmlContent.length);
-    
-    try {
-      await sgMail.send(msg);
-      console.log(`✅ Verification email sent to ${email}`);
-    } catch (sendError: any) {
-      console.error('❌ Error detallado de SendGrid:');
-      console.error('Código:', sendError.code);
-      console.error('Mensaje:', sendError.message);
-      if (sendError.response) {
-        console.error('Response body:', sendError.response.body);
-        console.error('Response headers:', sendError.response.headers);
-      }
-      throw sendError;
+    console.log('📤 Desde: noreply@finzenai.com');
+
+    const { data, error } = await resend.emails.send({
+      from: 'FinZen AI <noreply@finzenai.com>',
+      to: email,
+      subject: '¡Bienvenido a FinZen AI! - Confirma tu cuenta',
+      html: htmlContent
+    });
+
+    if (error) {
+      console.error('❌ Error de Resend:', error);
+      throw error;
     }
+
+    console.log(`✅ Verification email sent to ${email}`, data);
   } catch (error) {
     console.error('❌ Error sending verification email:', error);
     // No fallar en ningún entorno, solo simular
@@ -485,42 +471,37 @@ const getPasswordResetTemplate = (name: string, resetCode: string) => {
 
 export const sendPasswordResetEmail = async (email: string, resetCode: string, name?: string) => {
   try {
-    console.log('🔍 Verificando configuración de SendGrid para reset...');
+    console.log('🔍 Verificando configuración de Resend para reset...');
 
-    // Verificar si SendGrid está configurado
-    if (!process.env.SENDGRID_API_KEY || process.env.SENDGRID_API_KEY === 'SG.placeholder_key_for_development') {
-      // Modo simulación para desarrollo y producción sin SendGrid
+    // Verificar si Resend está configurado
+    if (!process.env.RESEND_API_KEY) {
+      // Modo simulación para desarrollo
       console.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
       console.log(`[SIMULACIÓN] Código de 6 dígitos: ${resetCode}`);
       console.log(`[SIMULACIÓN] El código expirará en 15 minutos`);
       return;
     }
 
-    // Envío real con SendGrid
-    console.log('📧 Intentando enviar email de reset con SendGrid...');
+    // Envío real con Resend
+    console.log('📧 Intentando enviar email de reset con Resend...');
     const htmlContent = getPasswordResetTemplate(name || 'Usuario', resetCode);
-    const msg = {
-      to: email,
-      from: process.env.FROM_EMAIL!,
-      subject: '🔐 Código de recuperación - FinZen AI',
-      html: htmlContent
-    };
 
     console.log('📤 Enviando email de reset a:', email);
     console.log('📤 Código:', resetCode);
 
-    try {
-      await sgMail.send(msg);
-      console.log(`✅ Password reset email sent to ${email}`);
-    } catch (sendError: any) {
-      console.error('❌ Error detallado de SendGrid en reset:');
-      console.error('Código:', sendError.code);
-      console.error('Mensaje:', sendError.message);
-      if (sendError.response) {
-        console.error('Response body:', sendError.response.body);
-      }
-      throw sendError;
+    const { data, error } = await resend.emails.send({
+      from: 'FinZen AI <noreply@finzenai.com>',
+      to: email,
+      subject: '🔐 Código de recuperación - FinZen AI',
+      html: htmlContent
+    });
+
+    if (error) {
+      console.error('❌ Error de Resend en reset:', error);
+      throw error;
     }
+
+    console.log(`✅ Password reset email sent to ${email}`, data);
   } catch (error) {
     console.error('❌ Error sending password reset email:', error);
     // No fallar en ningún entorno, solo simular

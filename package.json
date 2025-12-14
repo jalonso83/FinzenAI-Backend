@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "tsx src/seed/categories.ts",
+    "db:seed:banks": "tsx src/seed/supportedBanks.ts",
     "migrate:budgets": "tsx src/scripts/migrateBudgets.ts"
   },
   "keywords": [
@@ -25,7 +26,7 @@
   "license": "MIT",
   "dependencies": {
     "@prisma/client": "^5.7.1",
-    "@sendgrid/mail": "^8.1.5",
+    "resend": "^4.0.0",
     "@types/multer": "^2.0.0",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",

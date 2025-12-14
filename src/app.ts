@@ -3,8 +3,9 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { BudgetScheduler } from './services/budgetScheduler';
+import { EmailSyncScheduler } from './services/emailSyncScheduler';
 
-// Force deployment trigger - TypeScript fixes applied
+// Force deployment trigger - Email Sync Integration
 
 // Importar rutas
 import authRoutes from './routes/auth';
@@ -18,6 +19,7 @@ import gamificationRoutes from './routes/gamification';
 import investmentRoutes from './routes/investment';
 import budgetSchedulerRoutes from './routes/budgetScheduler';
 import subscriptionRoutes from './routes/subscriptions';
+import emailSyncRoutes from './routes/emailSync';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
@@ -62,12 +64,13 @@ app.use('/api/gamification', gamificationRoutes);
 app.use('/api/investment', investmentRoutes);
 app.use('/api/scheduler', budgetSchedulerRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/email-sync', emailSyncRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
   return res.json({
     status: 'OK',
-    message: 'FinZen AI Backend is running - Budget Reports & Investment Simulator Ready',
+    message: 'FinZen AI Backend is running - Email Sync & AI Parser Ready',
     timestamp: new Date().toISOString(),
     version: process.env.APP_VERSION || '1.0.0'
   });
@@ -105,6 +108,9 @@ async function startServer() {
     // Iniciar scheduler de renovación de presupuestos
     BudgetScheduler.startScheduler();
 
+    // Iniciar scheduler de sincronizacion de emails
+    EmailSyncScheduler.startScheduler();
+
     // Iniciar servidor
     app.listen(PORT, () => {
       console.log(`🚀 FinZen AI Backend running on port ${PORT}`);
@@ -121,6 +127,7 @@ async function startServer() {
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down server...');
   BudgetScheduler.stopScheduler();
+  EmailSyncScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
@@ -128,6 +135,7 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   console.log('\n🛑 Shutting down server...');
   BudgetScheduler.stopScheduler();
+  EmailSyncScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });

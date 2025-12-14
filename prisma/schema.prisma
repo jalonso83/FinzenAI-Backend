@@ -48,6 +48,9 @@ model User {
   payments            Payment[]
   stripeCustomerId    String?       @unique
 
+  // Email Sync
+  emailConnections    EmailConnection[]
+
   @@map("users")
 }
 
@@ -350,4 +353,136 @@ enum PaymentStatus {
   PENDING
   REFUNDED
   CANCELED
+}
+
+// =============================================
+// MODELOS DE EMAIL SYNC (Importacion de Gastos)
+// =============================================
+
+// Conexion de email del usuario
+model EmailConnection {
+  id                  String              @id @default(cuid())
+  userId              String
+  provider            EmailProvider       @default(GMAIL)
+  email               String
+  accessToken         String
+  refreshToken        String?
+  tokenExpiresAt      DateTime?
+  isActive            Boolean             @default(true)
+  lastSyncAt          DateTime?
+  lastSyncStatus      EmailSyncStatus     @default(PENDING)
+  lastSyncError       String?
+  syncFrequencyHours  Int                 @default(1)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bankFilters         BankEmailFilter[]
+  importedEmails      ImportedBankEmail[]
+  syncLogs            EmailSyncLog[]
+
+  @@unique([userId, provider])
+  @@map("email_connections")
+  @@index([userId])
+  @@index([isActive, lastSyncAt])
+}
+
+// Filtros de bancos configurados
+model BankEmailFilter {
+  id                String          @id @default(cuid())
+  emailConnectionId String
+  bankName          String
+  senderEmails      String[]
+  subjectKeywords   String[]
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  emailConnection   EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
+
+  @@map("bank_email_filters")
+  @@index([emailConnectionId])
+}
+
+// Emails bancarios importados
+model ImportedBankEmail {
+  id                String                @id @default(cuid())
+  emailConnectionId String
+  gmailMessageId    String
+  subject           String
+  senderEmail       String
+  receivedAt        DateTime
+  rawContent        String?
+  parsedData        Json?
+  status            ImportedEmailStatus   @default(PENDING)
+  errorMessage      String?
+  transactionId     String?
+  createdAt         DateTime              @default(now())
+  processedAt       DateTime?
+
+  emailConnection   EmailConnection       @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([emailConnectionId, gmailMessageId])
+  @@map("imported_bank_emails")
+  @@index([emailConnectionId, status])
+  @@index([gmailMessageId])
+}
+
+// Log de sincronizaciones
+model EmailSyncLog {
+  id                  String          @id @default(cuid())
+  emailConnectionId   String
+  startedAt           DateTime        @default(now())
+  completedAt         DateTime?
+  status              EmailSyncStatus
+  emailsFound         Int             @default(0)
+  emailsProcessed     Int             @default(0)
+  emailsSkipped       Int             @default(0)
+  transactionsCreated Int             @default(0)
+  errorMessage        String?
+
+  emailConnection     EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
+
+  @@map("email_sync_logs")
+  @@index([emailConnectionId, startedAt])
+}
+
+// Bancos soportados
+model SupportedBank {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  country         String    @default("DO")
+  senderEmails    String[]
+  subjectPatterns String[]
+  parserTemplate  String?
+  isActive        Boolean   @default(true)
+  logoUrl         String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("supported_banks")
+  @@index([country, isActive])
+}
+
+enum EmailProvider {
+  GMAIL
+  OUTLOOK
+  IMAP
+}
+
+enum EmailSyncStatus {
+  PENDING
+  IN_PROGRESS
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+enum ImportedEmailStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  SKIPPED
+  DUPLICATE
 }
