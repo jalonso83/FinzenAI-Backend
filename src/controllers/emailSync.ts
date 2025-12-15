@@ -11,7 +11,7 @@ const prisma = new PrismaClient();
  */
 export const getGmailAuthUrl = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
     const { mobileRedirectUrl } = req.query;
 
     if (!userId) {
@@ -93,7 +93,7 @@ export const handleGmailCallback = async (req: Request, res: Response) => {
  */
 export const getConnectionStatus = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
@@ -121,7 +121,7 @@ export const getConnectionStatus = async (req: Request, res: Response) => {
  */
 export const triggerSync = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
@@ -171,7 +171,7 @@ export const triggerSync = async (req: Request, res: Response) => {
  */
 export const disconnectEmail = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
@@ -199,7 +199,7 @@ export const disconnectEmail = async (req: Request, res: Response) => {
  */
 export const getImportHistory = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
     const { page = 1, limit = 20, status } = req.query;
 
     if (!userId) {
@@ -267,7 +267,7 @@ export const getImportHistory = async (req: Request, res: Response) => {
  */
 export const getSyncLogs = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
     const { limit = 10 } = req.query;
 
     if (!userId) {
@@ -311,7 +311,7 @@ export const getSyncLogs = async (req: Request, res: Response) => {
  */
 export const getConfiguredBanks = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
@@ -357,7 +357,7 @@ export const getConfiguredBanks = async (req: Request, res: Response) => {
  */
 export const toggleBankFilter = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
     const { bankId } = req.params;
     const { isActive } = req.body;
 
