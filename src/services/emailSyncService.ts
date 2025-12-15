@@ -4,37 +4,37 @@ import { EmailParserService, ParsedTransaction } from './emailParserService';
 
 const prisma = new PrismaClient();
 
-// Bancos de RD por defecto
+// Bancos de RD por defecto - Emails verificados
 const DEFAULT_BANK_FILTERS = [
   {
     bankName: 'Banco Popular',
-    senderEmails: ['alertas@bpd.com.do', 'notificaciones@bpd.com.do', 'noreply@bpd.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro']
+    senderEmails: ['notificaciones@popularenlinea.com', 'alertas@bpd.com.do', 'notificaciones@bpd.com.do'],
+    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro', 'notificacion']
   },
   {
     bankName: 'Banreservas',
-    senderEmails: ['alertas@banreservas.com', 'notificaciones@banreservas.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo']
+    senderEmails: ['notificaciones@banreservas.com', 'alertas@banreservas.com', 'notificaciones@banreservas.com.do'],
+    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
+  },
+  {
+    bankName: 'Banco Caribe',
+    senderEmails: ['notificaciones@bancocaribe.com.do', 'alertas@bancocaribe.com.do'],
+    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
+  },
+  {
+    bankName: 'APAP',
+    senderEmails: ['no-reply@apap.com.do', 'alertas@apap.com.do', 'notificaciones@apap.com.do'],
+    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
   },
   {
     bankName: 'BHD Leon',
     senderEmails: ['alertas@bhdleon.com.do', 'notificaciones@bhdleon.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo']
+    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
   },
   {
     bankName: 'Scotiabank',
     senderEmails: ['alertas@scotiabank.com', 'notificaciones.do@scotiabank.com'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo']
-  },
-  {
-    bankName: 'Asociacion Popular',
-    senderEmails: ['alertas@apap.com.do', 'notificaciones@apap.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo']
-  },
-  {
-    bankName: 'Banco Santa Cruz',
-    senderEmails: ['alertas@bsc.com.do', 'notificaciones@bsc.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo']
+    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
   }
 ];
 
