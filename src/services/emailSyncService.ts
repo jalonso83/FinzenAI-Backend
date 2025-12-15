@@ -176,8 +176,18 @@ export class EmailSyncService {
       console.log(`[EmailSync] Sender emails: ${[...new Set(allSenderEmails)].join(', ')}`);
       console.log(`[EmailSync] Subject keywords: ${[...new Set(allSubjectKeywords)].join(', ')}`);
 
-      // Buscar desde la ultima sincronizacion o ultimos 30 dias
-      const afterDate = connection.lastSyncAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      // Verificar si hay emails importados previos
+      const importedCount = await prisma.importedBankEmail.count({
+        where: { emailConnectionId: connectionId }
+      });
+
+      // Si no hay emails importados, buscar ultimos 30 dias (primera sync real)
+      // Si ya hay emails, buscar desde la ultima sincronizacion
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const afterDate = importedCount === 0 ? thirtyDaysAgo : (connection.lastSyncAt || thirtyDaysAgo);
+
+      console.log(`[EmailSync] Imported emails count: ${importedCount}`);
+      console.log(`[EmailSync] Searching emails after: ${afterDate.toISOString()}`);
 
       // Buscar emails
       const searchResult = await GmailService.searchBankEmails(
