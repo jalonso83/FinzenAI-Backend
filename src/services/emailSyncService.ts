@@ -164,10 +164,17 @@ export class EmailSyncService {
       const allSenderEmails: string[] = [];
       const allSubjectKeywords: string[] = [];
 
+      console.log(`[EmailSync] Bank filters count: ${connection.bankFilters.length}`);
+
       for (const filter of connection.bankFilters) {
+        console.log(`[EmailSync] Filter: ${filter.bankName} - Emails: ${filter.senderEmails.join(', ')}`);
         allSenderEmails.push(...filter.senderEmails);
         allSubjectKeywords.push(...filter.subjectKeywords);
       }
+
+      console.log(`[EmailSync] Total sender emails: ${allSenderEmails.length}`);
+      console.log(`[EmailSync] Sender emails: ${[...new Set(allSenderEmails)].join(', ')}`);
+      console.log(`[EmailSync] Subject keywords: ${[...new Set(allSubjectKeywords)].join(', ')}`);
 
       // Buscar desde la ultima sincronizacion o ultimos 30 dias
       const afterDate = connection.lastSyncAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);

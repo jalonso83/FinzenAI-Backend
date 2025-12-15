@@ -152,14 +152,11 @@ export class GmailService {
     afterDate?: Date,
     maxResults: number = 100
   ): Promise<GmailListResponse> {
-    // Construir query de busqueda
+    // Construir query de busqueda - SOLO por sender, sin requerir keywords
+    // Los keywords se usaban para filtrar pero hacian la busqueda muy restrictiva
     const senderQuery = senderEmails.map(e => `from:${e}`).join(' OR ');
-    const subjectQuery = subjectKeywords.map(k => `subject:${k}`).join(' OR ');
 
     let query = `(${senderQuery})`;
-    if (subjectKeywords.length > 0) {
-      query += ` (${subjectQuery})`;
-    }
 
     if (afterDate) {
       const dateStr = afterDate.toISOString().split('T')[0].replace(/-/g, '/');
@@ -167,6 +164,7 @@ export class GmailService {
     }
 
     console.log(`[GmailService] Search query: ${query}`);
+    console.log(`[GmailService] Looking for emails from: ${senderEmails.join(', ')}`);
 
     const response = await axios.get('https://gmail.googleapis.com/gmail/v1/users/me/messages', {
       headers: { Authorization: `Bearer ${accessToken}` },
