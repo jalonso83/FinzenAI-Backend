@@ -12,12 +12,16 @@ const prisma = new PrismaClient();
 export const getGmailAuthUrl = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const { mobileRedirectUrl } = req.query;
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
     }
 
-    const authUrl = GmailService.getAuthorizationUrl(userId);
+    const authUrl = GmailService.getAuthorizationUrl(
+      userId,
+      mobileRedirectUrl as string | undefined
+    );
 
     return res.json({
       success: true,
@@ -38,33 +42,48 @@ export const getGmailAuthUrl = async (req: Request, res: Response) => {
  * GET /api/email-sync/gmail/callback
  */
 export const handleGmailCallback = async (req: Request, res: Response) => {
+  // Decodificar el state para obtener userId y mobileRedirectUrl
+  let userId: string | undefined;
+  let mobileRedirectUrl = 'finzenai://email-sync/callback';
+
   try {
-    const { code, state: userId, error } = req.query;
+    const { code, state, error } = req.query;
+
+    // Intentar decodificar el state
+    if (state) {
+      try {
+        const stateData = JSON.parse(Buffer.from(state as string, 'base64').toString('utf-8'));
+        userId = stateData.userId;
+        mobileRedirectUrl = stateData.mobileRedirectUrl || mobileRedirectUrl;
+      } catch (e) {
+        // Si falla el decode, asumir que state es el userId (compatibilidad)
+        userId = state as string;
+      }
+    }
 
     if (error) {
       console.error('[EmailSync] OAuth error:', error);
-      // Redirigir a la app con error
-      return res.redirect(`finzenai://email-sync?error=${error}`);
+      return res.redirect(`${mobileRedirectUrl}?error=${error}`);
     }
 
     if (!code || !userId) {
-      return res.redirect('finzenai://email-sync?error=missing_params');
+      return res.redirect(`${mobileRedirectUrl}?error=missing_params`);
     }
 
     // Conectar Gmail
     const connection = await EmailSyncService.connectGmail(
-      userId as string,
+      userId,
       code as string
     );
 
     console.log(`[EmailSync] Gmail connected for user ${userId}: ${connection.email}`);
 
     // Redirigir a la app con exito
-    return res.redirect(`finzenai://email-sync?success=true&email=${encodeURIComponent(connection.email)}`);
+    return res.redirect(`${mobileRedirectUrl}?success=true&email=${encodeURIComponent(connection.email)}`);
 
   } catch (error: any) {
     console.error('[EmailSync] Callback error:', error);
-    return res.redirect(`finzenai://email-sync?error=${encodeURIComponent(error.message)}`);
+    return res.redirect(`${mobileRedirectUrl}?error=${encodeURIComponent(error.message)}`);
   }
 };
 

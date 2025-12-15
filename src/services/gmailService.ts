@@ -49,7 +49,14 @@ export class GmailService {
   /**
    * Genera la URL de autorizacion OAuth para Gmail
    */
-  static getAuthorizationUrl(userId: string): string {
+  static getAuthorizationUrl(userId: string, mobileRedirectUrl?: string): string {
+    // Codificamos userId y mobileRedirectUrl en el state
+    const stateData = {
+      userId,
+      mobileRedirectUrl: mobileRedirectUrl || 'finzenai://email-sync/callback'
+    };
+    const state = Buffer.from(JSON.stringify(stateData)).toString('base64');
+
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID || '',
       redirect_uri: GOOGLE_REDIRECT_URI,
@@ -57,7 +64,7 @@ export class GmailService {
       scope: GMAIL_SCOPES.join(' '),
       access_type: 'offline',
       prompt: 'consent',
-      state: userId // Pasamos el userId para identificar al usuario en el callback
+      state
     });
 
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
