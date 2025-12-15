@@ -7,14 +7,14 @@ const SUPPORTED_BANKS_DO = [
   {
     name: 'Banco Popular Dominicano',
     country: 'DO',
-    senderEmails: ['alertas@bpd.com.do', 'notificaciones@bpd.com.do', 'noreply@bpd.com.do'],
+    senderEmails: ['notificaciones@popularenlinea.com', 'alertas@bpd.com.do', 'notificaciones@bpd.com.do'],
     subjectPatterns: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro', 'pago'],
     logoUrl: 'https://www.popularenlinea.com/Images/logo.png'
   },
   {
     name: 'Banreservas',
     country: 'DO',
-    senderEmails: ['alertas@banreservas.com', 'notificaciones@banreservas.com.do', 'noreply@banreservas.com.do'],
+    senderEmails: ['notificaciones@banreservas.com', 'alertas@banreservas.com', 'notificaciones@banreservas.com.do'],
     subjectPatterns: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro'],
     logoUrl: 'https://www.banreservas.com/images/logo.png'
   },
@@ -33,9 +33,9 @@ const SUPPORTED_BANKS_DO = [
     logoUrl: 'https://www.scotiabank.com/do/images/logo.png'
   },
   {
-    name: 'Asociacion Popular de Ahorros y Prestamos',
+    name: 'Asociacion Popular de Ahorros y Prestamos (APAP)',
     country: 'DO',
-    senderEmails: ['alertas@apap.com.do', 'notificaciones@apap.com.do', 'noreply@apap.com.do'],
+    senderEmails: ['no-reply@apap.com.do', 'alertas@apap.com.do', 'notificaciones@apap.com.do'],
     subjectPatterns: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro'],
     logoUrl: 'https://www.apap.com.do/images/logo.png'
   },
