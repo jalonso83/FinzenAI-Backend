@@ -258,15 +258,24 @@ export class EmailSyncService {
           );
 
           if (!parseResult.success || !parseResult.transaction) {
+            // Verificar si es un email de pago de tarjeta (saltado intencionalmente)
+            const isPaymentSkipped = parseResult.error?.includes('PAYMENT_EMAIL_SKIPPED');
+
             await prisma.importedBankEmail.update({
               where: { id: importedEmail.id },
               data: {
-                status: 'FAILED',
+                status: isPaymentSkipped ? 'SKIPPED' : 'FAILED',
                 errorMessage: parseResult.error || 'Could not parse email',
                 processedAt: new Date()
               }
             });
-            result.errors.push(`Failed to parse email ${message.id}: ${parseResult.error}`);
+
+            if (isPaymentSkipped) {
+              console.log(`[EmailSync] Skipped payment email: ${subject}`);
+              result.emailsSkipped++;
+            } else {
+              result.errors.push(`Failed to parse email ${message.id}: ${parseResult.error}`);
+            }
             continue;
           }
 
@@ -354,19 +363,32 @@ export class EmailSyncService {
         return null;
       }
 
+      // Convertir USD a RD$ si es necesario
+      let finalAmount = parsed.amount;
+      let conversionInfo = '';
+
+      if (parsed.currency === 'USD' || parsed.currency === 'US$') {
+        const { ExchangeRateService } = await import('./exchangeRateService');
+        const conversion = await ExchangeRateService.convertUsdToDop(parsed.amount);
+        finalAmount = conversion.amountDop;
+        conversionInfo = ` [USD ${parsed.amount} → RD$ ${finalAmount} @${conversion.rate}]`;
+        console.log(`[EmailSync] Converted USD ${parsed.amount} to RD$ ${finalAmount} (rate: ${conversion.rate})`);
+      }
+
       // Crear descripcion
       const description = [
         parsed.merchant,
         parsed.cardLast4 ? `(****${parsed.cardLast4})` : null,
         parsed.authorizationCode ? `Auth: ${parsed.authorizationCode}` : null,
-        '[Importado de Email]'
+        '[Importado de Email]',
+        conversionInfo || null
       ].filter(Boolean).join(' - ');
 
-      // Crear transaccion
+      // Crear transaccion (siempre en RD$)
       const transaction = await prisma.transaction.create({
         data: {
           userId,
-          amount: parsed.amount,
+          amount: finalAmount,
           type: 'EXPENSE',
           description,
           date: new Date(parsed.date),
@@ -374,7 +396,7 @@ export class EmailSyncService {
         }
       });
 
-      console.log(`[EmailSync] Created transaction ${transaction.id} for ${parsed.amount} ${parsed.currency}`);
+      console.log(`[EmailSync] Created transaction ${transaction.id} for ${finalAmount} RD$${parsed.currency === 'USD' ? ` (original: ${parsed.amount} USD)` : ''}`);
 
       return transaction;
 

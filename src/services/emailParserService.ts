@@ -39,7 +39,37 @@ export interface ParserResult {
   rawResponse?: string;
 }
 
+// Keywords que indican pago de tarjeta (NO son consumos)
+const PAYMENT_KEYWORDS = [
+  'pago recibido',
+  'pago exitoso',
+  'pago aplicado',
+  'abono recibido',
+  'abono aplicado',
+  'pago de tarjeta',
+  'pago a tarjeta',
+  'pago minimo',
+  'pago mínimo',
+  'gracias por tu pago',
+  'hemos recibido tu pago',
+  'tu pago fue procesado',
+  'confirmacion de pago',
+  'confirmación de pago',
+  'payment received',
+  'payment applied'
+];
+
 export class EmailParserService {
+
+  /**
+   * Verifica si el email es un pago de tarjeta (no un consumo)
+   * Estos deben ser ignorados para evitar contar doble
+   */
+  static isPaymentEmail(subject: string, emailContent: string): boolean {
+    const textToCheck = `${subject} ${emailContent}`.toLowerCase();
+
+    return PAYMENT_KEYWORDS.some(keyword => textToCheck.includes(keyword.toLowerCase()));
+  }
 
   /**
    * Parsea el contenido de un email bancario usando AI
@@ -50,6 +80,14 @@ export class EmailParserService {
     bankName?: string
   ): Promise<ParserResult> {
     try {
+      // Verificar si es un pago de tarjeta (no un consumo)
+      if (this.isPaymentEmail(subject, emailContent)) {
+        return {
+          success: false,
+          error: 'PAYMENT_EMAIL_SKIPPED: Este email es un pago de tarjeta, no un consumo'
+        };
+      }
+
       const prompt = this.buildParserPrompt(emailContent, subject, bankName);
 
       const response = await openai.chat.completions.create({
