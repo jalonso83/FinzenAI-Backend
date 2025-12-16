@@ -88,7 +88,22 @@ export class EmailParserService {
         };
       }
 
-      const prompt = this.buildParserPrompt(emailContent, subject, bankName);
+      // Obtener categorías de GASTOS de la base de datos
+      const expenseCategories = await prisma.category.findMany({
+        where: { type: 'EXPENSE' },
+        select: { name: true }
+      });
+      const categoryNames = expenseCategories.map(c => c.name);
+      const categoryList = categoryNames.join(', ');
+
+      console.log(`[EmailParser] Using ${categoryNames.length} categories from DB: ${categoryList}`);
+
+      const prompt = this.buildParserPrompt(emailContent, subject, bankName, categoryList);
+
+      // Detectar categoría de fallback (Otros, Otros Gastos, etc.)
+      const fallbackCategory = categoryNames.find(c =>
+        c.toLowerCase().includes('otro')
+      ) || categoryNames[0];
 
       const response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
@@ -102,7 +117,9 @@ Si no puedes extraer algun dato, usa null.
 El monto siempre debe ser un numero positivo.
 La fecha debe estar en formato ISO 8601.
 La moneda debe ser el codigo (RD$, USD, EUR, DOP).
-La categoria debe ser una de: Alimentacion, Transporte, Entretenimiento, Compras, Salud, Servicios, Educacion, Viajes, Hogar, Otros.`
+IMPORTANTE: La categoria DEBE ser exactamente una de estas opciones: ${categoryList}.
+Elige la que mejor corresponda al tipo de gasto segun el comercio.
+Si no puedes determinar la categoria con certeza, usa "${fallbackCategory}".`
           },
           {
             role: 'user',
@@ -159,8 +176,11 @@ La categoria debe ser una de: Alimentacion, Transporte, Entretenimiento, Compras
   private static buildParserPrompt(
     emailContent: string,
     subject: string,
-    bankName?: string
+    bankName?: string,
+    categoryList?: string
   ): string {
+    const categories = categoryList || 'Otros';
+
     return `Extrae la informacion de esta notificacion bancaria${bankName ? ` de ${bankName}` : ''}:
 
 ASUNTO: ${subject}
@@ -173,7 +193,7 @@ Responde SOLO con este JSON:
   "amount": <numero positivo>,
   "currency": "<RD$|USD|EUR|DOP>",
   "merchant": "<nombre del comercio/establecimiento>",
-  "category": "<Alimentacion|Transporte|Entretenimiento|Compras|Salud|Servicios|Educacion|Viajes|Hogar|Otros>",
+  "category": "<DEBE ser exactamente una de: ${categories}>",
   "date": "<fecha ISO 8601>",
   "cardLast4": "<ultimos 4 digitos de tarjeta o null>",
   "authorizationCode": "<codigo de autorizacion o null>",
