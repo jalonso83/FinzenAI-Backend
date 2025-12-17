@@ -35,6 +35,11 @@ const DEFAULT_BANK_FILTERS = [
     bankName: 'Scotiabank',
     senderEmails: ['alertas@scotiabank.com', 'notificaciones.do@scotiabank.com'],
     subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
+  },
+  {
+    bankName: 'Banco Vimenca',
+    senderEmails: ['internetbanking@vimenca.com', 'notificaciones@vimenca.com', 'alertas@vimenca.com'],
+    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
   }
 ];
 
@@ -498,6 +503,15 @@ export class EmailSyncService {
       _count: true
     });
 
+    // Contar transacciones REALES creadas desde emails (status SUCCESS con transactionId)
+    const transactionsCreated = await prisma.importedBankEmail.count({
+      where: {
+        emailConnectionId: connection.id,
+        status: 'SUCCESS',
+        transactionId: { not: null }
+      }
+    });
+
     return {
       connected: true,
       provider: connection.provider,
@@ -506,6 +520,7 @@ export class EmailSyncService {
       lastSyncStatus: connection.lastSyncStatus,
       banksConfigured: connection.bankFilters.length,
       emailsImported: connection._count.importedEmails,
+      importedCount: transactionsCreated, // Transacciones reales creadas
       stats: stats.reduce((acc, s) => ({ ...acc, [s.status]: s._count }), {})
     };
   }

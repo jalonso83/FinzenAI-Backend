@@ -26,23 +26,70 @@ export interface ParserResult {
 }
 
 // Keywords que indican pago de tarjeta (NO son consumos)
+// Estos emails son cuando el usuario PAGA su tarjeta, no cuando hace un consumo
 const PAYMENT_KEYWORDS = [
+  // Pagos recibidos - formato general
   'pago recibido',
   'pago exitoso',
   'pago aplicado',
+  'pago procesado',
+  'pago realizado a tu tarjeta',
+  'pago a tu tarjeta',
+  'pago efectuado',
+  // APAP y bancos dominicanos - "ha recibido un pago"
+  'ha recibido un pago',
+  'recibido un pago',
+  'recibio un pago',
+  'recibió un pago',
+  // Banreservas - "Pago realizado"
+  'pago realizado',
+  '¡pago realizado!',
+  'pago de tarjeta de credito propio',
+  'pago de tarjeta de crédito propio',
+  'pago de tarjeta de credito fue realizado',
+  'pago de tarjeta de crédito fue realizado',
+  // Abonos
   'abono recibido',
   'abono aplicado',
+  'abono a tu tarjeta',
+  'abono exitoso',
+  'credito a tu cuenta',
+  'crédito a tu cuenta',
+  // Pagos de tarjeta
   'pago de tarjeta',
   'pago a tarjeta',
+  'pago tc',
+  'pago tarjeta de credito',
+  'pago tarjeta de crédito',
+  // Pagos mínimos/totales
   'pago minimo',
   'pago mínimo',
+  'pago total',
+  'pago parcial',
+  // Confirmaciones
   'gracias por tu pago',
   'hemos recibido tu pago',
   'tu pago fue procesado',
+  'tu pago ha sido',
   'confirmacion de pago',
   'confirmación de pago',
+  'confirmamos tu pago',
+  'recibimos tu pago',
+  // Transferencias entrantes (no son gastos)
+  'transferencia recibida',
+  'deposito recibido',
+  'depósito recibido',
+  // Bancos dominicanos específicos
+  'aplicacion de pago',
+  'aplicación de pago',
+  'pago tdc',
+  'acreditado a su cuenta',
+  'acreditamos a tu',
+  // English
   'payment received',
-  'payment applied'
+  'payment applied',
+  'payment processed',
+  'thank you for your payment'
 ];
 
 export class EmailParserService {
@@ -96,16 +143,28 @@ export class EmailParserService {
         messages: [
           {
             role: 'system',
-            content: `Eres un experto en extraer datos de notificaciones bancarias de transacciones.
-Tu trabajo es extraer informacion estructurada de emails de alertas bancarias.
+            content: `Eres un experto en extraer datos de notificaciones bancarias de CONSUMOS y COMPRAS.
+
+IMPORTANTE - DEBES IGNORAR estos tipos de emails (responde con is_payment_email: true):
+- Pagos de tarjeta de credito (cuando el usuario PAGA su tarjeta)
+- Abonos recibidos
+- Confirmaciones de pago
+- Transferencias recibidas
+- Depositos
+- Cualquier email que NO sea un CONSUMO o COMPRA
+
+Solo extrae datos de emails que sean CONSUMOS/COMPRAS/CARGOS (cuando el usuario GASTA dinero en un comercio).
+
 Siempre responde UNICAMENTE con JSON valido, sin texto adicional.
+Si el email es un pago/abono/deposito, responde: {"is_payment_email": true}
 Si no puedes extraer algun dato, usa null.
 El monto siempre debe ser un numero positivo.
 La fecha debe estar en formato ISO 8601.
 La moneda debe ser el codigo (RD$, USD, EUR, DOP).
 IMPORTANTE: La categoria DEBE ser exactamente una de estas opciones: ${categoryList}.
 Elige la que mejor corresponda al tipo de gasto segun el comercio.
-Si no puedes determinar la categoria con certeza, usa "${fallbackCategory}".`
+Si no puedes determinar la categoria con certeza, usa "${fallbackCategory}".
+NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prestamos reales.`
           },
           {
             role: 'user',
@@ -124,6 +183,15 @@ Si no puedes determinar la categoria con certeza, usa "${fallbackCategory}".`
       }
 
       const parsed = JSON.parse(content);
+
+      // Si la AI detectó que es un pago de tarjeta, ignorar
+      if (parsed.is_payment_email === true) {
+        console.log(`[EmailParser] AI detected payment email, skipping: ${subject}`);
+        return {
+          success: false,
+          error: 'PAYMENT_EMAIL_SKIPPED: AI detectó que es un pago de tarjeta, no un consumo'
+        };
+      }
 
       // Validar datos minimos requeridos
       if (!parsed.amount || parsed.amount <= 0) {
