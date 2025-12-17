@@ -259,7 +259,8 @@ export class EmailSyncService {
           const parseResult = await EmailParserService.parseEmailContent(
             body,
             subject,
-            bankFilter?.bankName
+            bankFilter?.bankName,
+            connection.user.country
           );
 
           if (!parseResult.success || !parseResult.transaction) {

@@ -430,8 +430,9 @@ export const getSupportedBanks = async (req: Request, res: Response) => {
           { name: 'Banreservas', country: 'DO' },
           { name: 'BHD Leon', country: 'DO' },
           { name: 'Scotiabank', country: 'DO' },
-          { name: 'Asociacion Popular', country: 'DO' },
-          { name: 'Banco Santa Cruz', country: 'DO' }
+          { name: 'APAP', country: 'DO' },
+          { name: 'Banco Vimenca', country: 'DO' },
+          { name: 'Banco Caribe', country: 'DO' }
         ]
       });
     }

@@ -110,7 +110,8 @@ export class EmailParserService {
   static async parseEmailContent(
     emailContent: string,
     subject: string,
-    bankName?: string
+    bankName?: string,
+    userCountry?: string
   ): Promise<ParserResult> {
     try {
       // Verificar si es un pago de tarjeta (no un consumo)
@@ -161,10 +162,25 @@ Si no puedes extraer algun dato, usa null.
 El monto siempre debe ser un numero positivo.
 La fecha debe estar en formato ISO 8601.
 La moneda debe ser el codigo (RD$, USD, EUR, DOP).
+
+CATEGORIZACIÓN INTELIGENTE:
+Analiza el nombre del comercio para determinar la categoría correcta. Presta atención a prefijos y palabras clave:
+- "SM", "SUPER", "SUPERMERCADO", "MARKET", "MERCADO", "COLMADO" → Supermercado/Alimentación
+- "REST", "RESTAURANT", "CAFE", "COFFEE", "HELADERIA", "HELADOS", "PIZZA", "POLLO", "BURGER", "SUSHI", "BAR", "FOOD" → Comida/Restaurantes
+- "GAS", "GASOLINERA", "ESTACION", "PEAJE", "PARKING", "PARQUEO" → Transporte
+- "FARM", "FARMACIA", "CLINICA", "HOSPITAL", "LAB", "MEDIC", "OPTICA" → Salud
+- "TIENDA", "STORE", "ROPA", "FASHION", "SHOES", "ZAPATOS" → Ropa/Vestimenta
+- "CINE", "CINEMA", "TEATRO", "JUEGOS", "GAMES" → Entretenimiento
+- "ELECTRIC", "AGUA", "WATER", "GAS", "INTERNET", "CABLE", "TELEFON" → Servicios/Facturas
+- "SCHOOL", "COLEGIO", "UNIVERSIDAD", "CURSO", "LIBRERIA", "BOOKS" → Educación
+- "FERRET", "HARDWARE", "CONSTRUC", "MUEBLE" → Hogar
+
+El usuario reside en: ${userCountry}. Usa tu conocimiento de comercios y establecimientos de ese país para categorizar correctamente.
+
 IMPORTANTE: La categoria DEBE ser exactamente una de estas opciones: ${categoryList}.
-Elige la que mejor corresponda al tipo de gasto segun el comercio.
-Si no puedes determinar la categoria con certeza, usa "${fallbackCategory}".
-NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prestamos reales.`
+Elige la que MEJOR corresponda analizando el nombre del comercio.
+Si no encuentras una categoría apropiada, usa "${fallbackCategory}".
+NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prestamos bancarios reales.`
           },
           {
             role: 'user',
