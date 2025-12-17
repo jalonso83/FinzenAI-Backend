@@ -6,20 +6,6 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Categorias predefinidas para mapeo
-const CATEGORY_MAPPINGS: Record<string, string[]> = {
-  'Alimentacion': ['comida', 'restaurante', 'supermercado', 'grocery', 'food', 'restaurant', 'cafe', 'cafeteria', 'panaderia', 'colmado'],
-  'Transporte': ['gasolina', 'gas', 'uber', 'taxi', 'transporte', 'parking', 'estacionamiento', 'peaje', 'toll'],
-  'Entretenimiento': ['cine', 'netflix', 'spotify', 'entretenimiento', 'juegos', 'games', 'bar', 'disco'],
-  'Compras': ['tienda', 'store', 'amazon', 'compra', 'shopping', 'mall', 'ropa', 'electronica'],
-  'Salud': ['farmacia', 'pharmacy', 'hospital', 'medico', 'clinica', 'doctor', 'salud'],
-  'Servicios': ['luz', 'agua', 'internet', 'telefono', 'cable', 'utilities', 'servicio'],
-  'Educacion': ['escuela', 'universidad', 'curso', 'libro', 'educacion', 'school'],
-  'Viajes': ['hotel', 'vuelo', 'flight', 'airbnb', 'viaje', 'travel', 'aeropuerto'],
-  'Hogar': ['ferreteria', 'home', 'hogar', 'muebles', 'decoracion'],
-  'Otros': []
-};
-
 export interface ParsedTransaction {
   amount: number;
   currency: string;
@@ -179,7 +165,10 @@ Si no puedes determinar la categoria con certeza, usa "${fallbackCategory}".`
     bankName?: string,
     categoryList?: string
   ): string {
-    const categories = categoryList || 'Otros';
+    // categoryList siempre viene de la DB, no debería ser undefined
+    if (!categoryList) {
+      throw new Error('No categories provided - must query from database first');
+    }
 
     return `Extrae la informacion de esta notificacion bancaria${bankName ? ` de ${bankName}` : ''}:
 
@@ -193,7 +182,7 @@ Responde SOLO con este JSON:
   "amount": <numero positivo>,
   "currency": "<RD$|USD|EUR|DOP>",
   "merchant": "<nombre del comercio/establecimiento>",
-  "category": "<DEBE ser exactamente una de: ${categories}>",
+  "category": "<DEBE ser exactamente una de: ${categoryList}>",
   "date": "<fecha ISO 8601>",
   "cardLast4": "<ultimos 4 digitos de tarjeta o null>",
   "authorizationCode": "<codigo de autorizacion o null>",
@@ -223,29 +212,13 @@ Responde SOLO con este JSON:
   }
 
   /**
-   * Normaliza y valida la categoria
+   * Normaliza y valida la categoria - simplemente retorna lo que la AI devolvió
+   * ya que la AI recibe las categorías reales de la base de datos
    */
   private static normalizeCategory(category: string, merchant?: string): string {
-    const validCategories = [
-      'Alimentacion', 'Transporte', 'Entretenimiento', 'Compras',
-      'Salud', 'Servicios', 'Educacion', 'Viajes', 'Hogar', 'Otros'
-    ];
-
-    if (category && validCategories.includes(category)) {
-      return category;
-    }
-
-    // Intentar categorizar por el nombre del comercio
-    if (merchant) {
-      const merchantLower = merchant.toLowerCase();
-      for (const [cat, keywords] of Object.entries(CATEGORY_MAPPINGS)) {
-        if (keywords.some(k => merchantLower.includes(k))) {
-          return cat;
-        }
-      }
-    }
-
-    return 'Otros';
+    // La AI ya recibe las categorías de la DB, así que simplemente retornamos
+    // lo que devolvió. La validación real se hace en findCategoryByName
+    return category || '';
   }
 
   /**
@@ -271,8 +244,8 @@ Responde SOLO con este JSON:
     // Ultimos 4 digitos
     if (parsed.cardLast4 && /^\d{4}$/.test(parsed.cardLast4)) confidence += 15;
 
-    // Categoria valida
-    if (parsed.category && parsed.category !== 'Otros') confidence += 10;
+    // Categoria identificada (si tiene alguna)
+    if (parsed.category) confidence += 10;
 
     return confidence;
   }
@@ -296,16 +269,21 @@ Responde SOLO con este JSON:
 
   /**
    * Obtiene la categoria por defecto para gastos
+   * Busca una categoría que contenga "otro" en el nombre (ej: "Otros", "Otros gastos")
    */
   static async getDefaultExpenseCategory(): Promise<string> {
-    const category = await prisma.category.findFirst({
+    // Buscar categoría que contenga "otro" (Otros, Otros gastos, etc.)
+    const otrosCategory = await prisma.category.findFirst({
       where: {
-        name: 'Otros',
+        name: {
+          contains: 'otro',
+          mode: 'insensitive'
+        },
         type: 'EXPENSE'
       }
     });
 
-    if (category) return category.id;
+    if (otrosCategory) return otrosCategory.id;
 
     // Si no existe, buscar cualquier categoria de gasto
     const anyCategory = await prisma.category.findFirst({
