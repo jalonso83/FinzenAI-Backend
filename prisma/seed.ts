@@ -39,6 +39,9 @@ async function main() {
       name: 'BHD León',
       country: 'DO',
       senderEmails: [
+        'alertas@bhd.com.do',
+        'notificaciones@bhd.com.do',
+        'noreply@bhd.com.do',
         'alertas@bhdleon.com.do',
         'notificaciones@bhdleon.com.do',
         'bhdalertas@bhdleon.com.do',
@@ -179,6 +182,20 @@ async function main() {
         'noreply@bellbank.com.do'
       ],
       subjectPatterns: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro', 'pago', 'notificacion'],
+      isActive: true,
+      logoUrl: null
+    },
+    {
+      name: 'Asociación Cibao de Ahorros y Préstamos',
+      country: 'DO',
+      senderEmails: [
+        'AlertaCibao@cibao.com.do',
+        'alertacibao@cibao.com.do',
+        'alertas@cibao.com.do',
+        'notificaciones@cibao.com.do',
+        'noreply@cibao.com.do'
+      ],
+      subjectPatterns: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro', 'pago', 'notificacion', 'alerta'],
       isActive: true,
       logoUrl: null
     }
