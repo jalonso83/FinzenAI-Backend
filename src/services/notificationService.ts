@@ -179,7 +179,7 @@ export class NotificationService {
       const result = await this.sendMulticast(tokens, payload);
 
       // Registrar la notificación
-      await this.logNotification(userId, type, payload, result.success ? 'SENT' : 'FAILED');
+      await this.logNotification(userId, type, payload, result.successCount > 0 ? 'SENT' : 'FAILED');
 
       // Limpiar tokens inválidos
       if (result.failedTokens && result.failedTokens.length > 0) {
