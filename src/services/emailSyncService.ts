@@ -1,6 +1,7 @@
 import { PrismaClient, EmailConnection, EmailSyncStatus, ImportedEmailStatus } from '@prisma/client';
 import { GmailService } from './gmailService';
 import { EmailParserService, ParsedTransaction } from './emailParserService';
+import { NotificationService } from './notificationService';
 
 const prisma = new PrismaClient();
 
@@ -255,12 +256,13 @@ export class EmailSyncService {
             }
           });
 
-          // Parsear con AI
+          // Parsear con AI (incluye sistema de aprendizaje de mapeos)
           const parseResult = await EmailParserService.parseEmailContent(
             body,
             subject,
             bankFilter?.bankName,
-            connection.user.country
+            connection.user.country,
+            connection.userId  // Para buscar mapeos personalizados del usuario
           );
 
           if (!parseResult.success || !parseResult.transaction) {
@@ -338,6 +340,18 @@ export class EmailSyncService {
       await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS');
       await this.updateConnectionStatus(connectionId, 'SUCCESS');
 
+      // Enviar notificación push si se importaron transacciones
+      if (result.transactionsCreated > 0 || result.emailsProcessed > 0) {
+        try {
+          await NotificationService.notifyEmailSyncComplete(
+            connection.userId,
+            result.transactionsCreated
+          );
+        } catch (notifyError) {
+          console.error('[EmailSync] Error sending notification:', notifyError);
+        }
+      }
+
     } catch (error: any) {
       console.error('[EmailSync] Sync failed:', error);
       result.errors.push(error.message);
@@ -357,8 +371,12 @@ export class EmailSyncService {
     importedEmailId: string
   ): Promise<any> {
     try {
-      // Buscar categoria
-      let categoryId = await EmailParserService.findCategoryByName(parsed.category);
+      // Usar categoryId del mapeo si ya viene, sino buscar por nombre
+      let categoryId = parsed.categoryId;
+
+      if (!categoryId) {
+        categoryId = await EmailParserService.findCategoryByName(parsed.category);
+      }
 
       if (!categoryId) {
         categoryId = await EmailParserService.getDefaultExpenseCategory();
@@ -367,6 +385,11 @@ export class EmailSyncService {
       if (!categoryId) {
         console.error('[EmailSync] No category found for transaction');
         return null;
+      }
+
+      // Log del origen de la categorización
+      if (parsed.categorySource) {
+        console.log(`[EmailSync] Categoría asignada por: ${parsed.categorySource} -> ${parsed.category}`);
       }
 
       // Convertir USD a RD$ si es necesario
@@ -403,6 +426,9 @@ export class EmailSyncService {
       });
 
       console.log(`[EmailSync] Created transaction ${transaction.id} for ${finalAmount} RD$${parsed.currency === 'USD' ? ` (original: ${parsed.amount} USD)` : ''}`);
+
+      // Recalcular presupuesto de la categoría
+      await this.recalculateBudgetSpent(userId, categoryId, transaction.date);
 
       return transaction;
 
@@ -545,6 +571,101 @@ export class EmailSyncService {
         ]
       }
     });
+  }
+
+  /**
+   * Recalcula el gasto de presupuestos afectados por una transacción
+   */
+  private static async recalculateBudgetSpent(
+    userId: string,
+    categoryId: string,
+    date: Date
+  ): Promise<void> {
+    try {
+      // Buscar presupuestos activos de la categoría cuyo período incluya la fecha
+      const budgets = await prisma.budget.findMany({
+        where: {
+          user_id: userId,
+          category_id: categoryId,
+          is_active: true,
+          start_date: { lte: date },
+          end_date: { gte: date }
+        },
+        include: {
+          user: {
+            select: { currency: true }
+          }
+        }
+      });
+
+      for (const budget of budgets) {
+        // Obtener el gasto anterior para comparar
+        const previousSpent = Number(budget.spent) || 0;
+
+        // Sumar todas las transacciones de gasto de esa categoría y período
+        const spent = await prisma.transaction.aggregate({
+          _sum: { amount: true },
+          where: {
+            userId,
+            category_id: categoryId,
+            type: 'EXPENSE',
+            date: {
+              gte: budget.start_date,
+              lte: budget.end_date
+            }
+          }
+        });
+
+        const newSpent = spent._sum.amount || 0;
+
+        await prisma.budget.update({
+          where: { id: budget.id },
+          data: { spent: newSpent }
+        });
+
+        console.log(`[EmailSync] Updated budget ${budget.id} spent: ${newSpent}`);
+
+        // Verificar si se debe enviar notificación de alerta
+        const budgetAmount = Number(budget.amount);
+        const alertThreshold = Number(budget.alert_percentage) || 80;
+        const previousPercentage = (previousSpent / budgetAmount) * 100;
+        const newPercentage = (newSpent / budgetAmount) * 100;
+        const currency = budget.user?.currency || 'RD$';
+
+        // Si cruzamos el umbral de alerta (antes estaba debajo, ahora está encima)
+        if (previousPercentage < alertThreshold && newPercentage >= alertThreshold && newPercentage < 100) {
+          try {
+            await NotificationService.notifyBudgetAlert(
+              userId,
+              budget.name,
+              Math.round(newPercentage),
+              budgetAmount - newSpent,
+              currency
+            );
+            console.log(`[EmailSync] Sent budget alert notification for ${budget.name}`);
+          } catch (notifyError) {
+            console.error('[EmailSync] Error sending budget alert:', notifyError);
+          }
+        }
+
+        // Si el presupuesto fue excedido (antes estaba debajo del 100%, ahora está encima)
+        if (previousPercentage < 100 && newPercentage >= 100) {
+          try {
+            await NotificationService.notifyBudgetExceeded(
+              userId,
+              budget.name,
+              newSpent - budgetAmount,
+              currency
+            );
+            console.log(`[EmailSync] Sent budget exceeded notification for ${budget.name}`);
+          } catch (notifyError) {
+            console.error('[EmailSync] Error sending budget exceeded:', notifyError);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[EmailSync] Error recalculating budget:', error);
+    }
   }
 }
 

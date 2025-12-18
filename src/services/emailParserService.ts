@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { PrismaClient } from '@prisma/client';
+import { merchantMappingService } from './merchantMappingService';
 
 const prisma = new PrismaClient();
 const openai = new OpenAI({
@@ -11,11 +12,13 @@ export interface ParsedTransaction {
   currency: string;
   merchant: string;
   category: string;
+  categoryId?: string;  // ID de la categoría si se encontró en mapeo
   date: string;
   cardLast4?: string;
   authorizationCode?: string;
   description?: string;
   confidence: number;
+  categorySource?: 'mapping_user' | 'mapping_global' | 'ai';  // Origen de la categorización
 }
 
 export interface ParserResult {
@@ -106,12 +109,18 @@ export class EmailParserService {
 
   /**
    * Parsea el contenido de un email bancario usando AI
+   * @param emailContent - Contenido del email
+   * @param subject - Asunto del email
+   * @param bankName - Nombre del banco (opcional)
+   * @param userCountry - País del usuario para contexto (opcional)
+   * @param userId - ID del usuario para buscar mapeos personalizados (opcional)
    */
   static async parseEmailContent(
     emailContent: string,
     subject: string,
     bankName?: string,
-    userCountry?: string
+    userCountry?: string,
+    userId?: string
   ): Promise<ParserResult> {
     try {
       // Verificar si es un pago de tarjeta (no un consumo)
@@ -214,19 +223,45 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
         return { success: false, error: 'Could not extract valid amount', rawResponse: content };
       }
 
-      // Normalizar y validar categoria
-      const category = this.normalizeCategory(parsed.category, parsed.merchant);
+      const merchant = parsed.merchant || 'Desconocido';
+      let category = this.normalizeCategory(parsed.category, merchant);
+      let categoryId: string | undefined;
+      let categorySource: 'mapping_user' | 'mapping_global' | 'ai' = 'ai';
+
+      // ============================================
+      // SISTEMA DE APRENDIZAJE: Buscar mapeo primero
+      // ============================================
+      if (userId && merchant !== 'Desconocido') {
+        try {
+          const mapping = await merchantMappingService.findMapping(userId, merchant);
+
+          if (mapping) {
+            categoryId = mapping.categoryId;
+            category = mapping.categoryName;
+            categorySource = mapping.source === 'user' ? 'mapping_user' : 'mapping_global';
+
+            console.log(`[EmailParser] Usando mapeo ${mapping.source} para "${merchant}" -> "${category}" (confianza: ${mapping.confidence}%)`);
+          } else {
+            console.log(`[EmailParser] No hay mapeo para "${merchant}", usando categoría de IA: "${category}"`);
+          }
+        } catch (error) {
+          console.error('[EmailParser] Error buscando mapeo:', error);
+          // Continuar con la categoría de la IA
+        }
+      }
 
       const transaction: ParsedTransaction = {
         amount: Math.abs(Number(parsed.amount)),
         currency: this.normalizeCurrency(parsed.currency),
-        merchant: parsed.merchant || 'Desconocido',
+        merchant: merchant,
         category: category,
+        categoryId: categoryId,
         date: parsed.date || new Date().toISOString(),
         cardLast4: parsed.cardLast4 || parsed.card_last4 || undefined,
         authorizationCode: parsed.authorizationCode || parsed.authorization_code || undefined,
         description: parsed.description || undefined,
-        confidence: this.calculateConfidence(parsed)
+        confidence: this.calculateConfidence(parsed),
+        categorySource: categorySource
       };
 
       return { success: true, transaction };

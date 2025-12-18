@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, MappingSource } from '@prisma/client';
 import fs from 'fs';
 import FormData from 'form-data';
+import { merchantMappingService } from '../services/merchantMappingService';
 
 const prisma = new PrismaClient();
 const API_KEY = process.env.OPENAI_API_KEY;
@@ -1395,6 +1396,30 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
       }
     }
   });
+
+  // ============================================
+  // SISTEMA DE APRENDIZAJE: Guardar mapeo si cambió la categoría
+  // ============================================
+  if (updateData.category_id && trans.category_id !== updateData.category_id) {
+    // La descripción suele contener el nombre del comercio
+    const merchantName = trans.description || updated.description;
+
+    if (merchantName && merchantName.trim().length > 2) {
+      try {
+        await merchantMappingService.saveMapping({
+          userId,
+          merchantName: merchantName.trim(),
+          categoryId: updateData.category_id,
+          source: MappingSource.ZENIO_CORRECTION
+        });
+
+        console.log(`[Zenio] Mapeo guardado: "${merchantName}" -> categoría ${updateData.category_id}`);
+      } catch (error) {
+        console.error('[Zenio] Error guardando mapeo:', error);
+        // No fallar la operación por error de mapeo
+      }
+    }
+  }
 
   return {
     success: true,

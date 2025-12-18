@@ -20,6 +20,7 @@ import investmentRoutes from './routes/investment';
 import budgetSchedulerRoutes from './routes/budgetScheduler';
 import subscriptionRoutes from './routes/subscriptions';
 import emailSyncRoutes from './routes/emailSync';
+import notificationRoutes from './routes/notifications';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
@@ -65,6 +66,7 @@ app.use('/api/investment', investmentRoutes);
 app.use('/api/scheduler', budgetSchedulerRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/email-sync', emailSyncRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {

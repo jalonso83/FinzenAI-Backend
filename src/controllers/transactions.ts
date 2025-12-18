@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, MappingSource } from '@prisma/client';
 import { GamificationService } from '../services/gamificationService';
+import { NotificationService } from '../services/notificationService';
+import { merchantMappingService } from '../services/merchantMappingService';
 
 const prisma = new PrismaClient();
 
@@ -509,6 +511,13 @@ export const createTransaction = async (req: Request, res: Response) => {
     // Recalcular presupuesto si es gasto
     if (type === 'EXPENSE') {
       await recalculateBudgetSpent(userId, category_id, transaction.date);
+
+      // Verificar y enviar alertas de presupuesto
+      try {
+        await NotificationService.checkBudgetAlerts(userId, category_id, amount, transaction.date);
+      } catch (error) {
+        console.error('Error checking budget alerts:', error);
+      }
     }
 
     // Analizar y disparar eventos de gamificación inteligentes
@@ -610,6 +619,30 @@ export const updateTransaction = async (req: Request, res: Response) => {
       // Recalcular para la nueva categoría y fecha si cambió
       if (transaction.type === 'EXPENSE') {
         await recalculateBudgetSpent(userId, transaction.category_id, transaction.date);
+      }
+    }
+
+    // ============================================
+    // SISTEMA DE APRENDIZAJE: Guardar mapeo si cambió la categoría
+    // ============================================
+    if (updateData.category_id && existingTransaction.category_id !== updateData.category_id) {
+      // La descripción suele contener el nombre del comercio
+      const merchantName = existingTransaction.description || transaction.description;
+
+      if (merchantName && merchantName.trim().length > 2) {
+        try {
+          await merchantMappingService.saveMapping({
+            userId,
+            merchantName: merchantName.trim(),
+            categoryId: updateData.category_id,
+            source: MappingSource.USER_CORRECTION
+          });
+
+          console.log(`[Transactions] Mapeo guardado: "${merchantName}" -> categoría ${updateData.category_id}`);
+        } catch (error) {
+          console.error('[Transactions] Error guardando mapeo:', error);
+          // No fallar la transacción por error de mapeo
+        }
       }
     }
 

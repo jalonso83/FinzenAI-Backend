@@ -51,6 +51,10 @@ model User {
   // Email Sync
   emailConnections    EmailConnection[]
 
+  // Notificaciones Push (FCM)
+  devices                   UserDevice[]
+  notificationPreferences   NotificationPreferences?
+
   @@map("users")
 }
 
@@ -116,6 +120,7 @@ model Category {
   budgets      Budget[]
   transactions Transaction[]
   goals        Goal[]
+  merchantMappings MerchantCategoryMapping[]
 
   @@map("categories")
 }
@@ -485,4 +490,149 @@ enum ImportedEmailStatus {
   FAILED
   SKIPPED
   DUPLICATE
+}
+
+// =============================================
+// MODELOS DE NOTIFICACIONES PUSH (FCM)
+// =============================================
+
+// Dispositivos del usuario para notificaciones push
+model UserDevice {
+  id          String   @id @default(cuid())
+  userId      String
+  fcmToken    String   @unique
+  platform    DevicePlatform
+  deviceName  String?
+  appVersion  String?
+  isActive    Boolean  @default(true)
+  lastUsedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_devices")
+  @@index([userId, isActive])
+  @@index([fcmToken])
+}
+
+// Preferencias de notificación del usuario
+model NotificationPreferences {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+
+  // Tipos de notificaciones habilitadas
+  emailSyncEnabled      Boolean  @default(true)
+  budgetAlertsEnabled   Boolean  @default(true)
+  goalRemindersEnabled  Boolean  @default(true)
+  weeklyReportEnabled   Boolean  @default(true)
+  tipsEnabled           Boolean  @default(true)
+
+  // Umbral de alerta de presupuesto (porcentaje)
+  budgetAlertThreshold  Int      @default(80)
+
+  // Horario de notificaciones (para evitar molestias)
+  quietHoursStart       Int?     // Hora en formato 24h (ej: 22 = 10pm)
+  quietHoursEnd         Int?     // Hora en formato 24h (ej: 8 = 8am)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+// Historial de notificaciones enviadas
+model NotificationLog {
+  id          String             @id @default(cuid())
+  userId      String
+  type        NotificationType
+  title       String
+  body        String
+  data        Json?
+  status      NotificationStatus @default(PENDING)
+  sentAt      DateTime?
+  readAt      DateTime?
+  errorMessage String?
+  createdAt   DateTime           @default(now())
+
+  @@map("notification_logs")
+  @@index([userId, createdAt])
+  @@index([type, status])
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+}
+
+enum NotificationType {
+  EMAIL_SYNC_COMPLETE
+  BUDGET_ALERT
+  BUDGET_EXCEEDED
+  GOAL_REMINDER
+  GOAL_ACHIEVED
+  WEEKLY_REPORT
+  TIP
+  SYSTEM
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+// =============================================
+// MODELO DE APRENDIZAJE DE CATEGORIZACIÓN
+// =============================================
+
+// Mapeo de comercios a categorías (sistema de aprendizaje)
+model MerchantCategoryMapping {
+  id              String   @id @default(cuid())
+
+  // Usuario (null = mapeo global)
+  userId          String?
+
+  // Nombre del comercio normalizado (uppercase, sin espacios extra)
+  merchantName    String
+
+  // Patrón alternativo para variantes (ej: "FARM*" matchea "FARMACIA CAROL", "FARM RD", etc.)
+  merchantPattern String?
+
+  // Categoría asignada
+  categoryId      String
+
+  // Estadísticas de uso
+  timesUsed       Int      @default(1)
+
+  // Para mapeos globales: cuántos usuarios diferentes lo confirmaron
+  confirmedByUsers Int     @default(1)
+
+  // Origen del mapeo
+  source          MappingSource @default(USER_CORRECTION)
+
+  // Confianza del mapeo (0-100) - para mapeos globales
+  confidence      Int      @default(100)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  category        Category @relation(fields: [categoryId], references: [id])
+
+  // Índices para búsqueda eficiente
+  @@unique([userId, merchantName])
+  @@index([merchantName])
+  @@index([userId])
+  @@index([categoryId])
+  @@map("merchant_category_mappings")
+}
+
+enum MappingSource {
+  USER_CORRECTION    // Usuario corrigió manualmente
+  ZENIO_CORRECTION   // Usuario corrigió via Zenio
+  AI_CONFIRMED       // IA categorizó y usuario no corrigió (alta confianza)
+  SYSTEM_DEFAULT     // Mapeo por defecto del sistema
 }
