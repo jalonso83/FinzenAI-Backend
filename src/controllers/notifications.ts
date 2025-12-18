@@ -3,7 +3,10 @@ import { DevicePlatform } from '@prisma/client';
 import NotificationService from '../services/notificationService';
 
 interface AuthRequest extends Request {
-  userId?: string;
+  user?: {
+    id: string;
+    email: string;
+  };
 }
 
 interface RegisterDeviceRequest {
@@ -30,7 +33,7 @@ interface UpdatePreferencesRequest {
  */
 export const registerDevice = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -118,7 +121,7 @@ export const unregisterDevice = async (req: AuthRequest, res: Response) => {
  */
 export const getPreferences = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -165,7 +168,7 @@ export const getPreferences = async (req: AuthRequest, res: Response) => {
  */
 export const updatePreferences = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -233,7 +236,7 @@ export const updatePreferences = async (req: AuthRequest, res: Response) => {
  */
 export const getNotificationHistory = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -270,7 +273,7 @@ export const getNotificationHistory = async (req: AuthRequest, res: Response) =>
  */
 export const markAsRead = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -303,7 +306,7 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
  */
 export const deleteNotification = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -339,7 +342,7 @@ export const deleteNotification = async (req: AuthRequest, res: Response) => {
  */
 export const deleteAllNotifications = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -367,7 +370,7 @@ export const deleteAllNotifications = async (req: AuthRequest, res: Response) =>
  */
 export const sendTestNotification = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
