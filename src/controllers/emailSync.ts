@@ -406,40 +406,28 @@ export const toggleBankFilter = async (req: Request, res: Response) => {
  */
 export const getSupportedBanks = async (req: Request, res: Response) => {
   try {
-    const { country = 'DO' } = req.query;
+    const { country } = req.query;
 
+    // Obtener bancos de la base de datos
     const banks = await prisma.supportedBank.findMany({
       where: {
-        country: country as string,
-        isActive: true
+        isActive: true,
+        ...(country && { country: country as string })
       },
       select: {
         id: true,
         name: true,
         country: true,
-        logoUrl: true
-      }
+        logoUrl: true,
+        senderEmails: true
+      },
+      orderBy: { name: 'asc' }
     });
-
-    // Si no hay bancos en DB, devolver los defaults
-    if (banks.length === 0) {
-      return res.json({
-        success: true,
-        banks: [
-          { name: 'Banco Popular', country: 'DO' },
-          { name: 'Banreservas', country: 'DO' },
-          { name: 'BHD Leon', country: 'DO' },
-          { name: 'Scotiabank', country: 'DO' },
-          { name: 'APAP', country: 'DO' },
-          { name: 'Banco Vimenca', country: 'DO' },
-          { name: 'Banco Caribe', country: 'DO' }
-        ]
-      });
-    }
 
     return res.json({
       success: true,
-      banks
+      banks,
+      total: banks.length
     });
 
   } catch (error: any) {

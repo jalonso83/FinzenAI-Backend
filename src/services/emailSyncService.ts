@@ -5,45 +5,6 @@ import { NotificationService } from './notificationService';
 
 const prisma = new PrismaClient();
 
-// Bancos de RD por defecto - Emails verificados
-const DEFAULT_BANK_FILTERS = [
-  {
-    bankName: 'Banco Popular',
-    senderEmails: ['notificaciones@popularenlinea.com', 'alertas@bpd.com.do', 'notificaciones@bpd.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro', 'notificacion']
-  },
-  {
-    bankName: 'Banreservas',
-    senderEmails: ['notificaciones@banreservas.com', 'alertas@banreservas.com', 'notificaciones@banreservas.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
-  },
-  {
-    bankName: 'Banco Caribe',
-    senderEmails: ['notificaciones@bancocaribe.com.do', 'alertas@bancocaribe.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
-  },
-  {
-    bankName: 'APAP',
-    senderEmails: ['no-reply@apap.com.do', 'alertas@apap.com.do', 'notificaciones@apap.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
-  },
-  {
-    bankName: 'BHD Leon',
-    senderEmails: ['alertas@bhdleon.com.do', 'notificaciones@bhdleon.com.do'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
-  },
-  {
-    bankName: 'Scotiabank',
-    senderEmails: ['alertas@scotiabank.com', 'notificaciones.do@scotiabank.com'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
-  },
-  {
-    bankName: 'Banco Vimenca',
-    senderEmails: ['internetbanking@vimenca.com', 'notificaciones@vimenca.com', 'alertas@vimenca.com'],
-    subjectKeywords: ['consumo', 'compra', 'transaccion', 'cargo', 'notificacion']
-  }
-];
-
 export interface SyncResult {
   success: boolean;
   emailsFound: number;
@@ -59,6 +20,12 @@ export class EmailSyncService {
    * Conecta la cuenta de Gmail de un usuario
    */
   static async connectGmail(userId: string, authCode: string): Promise<EmailConnection> {
+    // Obtener el país del usuario para filtrar bancos
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { country: true }
+    });
+
     // Intercambiar codigo por tokens
     const tokens = await GmailService.exchangeCodeForTokens(authCode);
 
@@ -92,31 +59,81 @@ export class EmailSyncService {
       }
     });
 
-    // Crear filtros de bancos por defecto
-    await this.createDefaultBankFilters(connection.id);
+    // Crear filtros de bancos por defecto según el país del usuario
+    const userCountry = this.mapCountryToCode(user?.country || 'República Dominicana');
+    await this.createDefaultBankFilters(connection.id, userCountry);
 
     return connection;
   }
 
   /**
-   * Crea filtros de bancos por defecto
+   * Mapea el nombre del país al código ISO
    */
-  private static async createDefaultBankFilters(connectionId: string): Promise<void> {
-    for (const bank of DEFAULT_BANK_FILTERS) {
+  private static mapCountryToCode(country: string): string {
+    const countryMap: Record<string, string> = {
+      'República Dominicana': 'DO',
+      'Republica Dominicana': 'DO',
+      'Dominican Republic': 'DO',
+      'Mexico': 'MX',
+      'México': 'MX',
+      'Colombia': 'CO',
+      'Estados Unidos': 'US',
+      'United States': 'US',
+      'España': 'ES',
+      'Spain': 'ES',
+      'Puerto Rico': 'PR',
+      'Argentina': 'AR',
+      'Chile': 'CL',
+      'Peru': 'PE',
+      'Perú': 'PE',
+      'Venezuela': 'VE',
+      'Ecuador': 'EC',
+      'Guatemala': 'GT',
+      'Honduras': 'HN',
+      'El Salvador': 'SV',
+      'Nicaragua': 'NI',
+      'Costa Rica': 'CR',
+      'Panama': 'PA',
+      'Panamá': 'PA'
+    };
+
+    return countryMap[country] || 'DO'; // Default to DO if not found
+  }
+
+  /**
+   * Crea filtros de bancos por defecto desde la tabla SupportedBank
+   */
+  private static async createDefaultBankFilters(connectionId: string, userCountry: string = 'DO'): Promise<void> {
+    // Obtener bancos soportados desde la base de datos
+    const supportedBanks = await prisma.supportedBank.findMany({
+      where: {
+        isActive: true,
+        country: userCountry
+      }
+    });
+
+    if (supportedBanks.length === 0) {
+      console.warn(`[EmailSync] No supported banks found for country: ${userCountry}`);
+      return;
+    }
+
+    console.log(`[EmailSync] Creating filters for ${supportedBanks.length} banks in ${userCountry}`);
+
+    for (const bank of supportedBanks) {
       await prisma.bankEmailFilter.upsert({
         where: {
-          id: `${connectionId}-${bank.bankName.replace(/\s/g, '-').toLowerCase()}`
+          id: `${connectionId}-${bank.name.replace(/\s/g, '-').toLowerCase()}`
         },
         update: {
           senderEmails: bank.senderEmails,
-          subjectKeywords: bank.subjectKeywords
+          subjectKeywords: bank.subjectPatterns
         },
         create: {
-          id: `${connectionId}-${bank.bankName.replace(/\s/g, '-').toLowerCase()}`,
+          id: `${connectionId}-${bank.name.replace(/\s/g, '-').toLowerCase()}`,
           emailConnectionId: connectionId,
-          bankName: bank.bankName,
+          bankName: bank.name,
           senderEmails: bank.senderEmails,
-          subjectKeywords: bank.subjectKeywords
+          subjectKeywords: bank.subjectPatterns
         }
       });
     }
