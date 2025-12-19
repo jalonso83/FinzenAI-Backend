@@ -1,5 +1,6 @@
 import { PrismaClient, EmailConnection, EmailSyncStatus, ImportedEmailStatus } from '@prisma/client';
 import { GmailService } from './gmailService';
+import { OutlookService } from './outlookService';
 import { EmailParserService, ParsedTransaction } from './emailParserService';
 import { NotificationService } from './notificationService';
 
@@ -67,6 +68,56 @@ export class EmailSyncService {
   }
 
   /**
+   * Conecta la cuenta de Outlook de un usuario
+   */
+  static async connectOutlook(userId: string, authCode: string): Promise<EmailConnection> {
+    // Obtener el país del usuario para filtrar bancos
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { country: true }
+    });
+
+    // Intercambiar codigo por tokens
+    const tokens = await OutlookService.exchangeCodeForTokens(authCode);
+
+    // Obtener email del usuario de Microsoft
+    const outlookEmail = await OutlookService.getUserEmail(tokens.access_token);
+
+    // Crear o actualizar conexion
+    const connection = await prisma.emailConnection.upsert({
+      where: {
+        userId_provider: {
+          userId,
+          provider: 'OUTLOOK'
+        }
+      },
+      update: {
+        email: outlookEmail,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token || undefined,
+        tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+        isActive: true,
+        lastSyncStatus: 'PENDING'
+      },
+      create: {
+        userId,
+        provider: 'OUTLOOK',
+        email: outlookEmail,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token || undefined,
+        tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+        isActive: true
+      }
+    });
+
+    // Crear filtros de bancos por defecto según el país del usuario
+    const userCountry = this.mapCountryToCode(user?.country || 'República Dominicana');
+    await this.createDefaultBankFilters(connection.id, userCountry);
+
+    return connection;
+  }
+
+  /**
    * Mapea el nombre del país al código ISO
    */
   private static mapCountryToCode(country: string): string {
@@ -116,8 +167,6 @@ export class EmailSyncService {
       console.warn(`[EmailSync] No supported banks found for country: ${userCountry}`);
       return;
     }
-
-    console.log(`[EmailSync] Creating filters for ${supportedBanks.length} banks in ${userCountry}`);
 
     for (const bank of supportedBanks) {
       await prisma.bankEmailFilter.upsert({
@@ -180,24 +229,20 @@ export class EmailSyncService {
         data: { lastSyncStatus: 'IN_PROGRESS' }
       });
 
-      // Asegurar token valido
-      const accessToken = await GmailService.ensureValidToken(connection);
+      // Asegurar token valido según el proveedor
+      const isOutlook = connection.provider === 'OUTLOOK';
+      const accessToken = isOutlook
+        ? await OutlookService.ensureValidToken(connection)
+        : await GmailService.ensureValidToken(connection);
 
       // Recopilar todos los emails de los filtros
       const allSenderEmails: string[] = [];
       const allSubjectKeywords: string[] = [];
 
-      console.log(`[EmailSync] Bank filters count: ${connection.bankFilters.length}`);
-
       for (const filter of connection.bankFilters) {
-        console.log(`[EmailSync] Filter: ${filter.bankName} - Emails: ${filter.senderEmails.join(', ')}`);
         allSenderEmails.push(...filter.senderEmails);
         allSubjectKeywords.push(...filter.subjectKeywords);
       }
-
-      console.log(`[EmailSync] Total sender emails: ${allSenderEmails.length}`);
-      console.log(`[EmailSync] Sender emails: ${[...new Set(allSenderEmails)].join(', ')}`);
-      console.log(`[EmailSync] Subject keywords: ${[...new Set(allSubjectKeywords)].join(', ')}`);
 
       // Verificar si hay emails importados previos
       const importedCount = await prisma.importedBankEmail.count({
@@ -209,23 +254,32 @@ export class EmailSyncService {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const afterDate = importedCount === 0 ? thirtyDaysAgo : (connection.lastSyncAt || thirtyDaysAgo);
 
-      console.log(`[EmailSync] Imported emails count: ${importedCount}`);
-      console.log(`[EmailSync] Searching emails after: ${afterDate.toISOString()}`);
+      // Buscar emails según el proveedor
+      let messages: any[] = [];
 
-      // Buscar emails
-      const searchResult = await GmailService.searchBankEmails(
-        accessToken,
-        [...new Set(allSenderEmails)],
-        [...new Set(allSubjectKeywords)],
-        afterDate,
-        100
-      );
+      if (isOutlook) {
+        const searchResult = await OutlookService.searchBankEmails(
+          accessToken,
+          [...new Set(allSenderEmails)],
+          [...new Set(allSubjectKeywords)],
+          afterDate,
+          100
+        );
+        messages = searchResult.messages || [];
+      } else {
+        const searchResult = await GmailService.searchBankEmails(
+          accessToken,
+          [...new Set(allSenderEmails)],
+          [...new Set(allSubjectKeywords)],
+          afterDate,
+          100
+        );
+        messages = searchResult.messages || [];
+      }
 
-      result.emailsFound = searchResult.messages?.length || 0;
+      result.emailsFound = messages.length;
 
-      console.log(`[EmailSync] Found ${result.emailsFound} bank emails for user ${connection.userId}`);
-
-      if (!searchResult.messages || searchResult.messages.length === 0) {
+      if (messages.length === 0) {
         result.success = true;
         await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS');
         await this.updateConnectionStatus(connectionId, 'SUCCESS');
@@ -233,9 +287,9 @@ export class EmailSyncService {
       }
 
       // Procesar cada email
-      for (const message of searchResult.messages) {
+      for (const message of messages) {
         try {
-          // Verificar si ya fue procesado
+          // Verificar si ya fue procesado (usamos gmailMessageId para ambos proveedores por compatibilidad)
           const existing = await prisma.importedBankEmail.findFirst({
             where: {
               emailConnectionId: connectionId,
@@ -248,12 +302,25 @@ export class EmailSyncService {
             continue;
           }
 
-          // Obtener contenido del email
-          const emailContent = await GmailService.getEmailContent(accessToken, message.id);
-          const subject = GmailService.getHeader(emailContent, 'Subject') || '';
-          const from = GmailService.getHeader(emailContent, 'From') || '';
-          const body = GmailService.extractEmailBody(emailContent);
-          const receivedAt = new Date(parseInt(emailContent.internalDate));
+          // Obtener contenido del email según el proveedor
+          let subject: string;
+          let from: string;
+          let body: string;
+          let receivedAt: Date;
+
+          if (isOutlook) {
+            const emailContent = await OutlookService.getEmailContent(accessToken, message.id);
+            subject = OutlookService.getSubject(emailContent);
+            from = OutlookService.getSenderEmail(emailContent);
+            body = OutlookService.extractEmailBody(emailContent);
+            receivedAt = new Date(emailContent.receivedDateTime);
+          } else {
+            const emailContent = await GmailService.getEmailContent(accessToken, message.id);
+            subject = GmailService.getHeader(emailContent, 'Subject') || '';
+            from = GmailService.getHeader(emailContent, 'From') || '';
+            body = GmailService.extractEmailBody(emailContent);
+            receivedAt = new Date(parseInt(emailContent.internalDate));
+          }
 
           // Determinar el banco
           const bankFilter = connection.bankFilters.find(f =>
@@ -296,7 +363,6 @@ export class EmailSyncService {
             });
 
             if (isPaymentSkipped) {
-              console.log(`[EmailSync] Skipped payment email: ${subject}`);
               result.emailsSkipped++;
             } else {
               result.errors.push(`Failed to parse email ${message.id}: ${parseResult.error}`);
@@ -404,11 +470,6 @@ export class EmailSyncService {
         return null;
       }
 
-      // Log del origen de la categorización
-      if (parsed.categorySource) {
-        console.log(`[EmailSync] Categoría asignada por: ${parsed.categorySource} -> ${parsed.category}`);
-      }
-
       // Convertir USD a RD$ si es necesario
       let finalAmount = parsed.amount;
       let conversionInfo = '';
@@ -418,7 +479,6 @@ export class EmailSyncService {
         const conversion = await ExchangeRateService.convertUsdToDop(parsed.amount);
         finalAmount = conversion.amountDop;
         conversionInfo = ` [USD ${parsed.amount} → RD$ ${finalAmount} @${conversion.rate}]`;
-        console.log(`[EmailSync] Converted USD ${parsed.amount} to RD$ ${finalAmount} (rate: ${conversion.rate})`);
       }
 
       // Crear descripcion
@@ -441,8 +501,6 @@ export class EmailSyncService {
           category_id: categoryId
         }
       });
-
-      console.log(`[EmailSync] Created transaction ${transaction.id} for ${finalAmount} RD$${parsed.currency === 'USD' ? ` (original: ${parsed.amount} USD)` : ''}`);
 
       // Recalcular presupuesto de la categoría
       await this.recalculateBudgetSpent(userId, categoryId, transaction.date);
@@ -497,33 +555,83 @@ export class EmailSyncService {
   }
 
   /**
-   * Desconecta el email de un usuario
+   * Desconecta una conexión de email específica
    */
-  static async disconnectEmail(userId: string, provider: 'GMAIL' | 'OUTLOOK' = 'GMAIL'): Promise<void> {
-    const connection = await prisma.emailConnection.findUnique({
-      where: {
-        userId_provider: { userId, provider }
-      }
+  static async disconnectEmailById(connectionId: string, userId: string): Promise<void> {
+    const connection = await prisma.emailConnection.findFirst({
+      where: { id: connectionId, userId }
     });
 
-    if (connection) {
-      // Revocar acceso en Google
-      if (provider === 'GMAIL') {
-        await GmailService.revokeAccess(connection.accessToken);
-      }
+    if (!connection) {
+      throw new Error('Conexión no encontrada');
+    }
 
-      // Eliminar conexion y datos relacionados
-      await prisma.emailConnection.delete({
-        where: { id: connection.id }
-      });
+    // Revocar acceso según el proveedor
+    if (connection.provider === 'GMAIL') {
+      await GmailService.revokeAccess(connection.accessToken);
+    } else if (connection.provider === 'OUTLOOK') {
+      await OutlookService.revokeAccess(connection.accessToken);
+    }
+
+    // Eliminar conexion y datos relacionados
+    await prisma.emailConnection.delete({
+      where: { id: connection.id }
+    });
+  }
+
+  /**
+   * Desconecta el email de un usuario (por proveedor - compatibilidad)
+   */
+  static async disconnectEmail(userId: string, provider?: 'GMAIL' | 'OUTLOOK'): Promise<void> {
+    // Si no se especifica provider, buscar cualquier conexión activa
+    const connection = provider
+      ? await prisma.emailConnection.findUnique({
+          where: { userId_provider: { userId, provider } }
+        })
+      : await prisma.emailConnection.findFirst({
+          where: { userId, isActive: true }
+        });
+
+    if (connection) {
+      await this.disconnectEmailById(connection.id, userId);
     }
   }
 
   /**
-   * Obtiene el estado de conexion de email de un usuario
+   * Sincroniza todas las conexiones activas de un usuario
+   */
+  static async syncAllUserConnections(userId: string): Promise<{ results: SyncResult[]; totalTransactions: number }> {
+    const connections = await prisma.emailConnection.findMany({
+      where: { userId, isActive: true }
+    });
+
+    if (connections.length === 0) {
+      throw new Error('No hay emails conectados');
+    }
+
+    // Verificar que ninguna esté en progreso
+    const inProgress = connections.find(c => c.lastSyncStatus === 'IN_PROGRESS');
+    if (inProgress) {
+      throw new Error('Ya hay una sincronización en curso');
+    }
+
+    const results: SyncResult[] = [];
+    let totalTransactions = 0;
+
+    for (const connection of connections) {
+      const result = await this.syncUserEmails(connection.id);
+      results.push(result);
+      totalTransactions += result.transactionsCreated;
+    }
+
+    return { results, totalTransactions };
+  }
+
+  /**
+   * Obtiene el estado de conexion de email de un usuario (soporta múltiples conexiones)
    */
   static async getConnectionStatus(userId: string): Promise<any> {
-    const connection = await prisma.emailConnection.findFirst({
+    const connections = await prisma.emailConnection.findMany({
       where: { userId, isActive: true },
       include: {
         bankFilters: true,
@@ -536,36 +644,62 @@ export class EmailSyncService {
       }
     });
 
-    if (!connection) {
-      return { connected: false };
+    if (connections.length === 0) {
+      return {
+        connected: false,
+        connections: [],
+        connectedProviders: []
+      };
     }
 
-    // Obtener estadisticas
-    const stats = await prisma.importedBankEmail.groupBy({
-      by: ['status'],
-      where: { emailConnectionId: connection.id },
-      _count: true
-    });
+    // Procesar cada conexión
+    const connectionDetails = await Promise.all(
+      connections.map(async (connection) => {
+        // Obtener estadisticas por conexión
+        const stats = await prisma.importedBankEmail.groupBy({
+          by: ['status'],
+          where: { emailConnectionId: connection.id },
+          _count: true
+        });
 
-    // Contar transacciones REALES creadas desde emails (status SUCCESS con transactionId)
-    const transactionsCreated = await prisma.importedBankEmail.count({
-      where: {
-        emailConnectionId: connection.id,
-        status: 'SUCCESS',
-        transactionId: { not: null }
-      }
-    });
+        // Contar transacciones reales creadas
+        const transactionsCreated = await prisma.importedBankEmail.count({
+          where: {
+            emailConnectionId: connection.id,
+            status: 'SUCCESS',
+            transactionId: { not: null }
+          }
+        });
+
+        return {
+          id: connection.id,
+          provider: connection.provider,
+          email: connection.email,
+          lastSyncAt: connection.lastSyncAt,
+          lastSyncStatus: connection.lastSyncStatus,
+          banksConfigured: connection.bankFilters.length,
+          emailsImported: connection._count.importedEmails,
+          importedCount: transactionsCreated,
+          stats: stats.reduce((acc, s) => ({ ...acc, [s.status]: s._count }), {})
+        };
+      })
+    );
+
+    // Calcular totales
+    const totalImported = connectionDetails.reduce((sum, c) => sum + c.importedCount, 0);
+    const connectedProviders = connectionDetails.map(c => c.provider);
 
     return {
       connected: true,
-      provider: connection.provider,
-      email: connection.email,
-      lastSyncAt: connection.lastSyncAt,
-      lastSyncStatus: connection.lastSyncStatus,
-      banksConfigured: connection.bankFilters.length,
-      emailsImported: connection._count.importedEmails,
-      importedCount: transactionsCreated, // Transacciones reales creadas
-      stats: stats.reduce((acc, s) => ({ ...acc, [s.status]: s._count }), {})
+      connections: connectionDetails,
+      connectedProviders,
+      totalImported,
+      // Mantener compatibilidad con versión anterior (usar primera conexión)
+      provider: connectionDetails[0]?.provider,
+      email: connectionDetails[0]?.email,
+      lastSyncAt: connectionDetails[0]?.lastSyncAt,
+      lastSyncStatus: connectionDetails[0]?.lastSyncStatus,
+      importedCount: totalImported
     };
   }
 
@@ -640,8 +774,6 @@ export class EmailSyncService {
           data: { spent: newSpent }
         });
 
-        console.log(`[EmailSync] Updated budget ${budget.id} spent: ${newSpent}`);
-
         // Verificar si se debe enviar notificación de alerta
         const budgetAmount = Number(budget.amount);
         const alertThreshold = Number(budget.alert_percentage) || 80;
@@ -659,7 +791,6 @@ export class EmailSyncService {
               budgetAmount - newSpent,
               currency
             );
-            console.log(`[EmailSync] Sent budget alert notification for ${budget.name}`);
           } catch (notifyError) {
             console.error('[EmailSync] Error sending budget alert:', notifyError);
           }
@@ -674,7 +805,6 @@ export class EmailSyncService {
               newSpent - budgetAmount,
               currency
             );
-            console.log(`[EmailSync] Sent budget exceeded notification for ${budget.name}`);
           } catch (notifyError) {
             console.error('[EmailSync] Error sending budget exceeded:', notifyError);
           }

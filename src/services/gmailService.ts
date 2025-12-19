@@ -122,8 +122,6 @@ export class GmailService {
         throw new Error('No refresh token available');
       }
 
-      console.log(`[GmailService] Refreshing token for connection ${connection.id}`);
-
       const newTokens = await this.refreshAccessToken(connection.refreshToken);
 
       // Actualizar tokens en la base de datos
@@ -162,9 +160,6 @@ export class GmailService {
       const dateStr = afterDate.toISOString().split('T')[0].replace(/-/g, '/');
       query += ` after:${dateStr}`;
     }
-
-    console.log(`[GmailService] Search query: ${query}`);
-    console.log(`[GmailService] Looking for emails from: ${senderEmails.join(', ')}`);
 
     const response = await axios.get('https://gmail.googleapis.com/gmail/v1/users/me/messages', {
       headers: { Authorization: `Bearer ${accessToken}` },

@@ -3,6 +3,8 @@ import { authenticateToken } from '../middlewares/auth';
 import {
   getGmailAuthUrl,
   handleGmailCallback,
+  getOutlookAuthUrl,
+  handleOutlookCallback,
   getConnectionStatus,
   triggerSync,
   disconnectEmail,
@@ -22,6 +24,9 @@ const router: ReturnType<typeof Router> = Router();
 // Callback de OAuth de Gmail (debe ser publico para que Google pueda redirigir)
 router.get('/gmail/callback', handleGmailCallback);
 
+// Callback de OAuth de Outlook (debe ser publico para que Microsoft pueda redirigir)
+router.get('/outlook/callback', handleOutlookCallback);
+
 // Bancos soportados (puede ser publico)
 router.get('/supported-banks', getSupportedBanks);
 
@@ -32,14 +37,17 @@ router.get('/supported-banks', getSupportedBanks);
 // Obtener URL de autorizacion de Gmail
 router.get('/gmail/auth-url', authenticateToken, getGmailAuthUrl);
 
+// Obtener URL de autorizacion de Outlook
+router.get('/outlook/auth-url', authenticateToken, getOutlookAuthUrl);
+
 // Obtener estado de conexion
 router.get('/status', authenticateToken, getConnectionStatus);
 
 // Iniciar sincronizacion manual
 router.post('/sync', authenticateToken, triggerSync);
 
-// Desconectar email
-router.delete('/disconnect', authenticateToken, disconnectEmail);
+// Desconectar email (con connectionId específico o cualquiera)
+router.delete('/disconnect/:connectionId?', authenticateToken, disconnectEmail);
 
 // Historial de emails importados
 router.get('/history', authenticateToken, getImportHistory);

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { GmailService } from '../services/gmailService';
+import { OutlookService } from '../services/outlookService';
 import { EmailSyncService } from '../services/emailSyncService';
 
 const prisma = new PrismaClient();
@@ -16,6 +17,19 @@ export const getGmailAuthUrl = async (req: Request, res: Response) => {
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    // Verificar si ya hay una conexión de Gmail activa
+    const existingGmail = await prisma.emailConnection.findFirst({
+      where: { userId, provider: 'GMAIL', isActive: true }
+    });
+
+    if (existingGmail) {
+      return res.status(409).json({
+        error: 'Gmail ya conectado',
+        message: 'Ya tienes una cuenta de Gmail conectada. Desconéctala primero si deseas usar otra.',
+        email: existingGmail.email
+      });
     }
 
     const authUrl = GmailService.getAuthorizationUrl(
@@ -88,6 +102,99 @@ export const handleGmailCallback = async (req: Request, res: Response) => {
 };
 
 /**
+ * Obtiene la URL de autorizacion para Outlook
+ * GET /api/email-sync/outlook/auth-url
+ */
+export const getOutlookAuthUrl = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { mobileRedirectUrl } = req.query;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    // Verificar si ya hay una conexión de Outlook activa
+    const existingOutlook = await prisma.emailConnection.findFirst({
+      where: { userId, provider: 'OUTLOOK', isActive: true }
+    });
+
+    if (existingOutlook) {
+      return res.status(409).json({
+        error: 'Outlook ya conectado',
+        message: 'Ya tienes una cuenta de Outlook conectada. Desconéctala primero si deseas usar otra.',
+        email: existingOutlook.email
+      });
+    }
+
+    const authUrl = OutlookService.getAuthorizationUrl(
+      userId,
+      mobileRedirectUrl as string | undefined
+    );
+
+    return res.json({
+      success: true,
+      authUrl
+    });
+
+  } catch (error: any) {
+    console.error('[EmailSync] Error getting Outlook auth URL:', error);
+    return res.status(500).json({
+      error: 'Error al obtener URL de autorizacion',
+      message: error.message
+    });
+  }
+};
+
+/**
+ * Callback de autorizacion OAuth de Outlook
+ * GET /api/email-sync/outlook/callback
+ */
+export const handleOutlookCallback = async (req: Request, res: Response) => {
+  // Decodificar el state para obtener userId y mobileRedirectUrl
+  let userId: string | undefined;
+  let mobileRedirectUrl = 'finzenai://email-sync/callback';
+
+  try {
+    const { code, state, error, error_description } = req.query;
+
+    // Intentar decodificar el state
+    if (state) {
+      try {
+        const stateData = JSON.parse(Buffer.from(state as string, 'base64').toString('utf-8'));
+        userId = stateData.userId;
+        mobileRedirectUrl = stateData.mobileRedirectUrl || mobileRedirectUrl;
+      } catch (e) {
+        // Si falla el decode, asumir que state es el userId (compatibilidad)
+        userId = state as string;
+      }
+    }
+
+    if (error) {
+      console.error('[EmailSync] Outlook OAuth error:', error, error_description);
+      return res.redirect(`${mobileRedirectUrl}?error=${error}&message=${encodeURIComponent(error_description as string || '')}`);
+    }
+
+    if (!code || !userId) {
+      return res.redirect(`${mobileRedirectUrl}?error=missing_params`);
+    }
+
+    // Conectar Outlook
+    const connection = await EmailSyncService.connectOutlook(
+      userId,
+      code as string
+    );
+
+    // Redirigir a la app con exito
+    return res.redirect(`${mobileRedirectUrl}?success=true&email=${encodeURIComponent(connection.email)}&provider=outlook`);
+
+  } catch (error: any) {
+    console.error('[EmailSync] Outlook callback error:', error);
+    return res.redirect(`${mobileRedirectUrl}?error=${encodeURIComponent(error.message)}`);
+  }
+};
+
+/**
  * Obtiene el estado de conexion de email
  * GET /api/email-sync/status
  */
@@ -116,7 +223,7 @@ export const getConnectionStatus = async (req: Request, res: Response) => {
 };
 
 /**
- * Inicia sincronizacion manual
+ * Inicia sincronizacion manual de todas las conexiones
  * POST /api/email-sync/sync
  */
 export const triggerSync = async (req: Request, res: Response) => {
@@ -127,33 +234,23 @@ export const triggerSync = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'No autorizado' });
     }
 
-    // Obtener conexion activa
-    const connection = await prisma.emailConnection.findFirst({
-      where: { userId, isActive: true }
-    });
+    // Sincronizar todas las conexiones activas
+    const { results, totalTransactions } = await EmailSyncService.syncAllUserConnections(userId);
 
-    if (!connection) {
-      return res.status(404).json({
-        error: 'No hay email conectado',
-        message: 'Primero debes conectar tu cuenta de Gmail'
-      });
-    }
-
-    // Verificar que no haya sync en progreso
-    if (connection.lastSyncStatus === 'IN_PROGRESS') {
-      return res.status(409).json({
-        error: 'Sincronizacion en progreso',
-        message: 'Ya hay una sincronizacion en curso, espera a que termine'
-      });
-    }
-
-    // Iniciar sincronizacion
-    const result = await EmailSyncService.syncUserEmails(connection.id);
+    // Calcular totales
+    const totalEmailsProcessed = results.reduce((sum, r) => sum + r.emailsProcessed, 0);
+    const totalEmailsSkipped = results.reduce((sum, r) => sum + r.emailsSkipped, 0);
 
     return res.json({
       success: true,
-      message: `Sincronizacion completada: ${result.transactionsCreated} transacciones importadas`,
-      result
+      message: `Sincronización completada: ${totalTransactions} transacciones importadas`,
+      result: {
+        connectionsProcessed: results.length,
+        transactionsCreated: totalTransactions,
+        emailsProcessed: totalEmailsProcessed,
+        emailsSkipped: totalEmailsSkipped,
+        details: results
+      }
     });
 
   } catch (error: any) {
@@ -166,18 +263,25 @@ export const triggerSync = async (req: Request, res: Response) => {
 };
 
 /**
- * Desconecta el email
- * DELETE /api/email-sync/disconnect
+ * Desconecta una conexión de email específica
+ * DELETE /api/email-sync/disconnect/:connectionId
  */
 export const disconnectEmail = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
+    const { connectionId } = req.params;
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
     }
 
-    await EmailSyncService.disconnectEmail(userId);
+    if (connectionId) {
+      // Desconectar conexión específica
+      await EmailSyncService.disconnectEmailById(connectionId, userId);
+    } else {
+      // Compatibilidad: desconectar la primera conexión activa
+      await EmailSyncService.disconnectEmail(userId);
+    }
 
     return res.json({
       success: true,
@@ -442,6 +546,8 @@ export const getSupportedBanks = async (req: Request, res: Response) => {
 export default {
   getGmailAuthUrl,
   handleGmailCallback,
+  getOutlookAuthUrl,
+  handleOutlookCallback,
   getConnectionStatus,
   triggerSync,
   disconnectEmail,
