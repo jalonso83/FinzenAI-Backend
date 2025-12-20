@@ -14,6 +14,7 @@ const OUTLOOK_SCOPES = [
   'profile',
   'email',
   'offline_access',
+  'https://graph.microsoft.com/User.Read',
   'https://graph.microsoft.com/Mail.Read'
 ];
 
