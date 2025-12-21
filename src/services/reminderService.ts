@@ -448,25 +448,50 @@ export class ReminderService {
    * Obtiene estadísticas de recordatorios de un usuario
    */
   static async getReminderStats(userId: string): Promise<{
-    total: number;
-    active: number;
+    totalReminders: number;
+    activeReminders: number;
+    totalMonthlyAmount: number;
     upcomingThisWeek: number;
-    overdueCount: number;
+    byType: Record<PaymentType, number>;
   }> {
-    const [total, active, upcomingPayments] = await Promise.all([
-      prisma.paymentReminder.count({ where: { userId } }),
-      prisma.paymentReminder.count({ where: { userId, isActive: true } }),
-      this.getUpcomingPayments(userId, 7)
-    ]);
+    // Obtener todos los recordatorios del usuario
+    const allReminders = await prisma.paymentReminder.findMany({
+      where: { userId }
+    });
 
-    const overdueCount = upcomingPayments.filter(p => p.isOverdue).length;
+    // Obtener recordatorios activos
+    const activeReminders = allReminders.filter(r => r.isActive);
+
+    // Calcular total mensual (suma de montos de recordatorios activos)
+    const totalMonthlyAmount = activeReminders.reduce((sum, reminder) => {
+      return sum + (reminder.amount ? Number(reminder.amount) : 0);
+    }, 0);
+
+    // Obtener pagos próximos esta semana
+    const upcomingPayments = await this.getUpcomingPayments(userId, 7);
     const upcomingThisWeek = upcomingPayments.filter(p => !p.isOverdue).length;
 
+    // Contar por tipo
+    const byType: Record<PaymentType, number> = {
+      CREDIT_CARD: 0,
+      LOAN: 0,
+      MORTGAGE: 0,
+      UTILITY: 0,
+      INSURANCE: 0,
+      SUBSCRIPTION: 0,
+      OTHER: 0
+    };
+
+    for (const reminder of activeReminders) {
+      byType[reminder.type]++;
+    }
+
     return {
-      total,
-      active,
+      totalReminders: allReminders.length,
+      activeReminders: activeReminders.length,
+      totalMonthlyAmount,
       upcomingThisWeek,
-      overdueCount
+      byType
     };
   }
 }
