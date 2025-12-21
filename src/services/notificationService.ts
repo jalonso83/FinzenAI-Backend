@@ -283,6 +283,10 @@ export class NotificationService {
         return preferences.weeklyReportEnabled;
       case 'TIP':
         return preferences.tipsEnabled;
+      case 'PAYMENT_REMINDER':
+      case 'PAYMENT_DUE_TODAY':
+      case 'PAYMENT_OVERDUE':
+        return preferences.paymentRemindersEnabled ?? true;
       case 'SYSTEM':
         return true; // System notifications always enabled
       default:

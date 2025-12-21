@@ -67,12 +67,6 @@ export const getBudgets = async (req: Request, res: Response) => {
       prisma.budget.count({ where })
     ]);
 
-    // Log para debugging
-    console.log('🔍 [getBudgets] Raw budgets from Prisma:', JSON.stringify(budgets, null, 2));
-    budgets.forEach((budget, index) => {
-      console.log(`🔍 [Budget ${index}] spent field:`, budget.spent, 'type:', typeof budget.spent);
-    });
-
     // Convertir Decimal a number para asegurar serialización correcta
     const serializedBudgets = budgets.map(budget => ({
       ...budget,

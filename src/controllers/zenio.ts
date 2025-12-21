@@ -688,19 +688,16 @@ function sleep(ms: number): Promise<void> {
 // Función para verificar y cancelar runs activos en un thread
 async function ensureNoActiveRuns(threadId: string): Promise<void> {
   try {
-    console.log('[Zenio] Verificando runs activos en el thread...');
     const runsResponse: any = await axios.get(
       `${OPENAI_BASE_URL}/threads/${threadId}/runs`,
       { headers: OPENAI_HEADERS }
     );
 
-    const activeRuns = runsResponse.data.data.filter((run: any) => 
+    const activeRuns = runsResponse.data.data.filter((run: any) =>
       ['queued', 'in_progress', 'requires_action'].includes(run.status)
     );
 
     if (activeRuns.length > 0) {
-      console.log(`[Zenio] Encontrados ${activeRuns.length} runs activos, cancelando...`);
-      
       for (const run of activeRuns) {
         try {
           await axios.post(
@@ -708,20 +705,15 @@ async function ensureNoActiveRuns(threadId: string): Promise<void> {
             {},
             { headers: OPENAI_HEADERS }
           );
-          console.log(`[Zenio] Run ${run.id} cancelado exitosamente`);
         } catch (cancelError) {
-          console.log(`[Zenio] Error cancelando run ${run.id}:`, cancelError);
           // Continuar con otros runs
         }
       }
 
       // Esperar un momento para que se procesen las cancelaciones
       await sleep(1000);
-    } else {
-      console.log('[Zenio] No se encontraron runs activos');
     }
   } catch (error) {
-    console.log('[Zenio] Error verificando runs activos:', error);
     // No lanzar error, continuar con el flujo normal
   }
 }
@@ -739,18 +731,14 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
       );
 
       const run = response.data;
-      console.log(`[Zenio] Run status: ${run.status} (intento ${retries + 1}/${maxRetries})`);
 
       // Si el run está completado, devolver
       if (run.status === 'completed') {
-        console.log('[Zenio] Run completado exitosamente');
         return run;
       }
 
       // Si requiere acción (tool calls), devolver
       if (run.status === 'requires_action') {
-        console.log('[Zenio] Run requiere acción (tool calls)');
-        console.log('[Zenio] Tool calls requeridos:', JSON.stringify(run.required_action?.submit_tool_outputs?.tool_calls || [], null, 2));
         return run;
       }
 
@@ -758,7 +746,6 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
       if (run.status === 'failed') {
         const errorMessage = run.last_error?.message || 'Error desconocido';
         if (errorMessage.includes('Rate limit reached')) {
-          console.log('[Zenio] Run falló por rate limit, esperando 60 segundos antes de reintentar...');
           await sleep(60000);
           retries++;
           backoffMs = Math.min(backoffMs * 2, 10000);
@@ -793,15 +780,13 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
       
       // Si es rate limit, esperar más tiempo
       if (error && typeof error === 'object' && 'isAxiosError' in error && (error as any).isAxiosError && (error as any).response?.status === 429) {
-        console.log('[Zenio] Rate limit detectado, esperando 60 segundos...');
-        await sleep(60000); // Esperar 60 segundos en lugar de solo backoffMs * 2
+        await sleep(60000);
         retries++;
-        backoffMs = Math.min(backoffMs * 2, 10000); // Aumentar el máximo backoff
+        backoffMs = Math.min(backoffMs * 2, 10000);
         continue;
       }
-      
+
       // Otros errores, reintentar con backoff
-      console.log(`[Zenio] Error en polling, reintentando... (${retries + 1}/${maxRetries})`);
       await sleep(backoffMs);
       retries++;
       backoffMs = Math.min(backoffMs * 1.2, 3000);
@@ -821,10 +806,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
     const functionArgs = JSON.parse(toolCall.function.arguments);
     const toolCallId = toolCall.id;
 
-    console.log(`[Zenio] Ejecutando tool call: ${functionName} con ID: ${toolCallId}`);
-    console.log(`[Zenio] Argumentos de la función:`, functionArgs);
-
-    let result: any = null; // Fixed TS error
+    let result: any = null;
 
     try {
       switch (functionName) {
@@ -855,8 +837,6 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
         });
       }
 
-      console.log(`[Zenio] Tool call ${functionName} ejecutado exitosamente. Resultado:`, result);
-
       toolOutputs.push({
         tool_call_id: toolCallId,
         output: JSON.stringify(result as any)
@@ -877,15 +857,12 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
 
   // Enviar outputs a OpenAI
   if (toolOutputs.length > 0) {
-    console.log('[Zenio] Enviando tool outputs a OpenAI...');
-    
     try {
-      const submitResponse: any = await axios.post(
+      await axios.post(
         `${OPENAI_BASE_URL}/threads/${threadId}/runs/${runId}/submit_tool_outputs`,
         { tool_outputs: toolOutputs },
         { headers: OPENAI_HEADERS }
       );
-      console.log('[Zenio] Tool outputs enviados exitosamente. Status:', submitResponse.status);
     } catch (error) {
       console.error('[Zenio] Error enviando tool outputs:', error);
       throw error;
@@ -893,17 +870,12 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
   }
 
   // Hacer polling hasta que el run termine
-  console.log('[Zenio] Haciendo polling después de submit_tool_outputs...');
   const finalRun = await pollRunStatus(threadId, runId);
-  console.log('[Zenio] Polling completado. Final run status:', finalRun.status);
 
-  // Devolver tanto el run como las acciones ejecutadas
-  const result = {
+  return {
     run: finalRun,
     executedActions
   };
-  console.log('[Zenio] Retornando resultado de executeToolCalls:', result);
-  return result;
 }
 
 // Función para ejecutar onboarding_financiero
@@ -1015,7 +987,6 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 
 // Función para ejecutar manage_budget_record
 async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
-  console.log('[Zenio] Argumentos recibidos en manage_budget_record:', JSON.stringify(args, null, 2));
   const { operation, category, amount, previous_amount, recurrence } = args;
   const filtros = args.filtros_busqueda;
 
@@ -1118,9 +1089,7 @@ async function executeManageGoalRecord(args: any, userId: string, categories?: a
 // Función para ejecutar list_categories
 async function executeListCategories(args: any, categories?: any[]): Promise<any> {
   const { module } = args;
-  
-  console.log(`[Zenio] Listando categorías para módulo: ${module}`);
-  
+
   if (!categories || categories.length === 0) {
     // Si no hay categorías del frontend, obtener de la BD
     try {
@@ -1128,7 +1097,6 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
         select: { name: true, type: true }
       });
       categories = dbCategories;
-      console.log('[Zenio] Categorías obtenidas de la BD:', categories.length);
     } catch (error) {
       console.error('[Zenio] Error obteniendo categorías de la BD:', error);
       return {
@@ -1170,8 +1138,6 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
     }
     return cat;
   });
-
-  console.log(`[Zenio] Categorías para ${module}:`, formattedCategories);
 
   return {
     categories: formattedCategories,
@@ -1725,8 +1691,6 @@ async function insertBudget(category: string, amount: string, recurrence: string
 }
 
 async function updateBudget(category: string, previous_amount: string, amount: string, userId: string, categories?: any[]): Promise<any> {
-  console.log('[updateBudget] Parámetros recibidos:', { category, previous_amount, amount, userId });
-
   // Validar que previous_amount y amount existan
   if (!previous_amount) {
     throw new Error('El monto anterior del presupuesto es requerido');
@@ -1775,8 +1739,6 @@ async function updateBudget(category: string, previous_amount: string, amount: s
     }
   });
 
-  console.log('[updateBudget] Presupuesto encontrado:', budget ? `ID: ${budget.id}, Monto actual: ${budget.amount}` : 'No encontrado');
-
   if (!budget) {
     throw new Error(`No encontré un presupuesto activo de ${category}. Verifica que exista el presupuesto que quieres actualizar.`);
   }
@@ -1807,8 +1769,6 @@ async function updateBudget(category: string, previous_amount: string, amount: s
 }
 
 async function deleteBudget(category: string, previous_amount: string, userId: string, categories?: any[]): Promise<any> {
-  console.log('[deleteBudget] Parámetros recibidos:', { category, previous_amount, userId });
-
   // Validar que previous_amount exista
   if (!previous_amount) {
     throw new Error('El monto del presupuesto a eliminar es requerido');
@@ -1845,8 +1805,6 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
       }
     }
   });
-
-  console.log('[deleteBudget] Presupuesto encontrado:', budget ? `ID: ${budget.id}, Monto: ${budget.amount}` : 'No encontrado');
 
   if (!budget) {
     throw new Error(`No encontré un presupuesto activo de ${category}. Verifica que exista el presupuesto que quieres eliminar.`);
@@ -2411,22 +2369,11 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // 3. Obtener datos de la petición
-    console.log('🔍 PAYLOAD COMPLETO RECIBIDO EN ZENIO:', Object.keys(req.body));
-    console.log('🔍 CAMPO TRANSACTIONS EN PAYLOAD:', !!req.body.transactions);
-    
     let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactions } = req.body;
-    
-    // Debug log para verificar transactions
-    if (transactions) {
-      console.log('🔍 TRANSACTIONS RECIBIDAS EN ZENIO - Count:', transactions.length);
-    } else {
-      console.log('❌ NO SE RECIBIERON TRANSACTIONS EN ZENIO');
-    }
     threadId = incomingThreadId;
-    
+
     // Usar zona horaria del usuario o default a UTC
     const userTimezone = timezone || 'UTC';
-    console.log(`[Zenio] Zona horaria del usuario: ${userTimezone}`);
 
     // 3.1. Obtener categorías de la base de datos SOLO si no se proporcionaron desde el frontend
     if (!categories || categories.length === 0) {
@@ -2435,20 +2382,9 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           select: { name: true, type: true }
         });
         categories = dbCategories.map(cat => cat.name);
-        console.log('[Zenio] Categorías obtenidas de la BD (respaldo):', categories);
       } catch (error) {
         console.error('[Zenio] Error obteniendo categorías de la BD:', error);
         categories = [];
-      }
-    } else {
-      // Verificar si las categorías vienen con información completa o solo nombres
-      const hasFullInfo = categories.length > 0 && typeof categories[0] === 'object' && categories[0].name;
-      if (hasFullInfo) {
-        console.log('[Zenio] Usando categorías completas del frontend:', categories.length, 'categorías');
-        // Mantener las categorías originales con información completa (id, name, type)
-        // NO transformar a solo nombres
-      } else {
-        console.log('[Zenio] Usando categorías simples del frontend:', categories);
       }
     }
 
@@ -2456,20 +2392,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // 4. Procesar expresiones temporales
     if (typeof message === 'string') {
-      const mensajeOriginal = message;
       message = reemplazarExpresionesTemporalesPorFecha(message);
-      if (mensajeOriginal !== message) {
-        const ahora = new Date();
-        const offsetRD = -4;
-        const utc = ahora.getTime() + (ahora.getTimezoneOffset() * 60000);
-        const fechaRD = new Date(utc + (offsetRD * 60 * 60 * 1000));
-        
-        console.log('🕐 Fechas relativas reemplazadas:');
-        console.log('   Zona horaria: República Dominicana (UTC-4)');
-        console.log('   Fecha local actual:', fechaRD.toISOString().split('T')[0]);
-        console.log('   Original:', mensajeOriginal);
-        console.log('   Procesado:', message);
-      }
     }
 
     // 5. Crear o reutilizar thread
@@ -2535,7 +2458,6 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // 6. Crear run con el assistant
-    console.log('[Zenio] Creando run...');
 
     // Fecha actual dinámica para el Assistant
     const ahora = new Date();
@@ -2562,10 +2484,8 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     );
 
     const runId = runRes.data.id;
-    console.log(`[Zenio] Run creado: ${runId}`);
 
     // 7. Hacer polling del run
-    console.log('[Zenio] Iniciando polling del run...');
     const run = await pollRunStatus(threadId!, runId);
 
     // 8. Manejar tool calls si los hay - LOOP hasta que no haya más tool calls
@@ -2576,7 +2496,6 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     while (currentRun.status === 'requires_action' && currentRun.required_action?.submit_tool_outputs?.tool_calls && toolCallIterations < maxToolCallIterations) {
       toolCallIterations++;
-      console.log(`[Zenio] Tool calls detectados (iteración ${toolCallIterations}/${maxToolCallIterations}), ejecutando...`);
 
       const toolCallResult = await executeToolCalls(
         threadId!,
@@ -2596,39 +2515,21 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
       // Actualizar el run actual para la siguiente iteración
       currentRun = toolCallResult.run;
-
-      console.log(`[Zenio] Iteración ${toolCallIterations} completada. Run status: ${currentRun.status}`);
-
-      // Si aún requiere acción, el loop continuará
-      // Si está completado o en otro estado, el loop terminará
     }
 
     if (toolCallIterations >= maxToolCallIterations) {
-      console.log('[Zenio] ⚠️ ADVERTENCIA: Se alcanzó el límite máximo de iteraciones de tool calls');
+      console.warn('[Zenio] Se alcanzó el límite máximo de iteraciones de tool calls');
     }
 
     // 9. Obtener la respuesta final del assistant
-    console.log('[Zenio] Obteniendo respuesta final...');
     const messagesRes: any = await axios.get(
       `${OPENAI_BASE_URL}/threads/${threadId}/messages`,
       { headers: OPENAI_HEADERS }
     );
     
     const messages = messagesRes.data.data;
-
-    // 🔍 LOG: Mostrar todos los mensajes del thread
-    console.log('🧵 [Zenio] TODOS LOS MENSAJES EN EL THREAD:');
-    messages.forEach((msg: any, index: number) => {
-      console.log(`   Mensaje ${index + 1}: ${msg.role} - "${msg.content?.[0]?.text?.value || 'Sin contenido'}"`);
-    });
-
     const lastAssistantMessage = messages.find((msg: any) => msg.role === 'assistant');
     const assistantResponse = lastAssistantMessage?.content?.[0]?.text?.value || 'No se pudo obtener respuesta del asistente.';
-
-    // 🔍 LOG: Mensaje específico del asistente
-    console.log('🤖 [Zenio] MENSAJE DEL ASISTENTE QUE SE ENVIARÁ AL FRONTEND:');
-    console.log(`   "${assistantResponse}"`);
-    console.log(`   Longitud: ${assistantResponse.length} caracteres`);
 
     // 10. Incrementar contador de consultas de Zenio y obtener uso actual
     let zenioUsage = { used: 0, limit: 10, remaining: 10 };
@@ -2656,8 +2557,6 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           limit: limit,
           remaining: limit === -1 ? -1 : Math.max(0, limit - updatedSubscription.zenioQueriesUsed),
         };
-
-        console.log(`[Zenio] Consulta registrada. Uso: ${zenioUsage.used}/${zenioUsage.limit === -1 ? '∞' : zenioUsage.limit}`);
       }
     } catch (usageError) {
       console.error('[Zenio] Error actualizando contador de uso:', usageError);
@@ -2665,9 +2564,6 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // 11. Responder al frontend
-    console.log('[Zenio] Enviando respuesta al frontend');
-
-    // Preparar respuesta con acciones ejecutadas
     const response: any = {
       message: assistantResponse,
       threadId,
@@ -2679,33 +2575,13 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     if (executedActions.length > 0) {
       response.executedActions = executedActions;
 
-      // 🔍 LOG: Mostrar acciones ejecutadas
-      console.log('⚡ [Zenio] ACCIONES EJECUTADAS:');
-      executedActions.forEach((action, index) => {
-        console.log(`   Acción ${index + 1}: ${action.action}`);
-        console.log(`   Data: ${JSON.stringify(action.data, null, 2)}`);
-      });
-
       // También mantener compatibilidad con la última acción
       const lastAction = executedActions[executedActions.length - 1];
       response.action = lastAction.action;
       response.transaction = lastAction.data.transaction;
       response.budget = lastAction.data.budget;
-      response.goal = lastAction.data.goal; // Incluir la meta si es una acción de meta
-      console.log(`[Zenio] Incluyendo ${executedActions.length} acciones ejecutadas en respuesta`);
-    } else {
-      console.log('❌ [Zenio] NO SE EJECUTARON ACCIONES');
+      response.goal = lastAction.data.goal;
     }
-
-    console.log('[Zenio] Enviando respuesta final al frontend...');
-
-    // 🔍 LOG: Respuesta completa que se envía al frontend
-    console.log('📤 [Zenio] RESPUESTA COMPLETA AL FRONTEND:');
-    console.log(`   message: "${response.message}"`);
-    console.log(`   threadId: ${response.threadId}`);
-    console.log(`   autoGreeting: ${response.autoGreeting}`);
-    if (response.action) console.log(`   action: ${response.action}`);
-    if (response.executedActions) console.log(`   executedActions: ${response.executedActions.length} acciones`);
 
     return res.json(response);
 
@@ -3099,24 +2975,13 @@ export const createGoalFromZenio = async (req: Request, res: Response) => {
 
 // Función para transcribir audio usando OpenAI Whisper
 export const transcribeAudio = async (req: Request, res: Response) => {
-  console.log('[Transcribe] Petición recibida desde app móvil');
-
   try {
     if (!req.file) {
-      console.log('[Transcribe] Error: No se recibió archivo de audio');
       return res.status(400).json({
         error: 'No audio file provided',
         message: 'Por favor, envía un archivo de audio'
       });
     }
-
-    console.log('[Transcribe] Archivo recibido:', {
-      filename: req.file.filename,
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      path: req.file.path
-    });
 
     // Crear FormData para Node.js
     const formData = new FormData();
@@ -3129,23 +2994,19 @@ export const transcribeAudio = async (req: Request, res: Response) => {
     formData.append('model', 'whisper-1');
     formData.append('language', 'es');
 
-    console.log('[Transcribe] Enviando a OpenAI Whisper API...');
-
     // Usar axios en lugar de fetch para Node.js
     const response: any = await axios.post<{ text: string }>('https://api.openai.com/v1/audio/transcriptions', formData, {
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
         ...formData.getHeaders()
       },
-      timeout: 30000 // 30 segundos timeout
+      timeout: 30000
     });
 
     // Limpiar archivo temporal
     fs.unlinkSync(req.file.path);
-    console.log('[Transcribe] Archivo temporal eliminado');
 
     const transcription = response.data.text || '';
-    console.log('[Transcribe] Transcripción completada:', transcription.substring(0, 100) + '...');
 
     return res.json({
       transcription,
@@ -3159,9 +3020,8 @@ export const transcribeAudio = async (req: Request, res: Response) => {
     if (req.file?.path) {
       try {
         fs.unlinkSync(req.file.path);
-        console.log('[Transcribe] Archivo temporal eliminado tras error');
       } catch (cleanupError) {
-        console.error('[Transcribe] Error limpiando archivo temporal:', cleanupError);
+        // Ignore cleanup errors
       }
     }
 

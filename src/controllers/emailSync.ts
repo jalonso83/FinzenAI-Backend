@@ -156,7 +156,16 @@ export const handleOutlookCallback = async (req: Request, res: Response) => {
   let mobileRedirectUrl = 'finzenai://email-sync/callback';
 
   try {
-    const { code, state, error, error_description } = req.query;
+    const { code, state, error, error_description, error_uri } = req.query;
+
+    // Log all query params for debugging
+    console.log('[EmailSync] Outlook callback received:', {
+      hasCode: !!code,
+      hasState: !!state,
+      error,
+      error_description,
+      error_uri
+    });
 
     // Intentar decodificar el state
     if (state) {
@@ -171,8 +180,13 @@ export const handleOutlookCallback = async (req: Request, res: Response) => {
     }
 
     if (error) {
-      console.error('[EmailSync] Outlook OAuth error:', error, error_description);
-      return res.redirect(`${mobileRedirectUrl}?error=${error}&message=${encodeURIComponent(error_description as string || '')}`);
+      console.error('[EmailSync] Outlook OAuth error:', {
+        error,
+        description: error_description,
+        uri: error_uri
+      });
+      const errorMsg = error_description || error || 'Unknown error';
+      return res.redirect(`${mobileRedirectUrl}?error=${error}&message=${encodeURIComponent(errorMsg as string)}`);
     }
 
     if (!code || !userId) {

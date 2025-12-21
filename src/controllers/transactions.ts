@@ -334,14 +334,6 @@ export const getTransactions = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const { page = '1', limit = '10', type, category_id, startDate, endDate } = req.query;
-    
-    // Debug: log de parámetros recibidos
-    console.log('=== getTransactions DEBUG ===');
-    console.log('Query params:', req.query);
-    console.log('Limit recibido:', limit);
-    console.log('Page recibido:', page);
-    console.log('UserId:', userId);
-    console.log('==============================');
 
     const pageNum = parseInt(page as string);
     const limitNum = parseInt(limit as string);

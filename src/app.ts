@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { BudgetScheduler } from './services/budgetScheduler';
 import { EmailSyncScheduler } from './services/emailSyncScheduler';
+import { ReminderScheduler } from './services/reminderScheduler';
 
 // Force deployment trigger - Email Sync Integration
 
@@ -21,6 +22,7 @@ import budgetSchedulerRoutes from './routes/budgetScheduler';
 import subscriptionRoutes from './routes/subscriptions';
 import emailSyncRoutes from './routes/emailSync';
 import notificationRoutes from './routes/notifications';
+import reminderRoutes from './routes/reminders';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
@@ -67,6 +69,7 @@ app.use('/api/scheduler', budgetSchedulerRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/email-sync', emailSyncRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/reminders', reminderRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
@@ -113,6 +116,9 @@ async function startServer() {
     // Iniciar scheduler de sincronizacion de emails
     EmailSyncScheduler.startScheduler();
 
+    // Iniciar scheduler de recordatorios de pago
+    ReminderScheduler.startScheduler();
+
     // Iniciar servidor
     app.listen(PORT, () => {
       console.log(`🚀 FinZen AI Backend running on port ${PORT}`);
@@ -130,6 +136,7 @@ process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down server...');
   BudgetScheduler.stopScheduler();
   EmailSyncScheduler.stopScheduler();
+  ReminderScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
@@ -138,6 +145,7 @@ process.on('SIGTERM', async () => {
   console.log('\n🛑 Shutting down server...');
   BudgetScheduler.stopScheduler();
   EmailSyncScheduler.stopScheduler();
+  ReminderScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
