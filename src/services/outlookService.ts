@@ -78,7 +78,7 @@ export class OutlookService {
       state
     });
 
-    return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
+    return `https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?${params.toString()}`;
   }
 
   /**
@@ -94,7 +94,7 @@ export class OutlookService {
     });
 
     const response = await axios.post(
-      'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      'https://login.microsoftonline.com/consumers/oauth2/v2.0/token',
       params.toString(),
       {
         headers: {
@@ -118,7 +118,7 @@ export class OutlookService {
     });
 
     const response = await axios.post(
-      'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      'https://login.microsoftonline.com/consumers/oauth2/v2.0/token',
       params.toString(),
       {
         headers: {
