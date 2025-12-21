@@ -612,6 +612,11 @@ model PaymentReminder {
   amount          Decimal?        @db.Decimal(12, 2)
   currency        String          @default("DOP")
 
+  // Límites de tarjeta de crédito (solo para CREDIT_CARD)
+  creditLimit     Decimal?        @db.Decimal(12, 2)  // Límite en moneda local
+  isDualCurrency  Boolean         @default(false)     // Si es tarjeta de doble saldo
+  creditLimitUSD  Decimal?        @db.Decimal(12, 2)  // Límite en USD (si es doble saldo)
+
   // Configuración de notificaciones
   reminderDays    Int[]           @default([3, 1, 0]) // Días antes para notificar
   notifyOnCutoff  Boolean         @default(false)     // Notificar en día de corte

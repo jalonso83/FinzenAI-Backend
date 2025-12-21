@@ -11,6 +11,9 @@ export interface CreateReminderInput {
   cutoffDay?: number;
   amount?: number;
   currency?: string;
+  creditLimit?: number;
+  isDualCurrency?: boolean;
+  creditLimitUSD?: number;
   reminderDays?: number[];
   notifyOnCutoff?: boolean;
   notes?: string;
@@ -23,6 +26,9 @@ export interface UpdateReminderInput {
   cutoffDay?: number | null;
   amount?: number | null;
   currency?: string;
+  creditLimit?: number | null;
+  isDualCurrency?: boolean;
+  creditLimitUSD?: number | null;
   reminderDays?: number[];
   notifyOnCutoff?: boolean;
   notes?: string | null;
@@ -89,6 +95,9 @@ export class ReminderService {
         cutoffDay: input.cutoffDay,
         amount: input.amount,
         currency: input.currency || 'DOP',
+        creditLimit: input.creditLimit,
+        isDualCurrency: input.isDualCurrency || false,
+        creditLimitUSD: input.creditLimitUSD,
         reminderDays: input.reminderDays || [3, 1, 0],
         notifyOnCutoff: input.notifyOnCutoff || false,
         notes: input.notes
