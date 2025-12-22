@@ -11,9 +11,30 @@ importers:
       '@prisma/client':
         specifier: ^5.7.1
         version: 5.22.0(prisma@5.22.0)
+      '@types/bcryptjs':
+        specifier: ^2.4.6
+        version: 2.4.6
+      '@types/cors':
+        specifier: ^2.8.17
+        version: 2.8.19
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.23
+      '@types/jsonwebtoken':
+        specifier: ^9.0.5
+        version: 9.0.10
       '@types/multer':
         specifier: ^2.0.0
         version: 2.0.0
+      '@types/node':
+        specifier: ^20.10.5
+        version: 20.19.4
+      '@types/node-cron':
+        specifier: ^3.0.11
+        version: 3.0.11
+      '@types/nodemailer':
+        specifier: ^6.4.14
+        version: 6.4.17
       axios:
         specifier: ^1.6.2
         version: 1.10.0
@@ -59,28 +80,10 @@ importers:
       stripe:
         specifier: ^19.3.0
         version: 19.3.1(@types/node@20.19.4)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.8.3
     devDependencies:
-      '@types/bcryptjs':
-        specifier: ^2.4.6
-        version: 2.4.6
-      '@types/cors':
-        specifier: ^2.8.17
-        version: 2.8.19
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.23
-      '@types/jsonwebtoken':
-        specifier: ^9.0.5
-        version: 9.0.10
-      '@types/node':
-        specifier: ^20.10.5
-        version: 20.19.4
-      '@types/node-cron':
-        specifier: ^3.0.11
-        version: 3.0.11
-      '@types/nodemailer':
-        specifier: ^6.4.14
-        version: 6.4.17
       nodemon:
         specifier: ^3.0.2
         version: 3.1.10
@@ -90,9 +93,6 @@ importers:
       tsx:
         specifier: ^4.6.2
         version: 4.20.3
-      typescript:
-        specifier: ^5.3.3
-        version: 5.8.3
 
 packages:
 
