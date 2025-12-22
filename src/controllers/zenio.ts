@@ -2368,6 +2368,80 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       console.error('No se pudo obtener el nombre del usuario:', e);
     }
 
+    // 2.1. Validar límite de consultas de Zenio según el plan del usuario
+    const ZENIO_LIMITS: Record<string, number> = {
+      FREE: 10,
+      PREMIUM: -1, // Ilimitado
+      PRO: -1,     // Ilimitado
+    };
+
+    // Obtener o crear suscripción del usuario
+    let subscription = await prisma.subscription.findUnique({
+      where: { userId }
+    });
+
+    if (!subscription) {
+      // Crear suscripción FREE si no existe
+      subscription = await prisma.subscription.create({
+        data: {
+          userId,
+          plan: 'FREE',
+          status: 'ACTIVE',
+          zenioQueriesUsed: 0,
+          zenioQueriesResetAt: new Date(),
+        }
+      });
+      console.log(`[Zenio] Suscripción FREE creada para usuario ${userId}`);
+    }
+
+    // Verificar si necesitamos resetear el contador mensual
+    const now = new Date();
+    const resetDate = subscription.zenioQueriesResetAt;
+
+    // Solo resetear si hay una fecha previa Y estamos en un mes diferente
+    // Si resetDate es null, solo establecer la fecha sin resetear el contador
+    if (!resetDate) {
+      // Primera vez - solo establecer la fecha, mantener el contador actual
+      subscription = await prisma.subscription.update({
+        where: { userId },
+        data: {
+          zenioQueriesResetAt: now,
+        }
+      });
+      console.log(`[Zenio] Fecha de reseteo establecida para usuario ${userId}`);
+    } else if (now.getMonth() !== resetDate.getMonth() || now.getFullYear() !== resetDate.getFullYear()) {
+      // Nuevo mes - resetear contador
+      subscription = await prisma.subscription.update({
+        where: { userId },
+        data: {
+          zenioQueriesUsed: 0,
+          zenioQueriesResetAt: now,
+        }
+      });
+      console.log(`[Zenio] Contador de consultas reseteado para usuario ${userId} (nuevo mes)`);
+    }
+
+    // Verificar si el usuario ha alcanzado el límite
+    const zenioLimit = ZENIO_LIMITS[subscription.plan] || 10;
+    const currentCount = subscription.zenioQueriesUsed || 0;
+
+    if (zenioLimit !== -1 && currentCount >= zenioLimit) {
+      console.log(`[Zenio] Límite alcanzado para usuario ${userId}: ${currentCount}/${zenioLimit}`);
+      return res.status(403).json({
+        success: false,
+        error: 'ZENIO_LIMIT_REACHED',
+        message: 'Has alcanzado el límite de consultas de Zenio para este mes.',
+        upgrade: true,
+        zenioUsage: {
+          used: currentCount,
+          limit: zenioLimit,
+          remaining: 0,
+        }
+      });
+    }
+
+    console.log(`[Zenio] Consultas usadas: ${currentCount}/${zenioLimit === -1 ? '∞' : zenioLimit}`);
+
     // 3. Obtener datos de la petición
     let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactions } = req.body;
     threadId = incomingThreadId;
