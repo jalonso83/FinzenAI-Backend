@@ -144,26 +144,38 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   console.log('✅ Payment succeeded:', invoice.id);
 
-  const userId = (invoice as any).subscription_metadata?.userId;
+  // Obtener el subscription ID del invoice
+  const subscriptionId = invoice.subscription as string;
+  if (!subscriptionId) {
+    console.error('❌ No subscription ID in invoice');
+    return;
+  }
+
+  // Obtener la suscripción de Stripe para acceder al metadata
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const userId = subscription.metadata?.userId;
+
   if (!userId) {
-    console.error('❌ No userId in invoice metadata');
+    console.error('❌ No userId in subscription metadata');
     return;
   }
 
   // Registrar pago
   await subscriptionService.recordPayment({
     userId,
-    subscriptionId: (invoice as any).subscription as string,
+    subscriptionId,
     amount: invoice.amount_paid / 100, // Convertir de centavos a dólares
     currency: invoice.currency,
     status: 'SUCCEEDED',
-    stripePaymentIntentId: (invoice as any).payment_intent as string,
+    stripePaymentIntentId: invoice.payment_intent as string,
     stripeInvoiceId: invoice.id,
     description: `Payment for subscription`,
   });
 
   // Asegurar que la suscripción está activa
   await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.ACTIVE);
+
+  console.log(`✅ Payment recorded for user ${userId}: $${invoice.amount_paid / 100}`);
 }
 
 /**
@@ -172,16 +184,26 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
   console.log('❌ Payment failed:', invoice.id);
 
-  const userId = (invoice as any).subscription_metadata?.userId;
+  // Obtener el subscription ID del invoice
+  const subscriptionId = invoice.subscription as string;
+  if (!subscriptionId) {
+    console.error('❌ No subscription ID in invoice');
+    return;
+  }
+
+  // Obtener la suscripción de Stripe para acceder al metadata
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const userId = subscription.metadata?.userId;
+
   if (!userId) {
-    console.error('❌ No userId in invoice metadata');
+    console.error('❌ No userId in subscription metadata');
     return;
   }
 
   // Registrar pago fallido
   await subscriptionService.recordPayment({
     userId,
-    subscriptionId: (invoice as any).subscription as string,
+    subscriptionId,
     amount: invoice.amount_due / 100,
     currency: invoice.currency,
     status: 'FAILED',
@@ -191,6 +213,8 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
 
   // Marcar suscripción como PAST_DUE
   await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.PAST_DUE);
+
+  console.log(`❌ Failed payment recorded for user ${userId}: $${invoice.amount_due / 100}`);
 
   // TODO: Enviar email notificando pago fallido
 }
