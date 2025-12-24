@@ -144,8 +144,9 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   console.log('✅ Payment succeeded:', invoice.id);
 
-  // Obtener el subscription ID del invoice
-  const subscriptionId = invoice.subscription as string;
+  // Obtener el subscription ID del invoice (cast necesario por tipos de Stripe)
+  const invoiceAny = invoice as any;
+  const subscriptionId = invoiceAny.subscription as string;
   if (!subscriptionId) {
     console.error('❌ No subscription ID in invoice');
     return;
@@ -167,7 +168,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
     amount: invoice.amount_paid / 100, // Convertir de centavos a dólares
     currency: invoice.currency,
     status: 'SUCCEEDED',
-    stripePaymentIntentId: invoice.payment_intent as string,
+    stripePaymentIntentId: invoiceAny.payment_intent as string,
     stripeInvoiceId: invoice.id,
     description: `Payment for subscription`,
   });
@@ -184,8 +185,9 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
   console.log('❌ Payment failed:', invoice.id);
 
-  // Obtener el subscription ID del invoice
-  const subscriptionId = invoice.subscription as string;
+  // Obtener el subscription ID del invoice (cast necesario por tipos de Stripe)
+  const invoiceAny = invoice as any;
+  const subscriptionId = invoiceAny.subscription as string;
   if (!subscriptionId) {
     console.error('❌ No subscription ID in invoice');
     return;
