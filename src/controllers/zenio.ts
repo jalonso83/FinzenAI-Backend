@@ -2606,6 +2606,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     const assistantResponse = lastAssistantMessage?.content?.[0]?.text?.value || 'No se pudo obtener respuesta del asistente.';
 
     // 10. Incrementar contador de consultas de Zenio y obtener uso actual
+    // NOTA: El saludo automático (autoGreeting) NO cuenta como consulta
     let zenioUsage = { used: 0, limit: 10, remaining: 10 };
     try {
       const subscription = await prisma.subscription.findUnique({
@@ -2613,24 +2614,35 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       });
 
       if (subscription) {
-        // Incrementar contador
-        const updatedSubscription = await prisma.subscription.update({
-          where: { userId },
-          data: {
-            zenioQueriesUsed: { increment: 1 },
-          },
-        });
-
         // Obtener límite del plan
         const { PLANS } = await import('../config/stripe');
         const planLimits = PLANS[subscription.plan as keyof typeof PLANS]?.limits;
         const limit = planLimits?.zenioQueries ?? 10;
 
-        zenioUsage = {
-          used: updatedSubscription.zenioQueriesUsed,
-          limit: limit,
-          remaining: limit === -1 ? -1 : Math.max(0, limit - updatedSubscription.zenioQueriesUsed),
-        };
+        // Solo incrementar si NO es autoGreeting (el saludo no cuenta como consulta)
+        if (!autoGreeting) {
+          const updatedSubscription = await prisma.subscription.update({
+            where: { userId },
+            data: {
+              zenioQueriesUsed: { increment: 1 },
+            },
+          });
+
+          zenioUsage = {
+            used: updatedSubscription.zenioQueriesUsed,
+            limit: limit,
+            remaining: limit === -1 ? -1 : Math.max(0, limit - updatedSubscription.zenioQueriesUsed),
+          };
+          console.log(`[Zenio] Consulta contada. Uso: ${updatedSubscription.zenioQueriesUsed}/${limit === -1 ? '∞' : limit}`);
+        } else {
+          // Es autoGreeting - no incrementar, solo retornar el uso actual
+          zenioUsage = {
+            used: subscription.zenioQueriesUsed || 0,
+            limit: limit,
+            remaining: limit === -1 ? -1 : Math.max(0, limit - (subscription.zenioQueriesUsed || 0)),
+          };
+          console.log(`[Zenio] Saludo automático - NO cuenta como consulta. Uso actual: ${subscription.zenioQueriesUsed || 0}/${limit === -1 ? '∞' : limit}`);
+        }
       }
     } catch (usageError) {
       console.error('[Zenio] Error actualizando contador de uso:', usageError);
