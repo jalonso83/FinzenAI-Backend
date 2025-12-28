@@ -1988,7 +1988,7 @@ async function insertGoal(goalData: any, userId: string, categories?: string[]):
 
   if (goalLimit !== -1) {
     const currentGoalCount = await prisma.goal.count({
-      where: { userId, status: 'ACTIVE' }
+      where: { userId, isActive: true }
     });
 
     if (currentGoalCount >= goalLimit) {
@@ -3077,7 +3077,7 @@ export const createGoalFromZenio = async (req: Request, res: Response) => {
 
     if (goalLimit !== -1) {
       const currentGoalCount = await prisma.goal.count({
-        where: { userId, status: 'ACTIVE' }
+        where: { userId, isActive: true }
       });
 
       if (currentGoalCount >= goalLimit) {

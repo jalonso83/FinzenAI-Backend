@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
+import type { Router as RouterType } from 'express';
 
-const router = Router();
+const router: RouterType = Router();
 
 // Configuracion de Apple Universal Links
 const APPLE_TEAM_ID = 'PK4462U2Y4';
