@@ -23,6 +23,7 @@ import subscriptionRoutes from './routes/subscriptions';
 import emailSyncRoutes from './routes/emailSync';
 import notificationRoutes from './routes/notifications';
 import reminderRoutes from './routes/reminders';
+import webRoutes from './routes/web';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
@@ -55,7 +56,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rutas
+// Rutas Web (Universal Links, checkout pages) - SIN prefijo /api
+app.use(webRoutes);
+
+// Rutas API
 app.use('/api/auth', authRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/budgets', budgetRoutes);

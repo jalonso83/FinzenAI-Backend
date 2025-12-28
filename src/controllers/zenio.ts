@@ -1614,6 +1614,35 @@ async function listTransactions(transactionData: any, userId: string, categories
 
 // Funciones auxiliares para presupuestos
 async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[]): Promise<any> {
+  // Validar límite de presupuestos según el plan del usuario
+  const subscription = await prisma.subscription.findUnique({
+    where: { userId }
+  });
+
+  const BUDGET_LIMITS: Record<string, number> = {
+    FREE: 3,
+    PREMIUM: -1,
+    PRO: -1,
+  };
+
+  const plan = subscription?.plan || 'FREE';
+  const budgetLimit = BUDGET_LIMITS[plan] || 3;
+
+  if (budgetLimit !== -1) {
+    const currentBudgetCount = await prisma.budget.count({
+      where: { user_id: userId, is_active: true }
+    });
+
+    if (currentBudgetCount >= budgetLimit) {
+      return {
+        success: false,
+        message: `⚠️ **Límite de presupuestos alcanzado**\n\nHas alcanzado el máximo de ${budgetLimit} presupuestos para tu plan gratuito.\n\n✨ **Mejora a Premium** para crear presupuestos ilimitados y acceder a más funciones.\n\nActualmente tienes: ${currentBudgetCount}/${budgetLimit} presupuestos`,
+        action: 'budget_limit_reached',
+        upgrade: true
+      };
+    }
+  }
+
   const periodMap: { [key: string]: string } = {
     'semanal': 'weekly',
     'mensual': 'monthly',
@@ -1623,7 +1652,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
 
   const now = new Date();
   let startDate: Date, endDate: Date;
-  
+
   if (recurrence === 'semanal') {
     const day = now.getDay();
     const diffToMonday = (day === 0 ? -6 : 1) - day;
@@ -1943,6 +1972,35 @@ async function listBudgets(category: string | undefined, userId: string, categor
 
 // Funciones auxiliares para metas
 async function insertGoal(goalData: any, userId: string, categories?: string[]): Promise<any> {
+  // Validar límite de metas según el plan del usuario
+  const subscription = await prisma.subscription.findUnique({
+    where: { userId }
+  });
+
+  const GOAL_LIMITS: Record<string, number> = {
+    FREE: 2,
+    PREMIUM: -1,
+    PRO: -1,
+  };
+
+  const plan = subscription?.plan || 'FREE';
+  const goalLimit = GOAL_LIMITS[plan] || 2;
+
+  if (goalLimit !== -1) {
+    const currentGoalCount = await prisma.goal.count({
+      where: { userId, status: 'ACTIVE' }
+    });
+
+    if (currentGoalCount >= goalLimit) {
+      return {
+        success: false,
+        message: `⚠️ **Límite de metas alcanzado**\n\nHas alcanzado el máximo de ${goalLimit} metas para tu plan gratuito.\n\n✨ **Mejora a Premium** para crear metas ilimitadas y acceder a más funciones.\n\nActualmente tienes: ${currentGoalCount}/${goalLimit} metas`,
+        action: 'goal_limit_reached',
+        upgrade: true
+      };
+    }
+  }
+
   const {
     name,
     target_amount,
@@ -2875,6 +2933,41 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
       throw new Error('No se pudo determinar el usuario autenticado.');
     }
 
+    // Validar límite de presupuestos según el plan del usuario
+    const subscription = await prisma.subscription.findUnique({
+      where: { userId }
+    });
+
+    const BUDGET_LIMITS: Record<string, number> = {
+      FREE: 3,
+      PREMIUM: -1, // Ilimitado
+      PRO: -1,     // Ilimitado
+    };
+
+    const plan = subscription?.plan || 'FREE';
+    const budgetLimit = BUDGET_LIMITS[plan] || 3;
+
+    if (budgetLimit !== -1) {
+      const currentBudgetCount = await prisma.budget.count({
+        where: { user_id: userId, is_active: true }
+      });
+
+      if (currentBudgetCount >= budgetLimit) {
+        console.log(`[Zenio] Límite de presupuestos alcanzado para usuario ${userId}: ${currentBudgetCount}/${budgetLimit}`);
+        return res.status(403).json({
+          success: false,
+          error: 'BUDGET_LIMIT_REACHED',
+          message: 'Has alcanzado el límite de presupuestos para tu plan.',
+          upgrade: true,
+          budgetUsage: {
+            used: currentBudgetCount,
+            limit: budgetLimit,
+            remaining: 0,
+          }
+        });
+      }
+    }
+
     const { budget_data, operation } = req.body;
 
     if (operation !== 'insert') {
@@ -2966,6 +3059,41 @@ export const createGoalFromZenio = async (req: Request, res: Response) => {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('No se pudo determinar el usuario autenticado.');
+    }
+
+    // Validar límite de metas según el plan del usuario
+    const subscription = await prisma.subscription.findUnique({
+      where: { userId }
+    });
+
+    const GOAL_LIMITS: Record<string, number> = {
+      FREE: 2,
+      PREMIUM: -1, // Ilimitado
+      PRO: -1,     // Ilimitado
+    };
+
+    const plan = subscription?.plan || 'FREE';
+    const goalLimit = GOAL_LIMITS[plan] || 2;
+
+    if (goalLimit !== -1) {
+      const currentGoalCount = await prisma.goal.count({
+        where: { userId, status: 'ACTIVE' }
+      });
+
+      if (currentGoalCount >= goalLimit) {
+        console.log(`[Zenio] Límite de metas alcanzado para usuario ${userId}: ${currentGoalCount}/${goalLimit}`);
+        return res.status(403).json({
+          success: false,
+          error: 'GOAL_LIMIT_REACHED',
+          message: 'Has alcanzado el límite de metas para tu plan.',
+          upgrade: true,
+          goalUsage: {
+            used: currentGoalCount,
+            limit: goalLimit,
+            remaining: 0,
+          }
+        });
+      }
     }
 
     const { goal_data, operation } = req.body;

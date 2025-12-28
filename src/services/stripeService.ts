@@ -59,6 +59,8 @@ export class StripeService {
       }
 
       // Crear sesión de checkout
+      // origin_context no es un parámetro oficial de Stripe Checkout Sessions,
+      // pero la configuración está optimizada para flujo móvil
       const session = await stripe.checkout.sessions.create({
         customer: customerId,
         mode: 'subscription',
@@ -66,17 +68,15 @@ export class StripeService {
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: successUrl,
         cancel_url: cancelUrl,
-        metadata: { userId },
+        metadata: { userId, platform: 'mobile' },
         subscription_data: {
           trial_period_days: 7, // 7 días de prueba gratis
           metadata: { userId },
         },
         allow_promotion_codes: true, // Permitir códigos promocionales
-        custom_text: {
-          submit: {
-            message: 'Suscribirse', // Cambiar texto del botón
-          },
-        },
+        // Optimizaciones para móvil
+        billing_address_collection: 'auto',
+        phone_number_collection: { enabled: false },
       });
 
       console.log(`✅ Checkout session creada: ${session.id} para usuario ${userId}`);

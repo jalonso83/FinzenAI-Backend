@@ -27,14 +27,15 @@ export const createCheckout = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Ya tienes este plan activo' });
     }
 
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    // URL base del backend (Railway) para Universal Links
+    const backendUrl = process.env.BACKEND_URL || 'https://finzenai-backend-production.up.railway.app';
 
-    // Crear sesión de checkout
+    // Crear sesión de checkout con URLs que soportan Universal Links
     const session = await stripeService.createCheckoutSession(
       userId,
       planConfig.stripePriceId,
-      `${baseUrl}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
-      `${baseUrl}/subscription/canceled`
+      `${backendUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+      `${backendUrl}/checkout/cancel`
     );
 
     res.json({ url: session.url, sessionId: session.id });
