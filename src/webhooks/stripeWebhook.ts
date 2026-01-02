@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { stripe, STRIPE_WEBHOOK_SECRET, PLANS } from '../config/stripe';
 import { subscriptionService } from '../services/subscriptionService';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
+import { getPlanFromPriceId } from '../config/stripe';
 import Stripe from 'stripe';
 
 /**
@@ -244,14 +245,13 @@ async function updateSubscriptionFromStripe(
   userId: string,
   subscription: Stripe.Subscription
 ) {
-  // Determinar el plan basado en el price ID
+  // Determinar el plan basado en el price ID usando el helper
   const priceId = subscription.items.data[0].price.id;
   let plan: SubscriptionPlan = SubscriptionPlan.FREE;
 
-  if (priceId === PLANS.PREMIUM.stripePriceId) {
-    plan = SubscriptionPlan.PREMIUM;
-  } else if (priceId === PLANS.PRO.stripePriceId) {
-    plan = SubscriptionPlan.PRO;
+  const planInfo = getPlanFromPriceId(priceId);
+  if (planInfo) {
+    plan = planInfo.plan === 'PREMIUM' ? SubscriptionPlan.PREMIUM : SubscriptionPlan.PRO;
   }
 
   // Mapear status de Stripe a nuestro enum

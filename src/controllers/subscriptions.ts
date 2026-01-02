@@ -1,14 +1,17 @@
 import { Request, Response } from 'express';
 import { stripeService } from '../services/stripeService';
 import { subscriptionService } from '../services/subscriptionService';
-import { PLANS, PlanType, stripe } from '../config/stripe';
+import { PLANS, PlanType, BillingPeriod, getPriceId, getPlanFromPriceId, stripe } from '../config/stripe';
 
 /**
  * Crear sesión de checkout para upgrade de plan
  */
 export const createCheckout = async (req: Request, res: Response) => {
   try {
-    const { plan } = req.body as { plan: PlanType };
+    const { plan, billingPeriod = 'monthly' } = req.body as {
+      plan: PlanType;
+      billingPeriod?: BillingPeriod;
+    };
     const userId = (req as any).user!.id;
 
     // Validar plan
@@ -16,9 +19,15 @@ export const createCheckout = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Plan inválido' });
     }
 
-    const planConfig = PLANS[plan];
-    if (!planConfig.stripePriceId) {
-      return res.status(400).json({ message: 'Plan no disponible' });
+    // Validar período de facturación
+    if (!['monthly', 'yearly'].includes(billingPeriod)) {
+      return res.status(400).json({ message: 'Período de facturación inválido' });
+    }
+
+    // Obtener el price ID correcto según plan y período
+    const priceId = getPriceId(plan, billingPeriod);
+    if (!priceId) {
+      return res.status(400).json({ message: 'Plan no disponible para este período' });
     }
 
     // Verificar que no tenga ya una suscripción activa del mismo plan
@@ -33,7 +42,7 @@ export const createCheckout = async (req: Request, res: Response) => {
     // Crear sesión de checkout con URLs que soportan Universal Links
     const session = await stripeService.createCheckoutSession(
       userId,
-      planConfig.stripePriceId,
+      priceId,
       `${backendUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       `${backendUrl}/checkout/cancel`
     );
@@ -72,10 +81,17 @@ export const getSubscription = async (req: Request, res: Response) => {
  */
 export const getPlans = async (req: Request, res: Response) => {
   try {
-    const plans = Object.entries(PLANS).map(([key, value]) => ({
-      id: key,
-      ...value,
-    }));
+    // Excluir PREMIUM del response (es un alias de PLUS)
+    const plans = Object.entries(PLANS)
+      .filter(([key]) => key !== 'PREMIUM')
+      .map(([key, value]) => ({
+        id: key,
+        name: value.name,
+        price: value.price,
+        savings: (value as any).savings || null,
+        limits: value.limits,
+        features: value.features,
+      }));
 
     res.json({ plans });
   } catch (error: any) {
@@ -196,12 +212,20 @@ export const createCustomerPortal = async (req: Request, res: Response) => {
  */
 export const changePlan = async (req: Request, res: Response) => {
   try {
-    const { newPlan } = req.body as { newPlan: PlanType };
+    const { newPlan, billingPeriod = 'monthly' } = req.body as {
+      newPlan: PlanType;
+      billingPeriod?: BillingPeriod;
+    };
     const userId = (req as any).user!.id;
 
     // Validar nuevo plan
     if (!newPlan || !['PREMIUM', 'PRO'].includes(newPlan)) {
       return res.status(400).json({ message: 'Plan inválido' });
+    }
+
+    // Validar período de facturación
+    if (!['monthly', 'yearly'].includes(billingPeriod)) {
+      return res.status(400).json({ message: 'Período de facturación inválido' });
     }
 
     const subscription = await subscriptionService.getUserSubscription(userId);
@@ -214,20 +238,22 @@ export const changePlan = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Ya tienes este plan' });
     }
 
-    const newPlanConfig = PLANS[newPlan];
-    if (!newPlanConfig.stripePriceId) {
-      return res.status(400).json({ message: 'Plan no disponible' });
+    // Obtener el price ID correcto según plan y período
+    const priceId = getPriceId(newPlan, billingPeriod);
+    if (!priceId) {
+      return res.status(400).json({ message: 'Plan no disponible para este período' });
     }
 
     // Cambiar plan en Stripe
     await stripeService.changeSubscriptionPlan(
       subscription.stripeSubscriptionId,
-      newPlanConfig.stripePriceId
+      priceId
     );
 
     res.json({
-      message: `Plan cambiado a ${newPlan} exitosamente`,
+      message: `Plan cambiado a ${newPlan} (${billingPeriod}) exitosamente`,
       newPlan,
+      billingPeriod,
     });
   } catch (error: any) {
     console.error('Error cambiando plan:', error);
@@ -283,17 +309,17 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
           session.subscription as string
         );
 
-        // Determinar el plan basado en el price ID
+        // Determinar el plan basado en el price ID usando el helper
         const priceId = subscription.items.data[0].price.id;
+        const planInfo = getPlanFromPriceId(priceId);
+
         let plan: 'PREMIUM' | 'PRO' = 'PREMIUM';
+        let billingPeriod: BillingPeriod = 'monthly';
 
-        const premiumPriceId = PLANS.PREMIUM.stripePriceId;
-        const proPriceId = PLANS.PRO.stripePriceId;
-
-        if (priceId === proPriceId) {
-          plan = 'PRO';
-        } else if (priceId === premiumPriceId) {
-          plan = 'PREMIUM';
+        if (planInfo) {
+          plan = planInfo.plan as 'PREMIUM' | 'PRO';
+          billingPeriod = planInfo.billingPeriod;
+          console.log(`📋 Plan detectado: ${plan} (${billingPeriod})`);
         }
 
         // Actualizar suscripción en BD

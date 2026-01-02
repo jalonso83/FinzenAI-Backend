@@ -3,6 +3,7 @@ import { GmailService } from './gmailService';
 import { OutlookService } from './outlookService';
 import { EmailParserService, ParsedTransaction } from './emailParserService';
 import { NotificationService } from './notificationService';
+import { GamificationService } from './gamificationService';
 
 const prisma = new PrismaClient();
 
@@ -64,6 +65,19 @@ export class EmailSyncService {
     const userCountry = this.mapCountryToCode(user?.country || 'República Dominicana');
     await this.createDefaultBankFilters(connection.id, userCountry);
 
+    // ========== GAMIFICACIÓN: Bonus por configurar email sync ==========
+    try {
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'email_sync_setup',
+        eventData: { provider: 'GMAIL', email: gmailEmail },
+        pointsAwarded: 50
+      });
+      console.log('[EmailSync] Gamification: email_sync_setup event dispatched for Gmail');
+    } catch (gamificationError) {
+      console.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
+    }
+
     return connection;
   }
 
@@ -113,6 +127,19 @@ export class EmailSyncService {
     // Crear filtros de bancos por defecto según el país del usuario
     const userCountry = this.mapCountryToCode(user?.country || 'República Dominicana');
     await this.createDefaultBankFilters(connection.id, userCountry);
+
+    // ========== GAMIFICACIÓN: Bonus por configurar email sync ==========
+    try {
+      await GamificationService.dispatchEvent({
+        userId,
+        eventType: 'email_sync_setup',
+        eventData: { provider: 'OUTLOOK', email: outlookEmail },
+        pointsAwarded: 50
+      });
+      console.log('[EmailSync] Gamification: email_sync_setup event dispatched for Outlook');
+    } catch (gamificationError) {
+      console.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
+    }
 
     return connection;
   }
@@ -423,6 +450,27 @@ export class EmailSyncService {
       await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS');
       await this.updateConnectionStatus(connectionId, 'SUCCESS');
 
+      // ========== GAMIFICACIÓN: Bonus diario por sync activo ==========
+      try {
+        // Verificar si ya recibió el bonus hoy antes de despachar
+        const hasReceivedToday = await GamificationService.hasReceivedDailySyncBonus(connection.userId);
+        if (!hasReceivedToday) {
+          await GamificationService.dispatchEvent({
+            userId: connection.userId,
+            eventType: 'email_sync_daily',
+            eventData: {
+              connectionId,
+              emailsProcessed: result.emailsProcessed,
+              transactionsCreated: result.transactionsCreated
+            },
+            pointsAwarded: 5
+          });
+          console.log('[EmailSync] Gamification: email_sync_daily bonus awarded');
+        }
+      } catch (gamificationError) {
+        console.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
+      }
+
       // Enviar notificación push si se importaron transacciones
       if (result.transactionsCreated > 0 || result.emailsProcessed > 0) {
         try {
@@ -504,6 +552,22 @@ export class EmailSyncService {
 
       // Recalcular presupuesto de la categoría
       await this.recalculateBudgetSpent(userId, categoryId, transaction.date);
+
+      // ========== GAMIFICACIÓN: Puntos por transacción importada ==========
+      try {
+        await GamificationService.dispatchEvent({
+          userId,
+          eventType: 'email_tx_imported',
+          eventData: {
+            transactionId: transaction.id,
+            amount: finalAmount,
+            merchant: parsed.merchant
+          },
+          pointsAwarded: 1
+        });
+      } catch (gamificationError) {
+        console.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
+      }
 
       return transaction;
 

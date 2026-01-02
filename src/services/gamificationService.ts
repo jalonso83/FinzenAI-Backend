@@ -80,6 +80,16 @@ export class GamificationService {
         case 'tip_ignored':
           await this.handleTipIgnored(event);
           break;
+        // Email Sync Events
+        case 'email_sync_setup':
+          await this.handleEmailSyncSetup(event);
+          break;
+        case 'email_tx_imported':
+          await this.handleEmailTxImported(event);
+          break;
+        case 'email_sync_daily':
+          await this.handleEmailSyncDaily(event);
+          break;
         default:
       }
 
@@ -154,6 +164,126 @@ export class GamificationService {
 
   private static async handleTipIgnored(event: any): Promise<void> {
     // No penalizar por ignorar consejos, solo registrar
+  }
+
+  // ============ EMAIL SYNC GAMIFICATION HANDLERS ============
+
+  // Handler: Primera configuración de email sync (50 puntos - solo una vez)
+  private static async handleEmailSyncSetup(event: any): Promise<void> {
+    // Verificar si ya recibió el bonus de configuración
+    const existingBonus = await prisma.gamificationEvent.findFirst({
+      where: {
+        userId: event.userId,
+        eventType: 'email_sync_setup'
+      }
+    });
+
+    // Solo dar puntos si es la primera vez
+    if (!existingBonus || existingBonus.id === event.id) {
+      const points = 50; // Bonus único por configurar email sync
+      await this.awardPoints(event.userId, points, 'Email sync configurado - ¡Automatiza tus finanzas!');
+    }
+  }
+
+  // Handler: Transacción importada vía email (1 punto por transacción)
+  private static async handleEmailTxImported(event: any): Promise<void> {
+    const points = 1; // Puntos reducidos para transacciones importadas (vs 5 manual)
+    await this.awardPoints(event.userId, points, 'Transacción importada automáticamente');
+  }
+
+  // Handler: Bonus diario por tener sync activo (5 puntos/día)
+  private static async handleEmailSyncDaily(event: any): Promise<void> {
+    // Verificar si ya recibió el bonus hoy
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const existingDailyBonus = await prisma.gamificationEvent.findFirst({
+      where: {
+        userId: event.userId,
+        eventType: 'email_sync_daily',
+        createdAt: { gte: today }
+      }
+    });
+
+    // Solo dar puntos si no ha recibido el bonus hoy (excluyendo el evento actual)
+    if (!existingDailyBonus || existingDailyBonus.id === event.id) {
+      const points = 5; // Bonus diario por sync activo
+      await this.awardPoints(event.userId, points, 'Bonus diario - Email sync activo');
+    }
+  }
+
+  // ============ EMAIL SYNC HELPER METHODS ============
+
+  // Verificar si el usuario ya configuró email sync antes (para bonus único)
+  static async hasReceivedEmailSyncBonus(userId: string): Promise<boolean> {
+    const existingBonus = await prisma.gamificationEvent.findFirst({
+      where: {
+        userId,
+        eventType: 'email_sync_setup'
+      }
+    });
+    return !!existingBonus;
+  }
+
+  // Verificar si ya recibió el bonus diario de sync
+  static async hasReceivedDailySyncBonus(userId: string): Promise<boolean> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const existingBonus = await prisma.gamificationEvent.findFirst({
+      where: {
+        userId,
+        eventType: 'email_sync_daily',
+        createdAt: { gte: today }
+      }
+    });
+    return !!existingBonus;
+  }
+
+  // Contar transacciones importadas por email (para achievement "Data Master")
+  static async countEmailImportedTransactions(userId: string): Promise<number> {
+    const count = await prisma.gamificationEvent.count({
+      where: {
+        userId,
+        eventType: 'email_tx_imported'
+      }
+    });
+    return count;
+  }
+
+  // Contar días consecutivos con email sync activo (para achievement "Conexión Bancaria")
+  static async countConsecutiveSyncDays(userId: string): Promise<number> {
+    const events = await prisma.gamificationEvent.findMany({
+      where: {
+        userId,
+        eventType: 'email_sync_daily'
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 60 // Últimos 60 eventos de sync diario
+    });
+
+    if (events.length === 0) return 0;
+
+    let consecutiveDays = 1;
+    let lastDate = new Date(events[0].createdAt);
+    lastDate.setHours(0, 0, 0, 0);
+
+    for (let i = 1; i < events.length; i++) {
+      const currentDate = new Date(events[i].createdAt);
+      currentDate.setHours(0, 0, 0, 0);
+
+      const diffDays = Math.floor((lastDate.getTime() - currentDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 1) {
+        consecutiveDays++;
+        lastDate = currentDate;
+      } else if (diffDays > 1) {
+        break; // Racha rota
+      }
+      // Si diffDays === 0, mismo día, continuar
+    }
+
+    return consecutiveDays;
   }
 
   // Sistema de puntos
@@ -342,9 +472,13 @@ export class GamificationService {
       'create_budget': ['planificador'],
       'goal_complete': ['meta_crusher'],
       'within_budget': ['presupuesto_maestro'],
-      'daily_open': ['racha_fuego']
+      'daily_open': ['racha_fuego'],
+      // Email Sync Badges
+      'email_sync_setup': ['automatizador'],
+      'email_tx_imported': ['data_master'],
+      'email_sync_daily': ['conexion_bancaria']
     };
-    
+
     return badgeMap[eventType] || [];
   }
 
@@ -370,6 +504,13 @@ export class GamificationService {
         return await this.checkMetaCrusher(userId);
       case 'racha_fuego':
         return await this.checkRachaFuego(userId);
+      // Email Sync Badges
+      case 'automatizador':
+        return await this.checkAutomatizador(userId);
+      case 'data_master':
+        return await this.checkDataMaster(userId);
+      case 'conexion_bancaria':
+        return await this.checkConexionBancaria(userId);
       default:
         return false;
     }
@@ -427,6 +568,28 @@ export class GamificationService {
     return userStreak ? userStreak.currentStreak >= 7 : false;
   }
 
+  // ============ EMAIL SYNC BADGE VERIFICATIONS ============
+
+  // "Automatizador" - Primera sincronización de email exitosa
+  private static async checkAutomatizador(userId: string): Promise<boolean> {
+    const emailConnection = await prisma.emailConnection.findFirst({
+      where: { userId, isActive: true }
+    });
+    return !!emailConnection;
+  }
+
+  // "Data Master" - 100 transacciones importadas vía email
+  private static async checkDataMaster(userId: string): Promise<boolean> {
+    const importedCount = await this.countEmailImportedTransactions(userId);
+    return importedCount >= 100;
+  }
+
+  // "Conexión Bancaria" - 30 días consecutivos con email sync activo
+  private static async checkConexionBancaria(userId: string): Promise<boolean> {
+    const consecutiveDays = await this.countConsecutiveSyncDays(userId);
+    return consecutiveDays >= 30;
+  }
+
   private static async awardBadge(userId: string, badgeId: string): Promise<void> {
     try {
       await prisma.userBadge.create({
@@ -448,7 +611,7 @@ export class GamificationService {
   static async updateUserStreak(userId: string, eventType: string): Promise<void> {
     try {
       // Solo eventos que cuentan para la racha
-      const streakEvents = ['add_tx', 'daily_open', 'create_budget', 'goal_contrib'];
+      const streakEvents = ['add_tx', 'daily_open', 'create_budget', 'goal_contrib', 'email_sync_daily', 'email_tx_imported'];
       if (!streakEvents.includes(eventType)) return;
 
       const today = new Date();
