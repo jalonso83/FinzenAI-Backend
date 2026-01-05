@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { ReminderService, PAYMENT_TYPE_INFO, CreateReminderInput, UpdateReminderInput } from '../services/reminderService';
 import { PaymentType } from '@prisma/client';
+import { subscriptionService } from '../services/subscriptionService';
+import { PLANS } from '../config/stripe';
 
 // Extender Request para incluir usuario autenticado
 interface AuthRequest extends Request {
@@ -93,6 +95,28 @@ export const createReminder = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    // =============================================
+    // VALIDAR LÍMITE DE PLAN
+    // =============================================
+    const subscription = await subscriptionService.getUserSubscription(userId);
+    const planLimits = subscription.limits as { reminders?: number };
+    const remindersLimit = planLimits.reminders ?? PLANS.FREE.limits.reminders;
+
+    // Si el límite no es -1 (ilimitado), verificar cantidad actual
+    if (remindersLimit !== -1) {
+      const currentRemindersCount = await ReminderService.countActiveReminders(userId);
+
+      if (currentRemindersCount >= remindersLimit) {
+        return res.status(403).json({
+          error: 'Límite de plan alcanzado',
+          message: `Tu plan ${subscription.plan} permite máximo ${remindersLimit} recordatorios activos. Mejora a Plus para recordatorios ilimitados.`,
+          currentCount: currentRemindersCount,
+          limit: remindersLimit,
+          upgradeRequired: true
+        });
+      }
     }
 
     const { name, type, dueDay, cutoffDay, amount, currency, reminderDays, notifyOnCutoff, notes } = req.body;
@@ -355,6 +379,29 @@ export const toggleReminder = async (req: AuthRequest, res: Response) => {
         error: 'Validación fallida',
         message: 'El campo isActive debe ser un booleano'
       });
+    }
+
+    // =============================================
+    // VALIDAR LÍMITE DE PLAN AL ACTIVAR
+    // =============================================
+    if (isActive) {
+      const subscription = await subscriptionService.getUserSubscription(userId);
+      const planLimits = subscription.limits as { reminders?: number };
+      const remindersLimit = planLimits.reminders ?? PLANS.FREE.limits.reminders;
+
+      if (remindersLimit !== -1) {
+        const currentRemindersCount = await ReminderService.countActiveReminders(userId);
+
+        if (currentRemindersCount >= remindersLimit) {
+          return res.status(403).json({
+            error: 'Límite de plan alcanzado',
+            message: `Tu plan ${subscription.plan} permite máximo ${remindersLimit} recordatorios activos. Mejora a Plus para recordatorios ilimitados.`,
+            currentCount: currentRemindersCount,
+            limit: remindersLimit,
+            upgradeRequired: true
+          });
+        }
+      }
     }
 
     const reminder = await ReminderService.updateReminder(id, userId, { isActive });

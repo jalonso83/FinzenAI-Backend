@@ -355,6 +355,12 @@ export class GamificationService {
                 gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
               }
             }
+          },
+          paymentReminders: {
+            where: {
+              isActive: true,
+              type: { in: ['CREDIT_CARD', 'LOAN', 'MORTGAGE'] }
+            }
           }
         }
       });
@@ -372,8 +378,8 @@ export class GamificationService {
       // 3. Puntuación de Racha (0-20 puntos)
       const streak = this.calculateStreakScore(user.userStreak);
 
-      // 4. Puntuación de Deuda (0-15 puntos) - A implementar
-      const debt = 15; // Placeholder: asumir sin deudas por ahora
+      // 4. Puntuación de Deuda (0-15 puntos)
+      const debt = this.calculateDebtScore(user.paymentReminders);
 
       // 5. Puntuación de Actividad (0-15 puntos)
       const activity = this.calculateActivityScore(user.gamificationEvents);
@@ -429,14 +435,49 @@ export class GamificationService {
 
   private static calculateStreakScore(userStreak: any): number {
     if (!userStreak) return 0;
-    
+
     const currentStreak = userStreak.currentStreak;
-    
+
     if (currentStreak >= 30) return 20;
     if (currentStreak >= 14) return 15;
     if (currentStreak >= 7) return 10;
     if (currentStreak >= 3) return 5;
     return Math.min(currentStreak, 3);
+  }
+
+  // Puntuación de Deuda basada en Payment Reminders de tipo deuda
+  // 15 pts = Sin recordatorios de deuda (LOAN/CREDIT_CARD/MORTGAGE)
+  // 10 pts = Tiene deudas pero ninguna vencida
+  // 5 pts  = Tiene 1 pago vencido
+  // 0 pts  = Tiene 2+ pagos vencidos
+  private static calculateDebtScore(paymentReminders: any[]): number {
+    // Sin recordatorios de deuda = puntuación máxima
+    if (!paymentReminders || paymentReminders.length === 0) {
+      return 15;
+    }
+
+    // Verificar pagos vencidos
+    const today = new Date();
+    const currentDay = today.getDate();
+    let overdueCount = 0;
+
+    for (const reminder of paymentReminders) {
+      // Consideramos vencido si el día actual es mayor al día de pago + 3 días de gracia
+      // Ejemplo: dueDay = 15, estamos en día 20 -> vencido
+      // Nota: Esta es una lógica simplificada, asume el mismo mes
+      if (currentDay > reminder.dueDay + 3) {
+        overdueCount++;
+      }
+    }
+
+    // Calcular puntuación basada en pagos vencidos
+    if (overdueCount === 0) {
+      return 10; // Tiene deudas pero todas al día
+    } else if (overdueCount === 1) {
+      return 5; // 1 pago vencido
+    } else {
+      return 0; // 2+ pagos vencidos
+    }
   }
 
   private static calculateActivityScore(events: any[]): number {

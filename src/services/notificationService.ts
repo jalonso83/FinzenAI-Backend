@@ -1,5 +1,7 @@
 import admin from 'firebase-admin';
 import { PrismaClient, NotificationType, NotificationStatus, DevicePlatform } from '@prisma/client';
+import { subscriptionService } from './subscriptionService';
+import { PLANS } from '../config/stripe';
 
 const prisma = new PrismaClient();
 
@@ -103,7 +105,9 @@ export class NotificationService {
           goalRemindersEnabled: true,
           weeklyReportEnabled: true,
           tipsEnabled: true,
-          budgetAlertThreshold: 80
+          budgetAlertThreshold: 80,
+          antExpenseAlertsEnabled: true,
+          antExpenseAlertThreshold: 20
         }
       });
 
@@ -287,6 +291,8 @@ export class NotificationService {
       case 'PAYMENT_DUE_TODAY':
       case 'PAYMENT_OVERDUE':
         return preferences.paymentRemindersEnabled ?? true;
+      case 'ANT_EXPENSE_ALERT':
+        return preferences.antExpenseAlertsEnabled ?? true;
       case 'SYSTEM':
         return true; // System notifications always enabled
       default:
@@ -521,6 +527,33 @@ export class NotificationService {
   }
 
   /**
+   * Notifica alerta de gastos hormiga (análisis semanal)
+   */
+  static async notifyAntExpenseAlert(
+    userId: string,
+    totalAntExpenses: number,
+    percentageOfTotal: number,
+    topCategory: string,
+    savingsOpportunity: number,
+    currency: string
+  ): Promise<SendNotificationResult> {
+    const payload: NotificationPayload = {
+      title: '🐜 ¡Alerta de Gastos Hormiga!',
+      body: `Tus pequeños gastos suman ${currency}${totalAntExpenses.toLocaleString()} (${percentageOfTotal}% del total). Tu mayor "criminal" es ${topCategory}. ¡Podrías ahorrar ${currency}${savingsOpportunity.toLocaleString()}/mes!`,
+      data: {
+        type: 'ANT_EXPENSE_ALERT',
+        totalAntExpenses: totalAntExpenses.toString(),
+        percentageOfTotal: percentageOfTotal.toString(),
+        topCategory,
+        savingsOpportunity: savingsOpportunity.toString(),
+        screen: 'AntExpenseDetective'
+      }
+    };
+
+    return this.sendToUser(userId, 'ANT_EXPENSE_ALERT', payload);
+  }
+
+  /**
    * Obtiene las preferencias de notificación del usuario
    */
   static async getPreferences(userId: string) {
@@ -543,6 +576,8 @@ export class NotificationService {
       budgetAlertThreshold?: number;
       quietHoursStart?: number | null;
       quietHoursEnd?: number | null;
+      antExpenseAlertsEnabled?: boolean;
+      antExpenseAlertThreshold?: number;
     }
   ) {
     return prisma.notificationPreferences.upsert({
@@ -625,6 +660,7 @@ export class NotificationService {
   /**
    * Verifica y envía alertas de presupuesto después de crear una transacción
    * Compara el gasto antes y después para determinar si se debe enviar alerta
+   * NOTA: Solo disponible para planes PLUS y PRO (budgetAlerts: true)
    */
   static async checkBudgetAlerts(
     userId: string,
@@ -633,6 +669,19 @@ export class NotificationService {
     transactionDate: Date
   ): Promise<void> {
     try {
+      // =============================================
+      // VERIFICAR LÍMITE DE PLAN - BUDGET ALERTS
+      // Solo PLUS y PRO tienen acceso a alertas de umbral
+      // =============================================
+      const subscription = await subscriptionService.getUserSubscription(userId);
+      const planLimits = subscription.limits as { budgetAlerts?: boolean };
+      const hasBudgetAlerts = planLimits.budgetAlerts ?? PLANS.FREE.limits.budgetAlerts;
+
+      if (!hasBudgetAlerts) {
+        // Usuario FREE - no enviar alertas de presupuesto
+        return;
+      }
+
       // Buscar presupuestos activos de la categoría que incluyan la fecha
       const budgets = await prisma.budget.findMany({
         where: {

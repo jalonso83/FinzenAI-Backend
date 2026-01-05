@@ -24,19 +24,28 @@ export const PLANS = {
       yearly: null,
     },
     limits: {
-      budgets: 3,
-      goals: 2,
-      zenioQueries: 10,
+      budgets: 2,
+      goals: 1,
+      zenioQueries: 15,
+      reminders: 2, // Máximo 2 recordatorios de pago activos
+      budgetAlerts: false, // Sin alertas de umbral de presupuesto
+      textToSpeech: false, // Sin TTS para respuestas de Zenio
       advancedReports: false,
       exportData: false,
+      bankIntegration: false,
+      antExpenseAnalysis: 'basic' as const, // Solo top 3 gastos hormiga
+      advancedCalculators: false, // Sin acceso a Skip vs Save Challenge
     },
     features: [
       'Transacciones ilimitadas',
-      'Hasta 3 presupuestos activos',
-      'Hasta 2 metas de ahorro',
-      'Asesoría financiera con IA (10 consultas/mes)',
+      'Hasta 2 presupuestos activos',
+      'Hasta 1 meta de ahorro',
+      'Hasta 2 recordatorios de pago',
+      'Asesoría financiera con IA (15 consultas/mes)',
       'Reportes básicos',
       'Gamificación básica',
+      'Detector de gastos hormiga (básico)',
+      'Calculadoras financieras básicas',
     ],
   },
   PREMIUM: {
@@ -57,18 +66,29 @@ export const PLANS = {
       budgets: -1, // -1 = ilimitado
       goals: -1,
       zenioQueries: -1,
+      reminders: -1, // Recordatorios ilimitados
+      budgetAlerts: true, // Alertas de umbral de presupuesto
+      textToSpeech: true, // TTS para respuestas de Zenio
       advancedReports: true,
       exportData: true,
+      bankIntegration: false,
+      antExpenseAnalysis: 'full' as const, // Análisis completo con alertas y recomendaciones
+      advancedCalculators: true, // Acceso a Skip vs Save Challenge
     },
     features: [
       'Todo lo de Gratis',
       'Presupuestos ilimitados',
       'Metas ilimitadas',
+      'Recordatorios de pago ilimitados',
+      'Alertas de umbral en presupuestos',
+      'Zenio con voz (Text-to-Speech)',
       'Asesoría financiera con IA ilimitada',
       'Reportes avanzados con IA',
       'Análisis de tendencias',
       'Alertas personalizadas',
       'Sin publicidad',
+      'Detector de gastos hormiga completo',
+      'Calculadoras avanzadas (Skip vs Save)',
     ],
   },
   PRO: {
@@ -89,9 +109,14 @@ export const PLANS = {
       budgets: -1,
       goals: -1,
       zenioQueries: -1,
+      reminders: -1, // Recordatorios ilimitados
+      budgetAlerts: true, // Alertas de umbral de presupuesto
+      textToSpeech: true, // TTS para respuestas de Zenio
       advancedReports: true,
       exportData: true,
-      bankIntegration: true,
+      bankIntegration: true, // Exclusivo PRO: Email Sync
+      antExpenseAnalysis: 'full' as const, // Análisis completo con alertas y recomendaciones
+      advancedCalculators: true, // Acceso a Skip vs Save Challenge
     },
     features: [
       'Todo lo de Plus',

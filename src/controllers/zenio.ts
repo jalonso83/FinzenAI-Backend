@@ -2665,7 +2665,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
     // 10. Incrementar contador de consultas de Zenio y obtener uso actual
     // NOTA: El saludo automático (autoGreeting) NO cuenta como consulta
-    let zenioUsage = { used: 0, limit: 10, remaining: 10 };
+    let zenioUsage = { used: 0, limit: 15, remaining: 15 };
     try {
       const subscription = await prisma.subscription.findUnique({
         where: { userId },
@@ -2675,7 +2675,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         // Obtener límite del plan
         const { PLANS } = await import('../config/stripe');
         const planLimits = PLANS[subscription.plan as keyof typeof PLANS]?.limits;
-        const limit = planLimits?.zenioQueries ?? 10;
+        const limit = planLimits?.zenioQueries ?? 15;
 
         // Solo incrementar si NO es autoGreeting (el saludo no cuenta como consulta)
         if (!autoGreeting) {

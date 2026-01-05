@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { authenticateToken } from '../middlewares/auth';
-import { 
-  calculateInvestment, 
-  getRiskProfiles, 
+import { requirePlan } from '../middleware/planLimits';
+import {
+  calculateInvestment,
+  getRiskProfiles,
   getEquivalencyExamples,
   calculateGoal,
   getGoalTypes,
@@ -16,6 +17,10 @@ const router: Router = Router();
 
 // Todas las rutas de investment requieren autenticación
 router.use(authenticateToken);
+
+// =============================================
+// CALCULADORAS BÁSICAS (Disponibles para todos los planes)
+// =============================================
 
 // POST /api/investment/calculate - Calcular inversión
 router.post('/calculate', calculateInvestment);
@@ -32,11 +37,16 @@ router.post('/calculate-goal', calculateGoal);
 // GET /api/investment/goal-types - Obtener tipos de metas disponibles
 router.get('/goal-types', getGoalTypes);
 
+// =============================================
+// CALCULADORAS AVANZADAS (Requieren PLUS o superior)
+// Skip vs Save Challenge - Exclusivo para planes de pago
+// =============================================
+
 // POST /api/investment/skip-vs-save - Calcular Skip vs Save Challenge
-router.post('/skip-vs-save', calculateSkipVsSave);
+router.post('/skip-vs-save', requirePlan('PREMIUM'), calculateSkipVsSave);
 
 // GET /api/investment/common-expenses - Obtener gastos comunes sugeridos
-router.get('/common-expenses', getCommonExpenses);
+router.get('/common-expenses', requirePlan('PREMIUM'), getCommonExpenses);
 
 // POST /api/investment/calculate-inflation - Calcular impacto de inflación
 router.post('/calculate-inflation', calculateInflation);

@@ -1,13 +1,14 @@
 import express, { Router } from 'express';
-import { 
-  getUserGoals, 
-  getGoalById, 
-  createGoal, 
-  updateGoal, 
-  deleteGoal, 
-  addContribution 
+import {
+  getUserGoals,
+  getGoalById,
+  createGoal,
+  updateGoal,
+  deleteGoal,
+  addContribution
 } from '../controllers/goals';
 import { authenticateToken } from '../middlewares/auth';
+import { checkGoalLimit } from '../middleware/planLimits';
 
 const router: Router = express.Router();
 
@@ -20,8 +21,8 @@ router.get('/', getUserGoals);
 // Obtener una meta específica
 router.get('/:id', getGoalById);
 
-// Crear una nueva meta
-router.post('/', createGoal);
+// Crear una nueva meta (con verificación de límite por plan)
+router.post('/', checkGoalLimit, createGoal);
 
 // Actualizar una meta
 router.put('/:id', updateGoal);

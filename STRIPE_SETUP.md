@@ -215,17 +215,17 @@ curl https://finzenai-backend-production.up.railway.app/api/subscriptions/plans
       "price": 0,
       "stripePriceId": null,
       "limits": {
-        "budgets": 3,
-        "goals": 2,
-        "zenioQueries": 10,
+        "budgets": 2,
+        "goals": 1,
+        "zenioQueries": 15,
         "advancedReports": false,
         "exportData": false
       },
       "features": [
         "Transacciones ilimitadas",
-        "Hasta 3 presupuestos activos",
-        "Hasta 2 metas de ahorro",
-        "Zenio con 10 consultas/mes",
+        "Hasta 2 presupuestos activos",
+        "Hasta 1 meta de ahorro",
+        "Zenio con 15 consultas/mes",
         "Reportes básicos",
         "Gamificación básica"
       ]
@@ -566,9 +566,9 @@ router.get('/reports/advanced', authenticateToken, requirePlan('PREMIUM'), getAd
 
 ### **FREE (Gratuito)**
 - **Precio:** $0/mes
-- **Presupuestos:** 3 máximo
-- **Metas:** 2 máximo
-- **Zenio:** 10 consultas/mes
+- **Presupuestos:** 2 máximo
+- **Metas:** 1 máximo
+- **Zenio:** 15 consultas/mes
 - **Reportes avanzados:** ❌
 - **Exportar datos:** ❌
 - **Múltiples carteras:** ❌
@@ -576,9 +576,9 @@ router.get('/reports/advanced', authenticateToken, requirePlan('PREMIUM'), getAd
 
 **Features:**
 - Transacciones ilimitadas
-- Hasta 3 presupuestos activos
-- Hasta 2 metas de ahorro
-- Zenio con 10 consultas/mes
+- Hasta 2 presupuestos activos
+- Hasta 1 meta de ahorro
+- Zenio con 15 consultas/mes
 - Reportes básicos
 - Gamificación básica
 

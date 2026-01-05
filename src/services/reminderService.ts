@@ -192,6 +192,19 @@ export class ReminderService {
   }
 
   /**
+   * Cuenta los recordatorios activos de un usuario
+   * Usado para validar límites de plan
+   */
+  static async countActiveReminders(userId: string): Promise<number> {
+    return prisma.paymentReminder.count({
+      where: {
+        userId,
+        isActive: true
+      }
+    });
+  }
+
+  /**
    * Calcula la próxima fecha de vencimiento para un día dado
    */
   static getNextDueDate(dueDay: number, referenceDate: Date = new Date()): Date {

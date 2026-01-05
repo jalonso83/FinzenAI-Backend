@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client';
 import { BudgetScheduler } from './services/budgetScheduler';
 import { EmailSyncScheduler } from './services/emailSyncScheduler';
 import { ReminderScheduler } from './services/reminderScheduler';
+import { AntExpenseScheduler } from './services/antExpenseScheduler';
 
 // Force deployment trigger - Email Sync Integration
 
@@ -123,6 +124,9 @@ async function startServer() {
     // Iniciar scheduler de recordatorios de pago
     ReminderScheduler.startScheduler();
 
+    // Iniciar scheduler de alertas de gastos hormiga
+    AntExpenseScheduler.startScheduler();
+
     // Iniciar servidor
     app.listen(PORT, () => {
       console.log(`🚀 FinZen AI Backend running on port ${PORT}`);
@@ -141,6 +145,7 @@ process.on('SIGINT', async () => {
   BudgetScheduler.stopScheduler();
   EmailSyncScheduler.stopScheduler();
   ReminderScheduler.stopScheduler();
+  AntExpenseScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
@@ -150,6 +155,7 @@ process.on('SIGTERM', async () => {
   BudgetScheduler.stopScheduler();
   EmailSyncScheduler.stopScheduler();
   ReminderScheduler.stopScheduler();
+  AntExpenseScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });

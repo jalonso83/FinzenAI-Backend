@@ -8,6 +8,8 @@
 
 import { Request, Response } from 'express';
 import { antExpenseService } from '../services/antExpenseService';
+import { subscriptionService } from '../services/subscriptionService';
+import { PLANS } from '../config/stripe';
 import {
   AntExpenseConfig,
   DEFAULT_ANT_EXPENSE_CONFIG,
@@ -336,6 +338,10 @@ function generateFallbackInsights(calculations: AntExpenseCalculations): ZenioIn
 /**
  * GET /api/zenio/ant-expense-analysis
  * Analiza los gastos hormiga del usuario
+ *
+ * Restricciones por plan:
+ * - FREE: Análisis básico (top 3 gastos, sin insights IA)
+ * - PLUS/PRO: Análisis completo con insights IA y recomendaciones
  */
 export const analyzeAntExpenses = async (req: Request, res: Response) => {
   try {
@@ -347,6 +353,14 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
         error: 'Usuario no autenticado',
       });
     }
+
+    // Obtener suscripción del usuario para verificar límites
+    const subscription = await subscriptionService.getUserSubscription(userId);
+    const planLimits = subscription.limits as any;
+    const analysisType = planLimits.antExpenseAnalysis || 'basic';
+    const isBasicAnalysis = analysisType === 'basic';
+
+    console.log(`[AntDetective] Usuario ${userId}, Plan: ${subscription.plan}, Análisis: ${analysisType}`);
 
     // Obtener configuración de query params
     const userConfig: Partial<AntExpenseConfig> = {};
@@ -361,7 +375,6 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
       userConfig.monthsToAnalyze = parseInt(req.query.monthsToAnalyze as string);
     }
 
-    console.log(`[AntDetective] Análisis solicitado por usuario ${userId}`);
     console.log(`[AntDetective] Config recibida: ${JSON.stringify(userConfig)}`);
 
     // 1. Realizar cálculos
@@ -388,30 +401,64 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
       return res.json(response);
     }
 
-    // 2. Generar insights con Zenio IA (o fallback)
-    let insights: ZenioInsights;
+    // 2. Aplicar restricciones según el plan
+    let finalCalculations = calculations;
+    let insights: ZenioInsights | null = null;
 
-    // Determinar si usar IA o fallback
-    const useAI = req.query.useAI !== 'false'; // Por defecto usa IA
+    if (isBasicAnalysis) {
+      // Plan FREE: Solo análisis básico (top 3 gastos)
+      console.log(`[AntDetective] Aplicando restricciones de plan FREE`);
 
-    if (useAI) {
-      insights = await generateZenioInsights(calculations, userId);
+      finalCalculations = {
+        ...calculations,
+        // Limitar a solo 3 categorías principales
+        topCriminals: calculations.topCriminals.slice(0, 3),
+      };
+
+      // Insights básicos sin IA para plan FREE
+      insights = {
+        impactMessage: generateFallbackImpactMessage(calculations),
+        equivalencies: [], // Sin equivalencias en plan FREE
+        categorySuggestions: [], // Sin sugerencias detalladas en plan FREE
+        motivationalMessage: '💡 Mejora a Plus para ver el análisis completo con sugerencias personalizadas.',
+        severityLevel: calculateSeverityLevel(calculations),
+        summary: `Detectamos RD$${calculations.totalAntExpenses.toLocaleString()} en gastos hormiga (${calculations.percentageOfTotal}% del total).`,
+      };
     } else {
-      insights = generateFallbackInsights(calculations);
+      // Plan PLUS/PRO: Análisis completo con IA
+      console.log(`[AntDetective] Análisis completo para plan ${subscription.plan}`);
+
+      // Determinar si usar IA o fallback
+      const useAI = req.query.useAI !== 'false'; // Por defecto usa IA
+
+      if (useAI) {
+        insights = await generateZenioInsights(calculations, userId);
+      } else {
+        insights = generateFallbackInsights(calculations);
+      }
     }
 
     // 3. Construir respuesta completa
     const response: AntExpenseAnalysisResponse = {
       success: true,
       canAnalyze: true,
-      calculations,
+      calculations: finalCalculations,
       insights,
       warnings,
       recommendedConfig: DEFAULT_ANT_EXPENSE_CONFIG,
       configOptions: CONFIG_LIMITS,
+      // Información adicional sobre restricciones del plan
+      planInfo: {
+        currentPlan: subscription.plan,
+        analysisType,
+        isLimited: isBasicAnalysis,
+        upgradeMessage: isBasicAnalysis
+          ? 'Mejora a Plus para desbloquear el análisis completo con sugerencias personalizadas por IA'
+          : undefined,
+      },
     };
 
-    console.log(`[AntDetective] Análisis completado exitosamente`);
+    console.log(`[AntDetective] Análisis completado exitosamente (${analysisType})`);
 
     return res.json(response);
 

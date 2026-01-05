@@ -284,6 +284,23 @@ export interface AnalysisWarning {
 }
 
 /**
+ * Información del plan para restricciones de análisis
+ */
+export interface PlanInfo {
+  /** Plan actual del usuario */
+  currentPlan: string;
+
+  /** Tipo de análisis disponible: 'basic' o 'full' */
+  analysisType: 'basic' | 'full';
+
+  /** Si el análisis está limitado */
+  isLimited: boolean;
+
+  /** Mensaje de upgrade (solo si isLimited=true) */
+  upgradeMessage?: string;
+}
+
+/**
  * Respuesta completa del endpoint de análisis
  */
 export interface AntExpenseAnalysisResponse {
@@ -310,6 +327,9 @@ export interface AntExpenseAnalysisResponse {
 
   /** Opciones de configuración disponibles (para UI) */
   configOptions: typeof CONFIG_LIMITS;
+
+  /** Información sobre restricciones del plan (solo presente si hay análisis) */
+  planInfo?: PlanInfo;
 }
 
 // =============================================

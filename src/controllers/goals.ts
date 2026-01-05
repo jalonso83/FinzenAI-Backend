@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { GamificationService } from '../services/gamificationService';
+import { subscriptionService } from '../services/subscriptionService';
 
 const prisma = new PrismaClient();
 
@@ -150,6 +151,12 @@ export const createGoal = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
+    // Verificar plan del usuario para restricción de prioridades
+    // FREE: siempre usa 'medium', PLUS/PRO: puede elegir prioridad
+    const subscription = await subscriptionService.getUserSubscription(userId);
+    const userPlan = subscription.plan;
+    const effectivePriority = userPlan === 'FREE' ? 'medium' : (priority || 'medium');
+
     const goal = await prisma.goal.create({
       data: {
         userId,
@@ -158,7 +165,7 @@ export const createGoal = async (req: Request, res: Response): Promise<void> => 
         targetAmount: parseFloat(targetAmount),
         targetDate: targetDate ? new Date(targetDate) : null,
         categoryId,
-        priority: priority || 'medium',
+        priority: effectivePriority,
         monthlyTargetPercentage: monthlyTargetPercentage ? parseFloat(monthlyTargetPercentage) : null,
         monthlyContributionAmount: monthlyContributionAmount ? parseFloat(monthlyContributionAmount) : null
       },
@@ -239,11 +246,17 @@ export const updateGoal = async (req: Request, res: Response): Promise<void> => 
     }
 
     if (!monthlyTargetPercentage && !monthlyContributionAmount) {
-      res.status(400).json({ 
-        error: 'Debe especificar un porcentaje mensual o monto fijo' 
+      res.status(400).json({
+        error: 'Debe especificar un porcentaje mensual o monto fijo'
       });
       return;
     }
+
+    // Verificar plan del usuario para restricción de prioridades
+    // FREE: siempre usa 'medium', PLUS/PRO: puede elegir prioridad
+    const subscription = await subscriptionService.getUserSubscription(userId);
+    const userPlan = subscription.plan;
+    const effectivePriority = userPlan === 'FREE' ? 'medium' : (priority || existingGoal.priority);
 
     const updatedGoal = await prisma.goal.update({
       where: { id },
@@ -253,7 +266,7 @@ export const updateGoal = async (req: Request, res: Response): Promise<void> => 
         targetAmount: targetAmount ? parseFloat(targetAmount) : undefined,
         targetDate: targetDate ? new Date(targetDate) : null,
         categoryId,
-        priority,
+        priority: effectivePriority,
         monthlyTargetPercentage: monthlyTargetPercentage ? parseFloat(monthlyTargetPercentage) : null,
         monthlyContributionAmount: monthlyContributionAmount ? parseFloat(monthlyContributionAmount) : null
       },

@@ -531,9 +531,13 @@ model NotificationPreferences {
   weeklyReportEnabled   Boolean  @default(true)
   tipsEnabled           Boolean  @default(true)
   paymentRemindersEnabled Boolean @default(true)
+  antExpenseAlertsEnabled Boolean @default(true)
 
   // Umbral de alerta de presupuesto (porcentaje)
   budgetAlertThreshold  Int      @default(80)
+
+  // Umbral de alerta de gastos hormiga (porcentaje del gasto total)
+  antExpenseAlertThreshold Int   @default(20)
 
   // Horario de notificaciones (para evitar molestias)
   quietHoursStart       Int?     // Hora en formato 24h (ej: 22 = 10pm)
@@ -583,6 +587,7 @@ enum NotificationType {
   PAYMENT_REMINDER
   PAYMENT_DUE_TODAY
   PAYMENT_OVERDUE
+  ANT_EXPENSE_ALERT
 }
 
 enum NotificationStatus {
