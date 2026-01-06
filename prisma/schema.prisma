@@ -28,6 +28,9 @@ model User {
   onboarding          Boolean       @default(false)
   onboardingCompleted Boolean       @default(false)
 
+  // Trial tracking
+  hasUsedTrial        Boolean       @default(false)
+
   // Password Reset Fields
   resetCode           String?
   resetCodeExpires    DateTime?
@@ -57,6 +60,12 @@ model User {
 
   // Recordatorios de Pago
   paymentReminders          PaymentReminder[]
+
+  // Sistema de Referidos
+  referralCode              ReferralCode?
+  referralsMade             Referral[]        @relation("ReferralsMade")
+  referralsReceived         Referral?         @relation("ReferralsReceived")
+  referralRewards           ReferralReward[]
 
   @@map("users")
 }
@@ -306,6 +315,8 @@ model Subscription {
   currentPeriodEnd     DateTime?
   cancelAtPeriodEnd    Boolean            @default(false)
   trialEndsAt          DateTime?
+  trialStartedAt       DateTime?
+  trialNotificationsSent Json?            @default("[]") // Array of sent notification types: ["TRIAL_WELCOME", "TRIAL_DAY_3", etc.]
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -361,6 +372,21 @@ enum PaymentStatus {
   PENDING
   REFUNDED
   CANCELED
+}
+
+// Registro de dispositivos que ya usaron trial (anti-abuso)
+model TrialDeviceRegistry {
+  id              String   @id @default(cuid())
+  deviceId        String   @unique  // Identificador único del dispositivo
+  platform        String?           // ios, android
+  deviceName      String?           // "iPhone 15", "Samsung Galaxy S24"
+  usedByUserId    String            // Usuario que usó el trial
+  usedByEmail     String            // Email con el que se registró
+  usedAt          DateTime @default(now())
+
+  @@map("trial_device_registry")
+  @@index([deviceId])
+  @@index([usedByUserId])
 }
 
 // =============================================
@@ -532,6 +558,7 @@ model NotificationPreferences {
   tipsEnabled           Boolean  @default(true)
   paymentRemindersEnabled Boolean @default(true)
   antExpenseAlertsEnabled Boolean @default(true)
+  trialNotificationsEnabled Boolean @default(true)
 
   // Umbral de alerta de presupuesto (porcentaje)
   budgetAlertThreshold  Int      @default(80)
@@ -588,6 +615,11 @@ enum NotificationType {
   PAYMENT_DUE_TODAY
   PAYMENT_OVERDUE
   ANT_EXPENSE_ALERT
+  TRIAL_WELCOME
+  TRIAL_DAY_3
+  TRIAL_DAY_5
+  TRIAL_ENDING
+  TRIAL_ENDED
 }
 
 enum NotificationStatus {
@@ -706,4 +738,94 @@ enum MappingSource {
   ZENIO_CORRECTION   // Usuario corrigió via Zenio
   AI_CONFIRMED       // IA categorizó y usuario no corrigió (alta confianza)
   SYSTEM_DEFAULT     // Mapeo por defecto del sistema
+}
+
+// =============================================
+// MODELOS DE SISTEMA DE REFERIDOS
+// =============================================
+
+// Código de referido único por usuario
+model ReferralCode {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  code          String   @unique  // FINZEN-JUAN-X7K9
+  isActive      Boolean  @default(true)
+  usageCount    Int      @default(0)
+  maxUsages     Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referrals     Referral[]
+
+  @@map("referral_codes")
+  @@index([code])
+}
+
+// Tracking de referido: referrer -> referee
+model Referral {
+  id              String         @id @default(cuid())
+  referralCodeId  String
+  referrerId      String
+  refereeId       String         @unique  // Solo puede ser referido una vez
+  refereeEmail    String
+  status          ReferralStatus @default(PENDING)
+
+  createdAt       DateTime       @default(now())
+  convertedAt     DateTime?
+  rewardedAt      DateTime?
+  expiredAt       DateTime?
+  stripeInvoiceId String?
+
+  referralCode    ReferralCode   @relation(fields: [referralCodeId], references: [id])
+  referrer        User           @relation("ReferralsMade", fields: [referrerId], references: [id])
+  referee         User           @relation("ReferralsReceived", fields: [refereeId], references: [id])
+  rewards         ReferralReward[]
+
+  @@map("referrals")
+  @@index([referrerId])
+  @@index([status])
+}
+
+// Tracking de recompensas ganadas/usadas
+model ReferralReward {
+  id            String       @id @default(cuid())
+  userId        String
+  referralId    String
+  type          RewardType
+  status        RewardStatus @default(PENDING)
+  value         Float
+  description   String
+
+  stripeCouponId    String?
+  createdAt         DateTime  @default(now())
+  appliedAt         DateTime?
+  expiresAt         DateTime?
+
+  user          User     @relation(fields: [userId], references: [id])
+  referral      Referral @relation(fields: [referralId], references: [id])
+
+  @@map("referral_rewards")
+  @@index([userId])
+  @@index([status])
+}
+
+enum ReferralStatus {
+  PENDING
+  CONVERTED
+  REWARDED
+  EXPIRED
+  CANCELLED
+}
+
+enum RewardType {
+  REFERRER_FREE_MONTH
+  REFEREE_DISCOUNT
+}
+
+enum RewardStatus {
+  PENDING
+  APPLIED
+  EXPIRED
+  CANCELLED
 }

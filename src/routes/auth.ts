@@ -1,5 +1,5 @@
 import express, { Router } from 'express';
-import { register, login, verifyEmail, forgotPassword, resetPassword, getProfile, updateProfile, changePassword } from '../controllers/auth';
+import { register, login, verifyEmail, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility } from '../controllers/auth';
 import { authenticateToken } from '../middlewares/auth';
 
 const router: Router = express.Router();
@@ -10,6 +10,7 @@ router.post('/login', login);
 router.post('/verify-email', verifyEmail);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
+router.post('/check-trial-eligibility', checkTrialEligibility);
 
 // Rutas de perfil (requieren autenticación)
 router.get('/profile', authenticateToken, getProfile);

@@ -6,6 +6,9 @@ import { BudgetScheduler } from './services/budgetScheduler';
 import { EmailSyncScheduler } from './services/emailSyncScheduler';
 import { ReminderScheduler } from './services/reminderScheduler';
 import { AntExpenseScheduler } from './services/antExpenseScheduler';
+import { TrialScheduler } from './services/trialScheduler';
+import { ReferralScheduler } from './services/referralScheduler';
+import { validateReferralConfig } from './config/referralConfig';
 
 // Force deployment trigger - Email Sync Integration
 
@@ -24,6 +27,7 @@ import subscriptionRoutes from './routes/subscriptions';
 import emailSyncRoutes from './routes/emailSync';
 import notificationRoutes from './routes/notifications';
 import reminderRoutes from './routes/reminders';
+import referralRoutes from './routes/referrals';
 import webRoutes from './routes/web';
 
 // Importar webhooks
@@ -75,6 +79,7 @@ app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/email-sync', emailSyncRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reminders', reminderRoutes);
+app.use('/api/referrals', referralRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
@@ -111,6 +116,9 @@ app.use('*', (req, res) => {
 // Inicializar servidor
 async function startServer() {
   try {
+    // Validar configuración de referidos
+    validateReferralConfig();
+
     // Conectar a la base de datos
     await prisma.$connect();
     console.log('✅ Database connected successfully');
@@ -126,6 +134,12 @@ async function startServer() {
 
     // Iniciar scheduler de alertas de gastos hormiga
     AntExpenseScheduler.startScheduler();
+
+    // Iniciar scheduler de notificaciones de trial
+    TrialScheduler.startScheduler();
+
+    // Iniciar scheduler de expiración de referidos
+    ReferralScheduler.startScheduler();
 
     // Iniciar servidor
     app.listen(PORT, () => {
@@ -146,6 +160,8 @@ process.on('SIGINT', async () => {
   EmailSyncScheduler.stopScheduler();
   ReminderScheduler.stopScheduler();
   AntExpenseScheduler.stopScheduler();
+  TrialScheduler.stopScheduler();
+  ReferralScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
@@ -156,6 +172,8 @@ process.on('SIGTERM', async () => {
   EmailSyncScheduler.stopScheduler();
   ReminderScheduler.stopScheduler();
   AntExpenseScheduler.stopScheduler();
+  TrialScheduler.stopScheduler();
+  ReferralScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });

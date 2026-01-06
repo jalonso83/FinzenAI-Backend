@@ -3,6 +3,7 @@ import { stripe, STRIPE_WEBHOOK_SECRET, PLANS } from '../config/stripe';
 import { subscriptionService } from '../services/subscriptionService';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
 import { getPlanFromPriceId } from '../config/stripe';
+import { ReferralService } from '../services/referralService';
 import Stripe from 'stripe';
 
 /**
@@ -178,6 +179,14 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.ACTIVE);
 
   console.log(`✅ Payment recorded for user ${userId}: $${invoice.amount_paid / 100}`);
+
+  // Procesar conversión de referido si aplica (no bloquear si falla)
+  try {
+    await ReferralService.handleRefereeConversion(userId, invoice.id);
+  } catch (referralError) {
+    console.error('❌ Error processing referral conversion:', referralError);
+    // No fallar el webhook por error de referido
+  }
 }
 
 /**

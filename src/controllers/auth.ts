@@ -3,6 +3,9 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/emailService';
+import { TrialScheduler } from '../services/trialScheduler';
+import { ReferralService } from '../services/referralService';
+import { REFERRAL_CONFIG } from '../config/referralConfig';
 
 const prisma = new PrismaClient();
 
@@ -21,6 +24,12 @@ interface RegisterRequest {
   preferredLanguage: string;
   occupation: string;
   company?: string;
+  // Información del dispositivo para control de trial (anti-abuso)
+  deviceId?: string;
+  devicePlatform?: string;
+  deviceName?: string;
+  // Código de referido (opcional)
+  referralCode?: string;
 }
 
 interface LoginRequest {
@@ -48,7 +57,11 @@ export const register = async (req: Request, res: Response) => {
       currency,
       preferredLanguage,
       occupation,
-      company
+      company,
+      deviceId,
+      devicePlatform,
+      deviceName,
+      referralCode
     }: RegisterRequest = req.body;
 
     // Validaciones básicas
@@ -108,13 +121,63 @@ export const register = async (req: Request, res: Response) => {
       console.error('❌ Error enviando email de verificación:', emailError);
       // No fallar el registro por error de email
     }
-    
+
+    // Iniciar período de prueba de 7 días (no bloquear el registro si falla)
+    let trialResult = { success: false, trialStarted: false, reason: undefined as string | undefined };
+    try {
+      trialResult = await TrialScheduler.startTrialForUser(user.id, {
+        deviceId,
+        platform: devicePlatform,
+        deviceName
+      });
+    } catch (trialError) {
+      console.error('❌ Error iniciando trial:', trialError);
+      // No fallar el registro por error de trial
+    }
+
+    // Procesar código de referido si se proporciona (no bloquear el registro si falla)
+    let referralResult = { applied: false, discount: null as string | null, reason: undefined as string | undefined };
+    if (referralCode && REFERRAL_CONFIG.ENABLED) {
+      try {
+        // Verificar anti-fraude antes de aplicar
+        const fraudCheck = await ReferralService.checkFraudIndicators('', email);
+
+        if (!fraudCheck.suspicious) {
+          const result = await ReferralService.applyReferralCode(user.id, email, referralCode);
+          referralResult = {
+            applied: result.success,
+            discount: result.success ? `${result.discountPercent}%` : null,
+            reason: result.reason
+          };
+
+          if (result.success) {
+            console.log(`✅ Código de referido aplicado: ${referralCode} para usuario ${user.id}`);
+          }
+        } else {
+          console.warn(`⚠️ Referido sospechoso detectado para ${email}: ${fraudCheck.reasons.join(', ')}`);
+          referralResult.reason = 'SUSPICIOUS_REFERRAL';
+        }
+      } catch (referralError) {
+        console.error('❌ Error aplicando código de referido:', referralError);
+        // No fallar el registro por error de referido
+      }
+    }
+
     return res.status(201).json({
       message: 'Usuario registrado exitosamente. Por favor revisa tu email para verificar tu cuenta.',
       user: {
         id: user.id,
         email: user.email,
         verified: user.verified
+      },
+      trial: {
+        started: trialResult.trialStarted,
+        reason: trialResult.reason // 'EMAIL_ALREADY_USED_TRIAL' | 'DEVICE_ALREADY_USED_TRIAL' | undefined
+      },
+      referral: {
+        applied: referralResult.applied,
+        discount: referralResult.discount,
+        reason: referralResult.reason
       }
     });
   } catch (error) {
@@ -459,6 +522,44 @@ export const changePassword = async (req: Request, res: Response) => {
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Error al cambiar la contraseña'
+    });
+  }
+};
+
+// Verificar elegibilidad para trial (antes de registro)
+export const checkTrialEligibility = async (req: Request, res: Response) => {
+  try {
+    const { deviceId } = req.body;
+
+    // Si no se proporciona deviceId, asumimos que es elegible (por ahora)
+    if (!deviceId) {
+      return res.json({
+        eligible: true,
+        message: 'Dispositivo elegible para período de prueba'
+      });
+    }
+
+    // Verificar si el dispositivo ya usó un trial
+    const deviceUsedTrial = await TrialScheduler.hasDeviceUsedTrial(deviceId);
+
+    if (deviceUsedTrial) {
+      return res.json({
+        eligible: false,
+        reason: 'DEVICE_ALREADY_USED_TRIAL',
+        message: 'Este dispositivo ya utilizó el período de prueba gratuito'
+      });
+    }
+
+    return res.json({
+      eligible: true,
+      message: 'Dispositivo elegible para período de prueba'
+    });
+
+  } catch (error) {
+    console.error('Check trial eligibility error:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: 'Error al verificar elegibilidad'
     });
   }
 };

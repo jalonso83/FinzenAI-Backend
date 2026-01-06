@@ -1,6 +1,7 @@
 import { stripe } from '../config/stripe';
 import { PrismaClient } from '@prisma/client';
 import Stripe from 'stripe';
+import { ReferralService } from './referralService';
 
 const prisma = new PrismaClient();
 
@@ -58,10 +59,20 @@ export class StripeService {
         customerId = customer.id;
       }
 
-      // Crear sesión de checkout
-      // origin_context no es un parámetro oficial de Stripe Checkout Sessions,
-      // pero la configuración está optimizada para flujo móvil
-      const session = await stripe.checkout.sessions.create({
+      // Verificar si el usuario tiene descuento de referido pendiente
+      let refereeCoupon: string | null = null;
+      try {
+        refereeCoupon = await ReferralService.getRefereeCouponForCheckout(userId);
+        if (refereeCoupon) {
+          console.log(`[StripeService] Aplicando cupón de referido ${refereeCoupon} para usuario ${userId}`);
+        }
+      } catch (couponError) {
+        console.error('[StripeService] Error obteniendo cupón de referido:', couponError);
+        // Continuar sin cupón si hay error
+      }
+
+      // Configurar sesión de checkout
+      const sessionConfig: Stripe.Checkout.SessionCreateParams = {
         customer: customerId,
         mode: 'subscription',
         payment_method_types: ['card'],
@@ -73,11 +84,23 @@ export class StripeService {
           trial_period_days: 7, // 7 días de prueba gratis
           metadata: { userId },
         },
-        allow_promotion_codes: true, // Permitir códigos promocionales
         // Optimizaciones para móvil
         billing_address_collection: 'auto',
         phone_number_collection: { enabled: false },
-      });
+      };
+
+      // Aplicar descuento de referido si existe
+      if (refereeCoupon) {
+        sessionConfig.discounts = [{ coupon: refereeCoupon }];
+        // No permitir otros códigos si ya tiene descuento de referido
+        sessionConfig.allow_promotion_codes = false;
+      } else {
+        // Permitir códigos promocionales solo si no tiene referido
+        sessionConfig.allow_promotion_codes = true;
+      }
+
+      // Crear sesión de checkout
+      const session = await stripe.checkout.sessions.create(sessionConfig);
 
       console.log(`✅ Checkout session creada: ${session.id} para usuario ${userId}`);
       return session;

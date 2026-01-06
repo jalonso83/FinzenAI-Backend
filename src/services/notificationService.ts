@@ -107,7 +107,8 @@ export class NotificationService {
           tipsEnabled: true,
           budgetAlertThreshold: 80,
           antExpenseAlertsEnabled: true,
-          antExpenseAlertThreshold: 20
+          antExpenseAlertThreshold: 20,
+          trialNotificationsEnabled: true
         }
       });
 
@@ -293,6 +294,12 @@ export class NotificationService {
         return preferences.paymentRemindersEnabled ?? true;
       case 'ANT_EXPENSE_ALERT':
         return preferences.antExpenseAlertsEnabled ?? true;
+      case 'TRIAL_WELCOME':
+      case 'TRIAL_DAY_3':
+      case 'TRIAL_DAY_5':
+      case 'TRIAL_ENDING':
+      case 'TRIAL_ENDED':
+        return preferences.trialNotificationsEnabled ?? true;
       case 'SYSTEM':
         return true; // System notifications always enabled
       default:
@@ -553,6 +560,101 @@ export class NotificationService {
     return this.sendToUser(userId, 'ANT_EXPENSE_ALERT', payload);
   }
 
+  // =============================================
+  // NOTIFICACIONES DE TRIAL
+  // =============================================
+
+  /**
+   * Notifica bienvenida al trial (Día 1)
+   */
+  static async notifyTrialWelcome(
+    userId: string,
+    userName: string
+  ): Promise<SendNotificationResult> {
+    const payload: NotificationPayload = {
+      title: '🎉 ¡Bienvenido a FinZen PRO!',
+      body: `¡Hola ${userName}! Tu prueba gratuita de 7 días ha comenzado. Explora todas las funciones premium: análisis de gastos hormiga, alertas inteligentes, exportación de datos y más.`,
+      data: {
+        type: 'TRIAL_WELCOME',
+        screen: 'Dashboard'
+      }
+    };
+
+    return this.sendToUser(userId, 'TRIAL_WELCOME', payload);
+  }
+
+  /**
+   * Notifica recordatorio de trial (Día 3)
+   */
+  static async notifyTrialDay3(
+    userId: string
+  ): Promise<SendNotificationResult> {
+    const payload: NotificationPayload = {
+      title: '📊 ¿Ya exploraste tus finanzas?',
+      body: '¡Llevas 3 días de prueba! ¿Ya creaste tu primer presupuesto? Configura alertas para no exceder tus límites. Te quedan 4 días de acceso premium.',
+      data: {
+        type: 'TRIAL_DAY_3',
+        screen: 'Budgets'
+      }
+    };
+
+    return this.sendToUser(userId, 'TRIAL_DAY_3', payload);
+  }
+
+  /**
+   * Notifica recordatorio de trial (Día 5)
+   */
+  static async notifyTrialDay5(
+    userId: string
+  ): Promise<SendNotificationResult> {
+    const payload: NotificationPayload = {
+      title: '⏰ ¡Te quedan 2 días!',
+      body: 'Tu prueba premium termina pronto. Usa el detector de gastos hormiga para descubrir dónde se va tu dinero. ¡No pierdas estas funciones!',
+      data: {
+        type: 'TRIAL_DAY_5',
+        screen: 'AntExpenseDetective'
+      }
+    };
+
+    return this.sendToUser(userId, 'TRIAL_DAY_5', payload);
+  }
+
+  /**
+   * Notifica que el trial está por terminar (Día 7)
+   */
+  static async notifyTrialEnding(
+    userId: string
+  ): Promise<SendNotificationResult> {
+    const payload: NotificationPayload = {
+      title: '🔔 Tu prueba termina hoy',
+      body: '¡Último día de acceso premium! Suscríbete ahora para mantener todas las funciones: análisis ilimitado, alertas inteligentes, exportación y más desde $4.99/mes.',
+      data: {
+        type: 'TRIAL_ENDING',
+        screen: 'Subscriptions'
+      }
+    };
+
+    return this.sendToUser(userId, 'TRIAL_ENDING', payload);
+  }
+
+  /**
+   * Notifica que el trial terminó
+   */
+  static async notifyTrialEnded(
+    userId: string
+  ): Promise<SendNotificationResult> {
+    const payload: NotificationPayload = {
+      title: '📢 Tu prueba ha terminado',
+      body: 'Tu período de prueba finalizó. Ahora tienes acceso limitado. ¡Suscríbete para recuperar todas las funciones premium!',
+      data: {
+        type: 'TRIAL_ENDED',
+        screen: 'Subscriptions'
+      }
+    };
+
+    return this.sendToUser(userId, 'TRIAL_ENDED', payload);
+  }
+
   /**
    * Obtiene las preferencias de notificación del usuario
    */
@@ -578,6 +680,7 @@ export class NotificationService {
       quietHoursEnd?: number | null;
       antExpenseAlertsEnabled?: boolean;
       antExpenseAlertThreshold?: number;
+      trialNotificationsEnabled?: boolean;
     }
   ) {
     return prisma.notificationPreferences.upsert({
