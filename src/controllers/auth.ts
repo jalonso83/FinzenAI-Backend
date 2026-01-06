@@ -123,7 +123,7 @@ export const register = async (req: Request, res: Response) => {
     }
 
     // Iniciar período de prueba de 7 días (no bloquear el registro si falla)
-    let trialResult = { success: false, trialStarted: false, reason: undefined as string | undefined };
+    let trialResult: { success: boolean; trialStarted: boolean; reason?: string } = { success: false, trialStarted: false };
     try {
       trialResult = await TrialScheduler.startTrialForUser(user.id, {
         deviceId,
