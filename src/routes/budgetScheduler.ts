@@ -3,6 +3,7 @@ import { BudgetScheduler } from '../services/budgetScheduler';
 import { BudgetRenewalService } from '../services/budgetRenewalService';
 import { authenticateToken } from '../middlewares/auth';
 
+import { logger } from '../utils/logger';
 const router: Router = express.Router();
 
 // Middleware de autenticación para todas las rutas
@@ -22,7 +23,7 @@ router.get('/status', (req: Request, res: Response) => {
       message: 'Estado del scheduler obtenido correctamente'
     });
   } catch (error) {
-    console.error('Error getting scheduler status:', error);
+    logger.error('Error getting scheduler status:', error);
     return res.status(500).json({
       success: false,
       error: 'Internal server error',
@@ -38,7 +39,7 @@ router.get('/status', (req: Request, res: Response) => {
  */
 router.post('/run-manual', async (req: Request, res: Response) => {
   try {
-    console.log(`[Manual Execution] Ejecutado por usuario: ${req.user?.email}`);
+    logger.log(`[Manual Execution] Ejecutado por usuario: ${req.user?.email}`);
     
     await BudgetScheduler.runManual();
     
@@ -47,7 +48,7 @@ router.post('/run-manual', async (req: Request, res: Response) => {
       message: 'Renovación manual de presupuestos ejecutada correctamente'
     });
   } catch (error) {
-    console.error('Error running manual renewal:', error);
+    logger.error('Error running manual renewal:', error);
     return res.status(500).json({
       success: false,
       error: 'Internal server error',
@@ -76,7 +77,7 @@ router.get('/budget-history/:categoryId?', async (req: Request, res: Response) =
       message: 'Histórico de presupuestos obtenido correctamente'
     });
   } catch (error) {
-    console.error('Error getting budget history:', error);
+    logger.error('Error getting budget history:', error);
     return res.status(500).json({
       success: false,
       error: 'Internal server error',

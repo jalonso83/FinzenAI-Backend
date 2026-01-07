@@ -1,9 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { subscriptionService } from '../services/subscriptionService';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 /**
  * Middleware: Verificar límite de presupuestos
  */
@@ -42,7 +41,7 @@ export const checkBudgetLimit = async (
 
     next();
   } catch (error: any) {
-    console.error('Error verificando límite de presupuestos:', error);
+    logger.error('Error verificando límite de presupuestos:', error);
     res.status(500).json({
       message: 'Error al verificar límite',
       error: error.message
@@ -88,7 +87,7 @@ export const checkGoalLimit = async (
 
     next();
   } catch (error: any) {
-    console.error('Error verificando límite de metas:', error);
+    logger.error('Error verificando límite de metas:', error);
     res.status(500).json({
       message: 'Error al verificar límite',
       error: error.message
@@ -168,7 +167,7 @@ export const checkZenioLimit = async (
 
     next();
   } catch (error: any) {
-    console.error('Error verificando límite de Zenio:', error);
+    logger.error('Error verificando límite de Zenio:', error);
     res.status(500).json({
       message: 'Error al verificar límite',
       error: error.message
@@ -199,7 +198,7 @@ export const checkAdvancedReports = async (
 
     next();
   } catch (error: any) {
-    console.error('Error verificando acceso a reportes avanzados:', error);
+    logger.error('Error verificando acceso a reportes avanzados:', error);
     res.status(500).json({
       message: 'Error al verificar acceso',
       error: error.message
@@ -230,7 +229,7 @@ export const checkExportData = async (
 
     next();
   } catch (error: any) {
-    console.error('Error verificando acceso a exportación:', error);
+    logger.error('Error verificando acceso a exportación:', error);
     res.status(500).json({
       message: 'Error al verificar acceso',
       error: error.message
@@ -262,7 +261,7 @@ export const requirePlan = (minPlan: 'FREE' | 'PREMIUM' | 'PRO') => {
 
       next();
     } catch (error: any) {
-      console.error('Error verificando plan:', error);
+      logger.error('Error verificando plan:', error);
       res.status(500).json({
         message: 'Error al verificar plan',
         error: error.message

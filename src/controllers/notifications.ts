@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { DevicePlatform } from '@prisma/client';
 import NotificationService from '../services/notificationService';
 
+import { logger } from '../utils/logger';
 interface AuthRequest extends Request {
   user?: {
     id: string;
@@ -76,7 +77,7 @@ export const registerDevice = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error registering device:', error);
+    logger.error('[NotificationsController] Error registering device:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -107,7 +108,7 @@ export const unregisterDevice = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error unregistering device:', error);
+    logger.error('[NotificationsController] Error unregistering device:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -154,7 +155,7 @@ export const getPreferences = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error getting preferences:', error);
+    logger.error('[NotificationsController] Error getting preferences:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -222,7 +223,7 @@ export const updatePreferences = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error updating preferences:', error);
+    logger.error('[NotificationsController] Error updating preferences:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -259,7 +260,7 @@ export const getNotificationHistory = async (req: AuthRequest, res: Response) =>
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error getting history:', error);
+    logger.error('[NotificationsController] Error getting history:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -292,7 +293,7 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error marking as read:', error);
+    logger.error('[NotificationsController] Error marking as read:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -328,7 +329,7 @@ export const deleteNotification = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error deleting notification:', error);
+    logger.error('[NotificationsController] Error deleting notification:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -356,7 +357,7 @@ export const deleteAllNotifications = async (req: AuthRequest, res: Response) =>
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error deleting all notifications:', error);
+    logger.error('[NotificationsController] Error deleting all notifications:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -400,7 +401,7 @@ export const sendTestNotification = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[NotificationsController] Error sending test:', error);
+    logger.error('[NotificationsController] Error sending test:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message

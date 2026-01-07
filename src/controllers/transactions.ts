@@ -1,11 +1,11 @@
 import { Request, Response } from 'express';
-import { PrismaClient, MappingSource } from '@prisma/client';
+import { MappingSource } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { NotificationService } from '../services/notificationService';
 import { merchantMappingService } from '../services/merchantMappingService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Función inteligente para analizar y disparar eventos de gamificación
 export async function analyzeAndDispatchTransactionEvents(userId: string, transaction: any) {
   const today = new Date();
@@ -250,36 +250,53 @@ export async function analyzeAndDispatchTransactionEvents(userId: string, transa
 }
 
 // Función auxiliar para calcular días consecutivos
+// Optimizado: 1 query en lugar de hasta 30
 async function calculateConsecutiveDays(userId: string): Promise<number> {
   const today = new Date();
+  const thirtyDaysAgo = new Date(today);
+  thirtyDaysAgo.setDate(today.getDate() - 30);
+
+  // Una sola query: obtener fechas únicas con transacciones en los últimos 30 días
+  const transactions = await prisma.transaction.findMany({
+    where: {
+      userId,
+      date: { gte: thirtyDaysAgo }
+    },
+    select: { date: true },
+    orderBy: { date: 'desc' }
+  });
+
+  if (transactions.length === 0) {
+    return 0;
+  }
+
+  // Crear Set de fechas (solo año-mes-día) que tienen transacciones
+  const datesWithTransactions = new Set<string>();
+  for (const tx of transactions) {
+    const dateKey = `${tx.date.getFullYear()}-${tx.date.getMonth()}-${tx.date.getDate()}`;
+    datesWithTransactions.add(dateKey);
+  }
+
+  // Contar días consecutivos hacia atrás desde hoy
   let consecutiveDays = 0;
-  
-  for (let i = 0; i < 30; i++) { // Verificar últimos 30 días
+
+  for (let i = 0; i < 30; i++) {
     const checkDate = new Date(today);
     checkDate.setDate(today.getDate() - i);
-    
-    const startOfDay = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate());
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setDate(endOfDay.getDate() + 1);
-    
-    const hasTransaction = await prisma.transaction.findFirst({
-      where: { 
-        userId, 
-        date: { gte: startOfDay, lt: endOfDay } 
-      }
-    });
-    
-    if (hasTransaction) {
+    const dateKey = `${checkDate.getFullYear()}-${checkDate.getMonth()}-${checkDate.getDate()}`;
+
+    if (datesWithTransactions.has(dateKey)) {
       consecutiveDays++;
     } else {
-      break;
+      break; // Mantiene la lógica original: se detiene en el primer día sin transacciones
     }
   }
-  
+
   return consecutiveDays;
 }
 
 // Función utilitaria para recalcular el gasto de los presupuestos afectados
+// Optimizado: reduce de 2N queries a 2 queries (1 findMany + 1 transacción batch)
 async function recalculateBudgetSpent(userId: string, categoryId: string, date: Date) {
   // Buscar presupuestos activos de la categoría y usuario cuyo período incluya la fecha
   const budgets = await prisma.budget.findMany({
@@ -292,25 +309,44 @@ async function recalculateBudgetSpent(userId: string, categoryId: string, date: 
     }
   });
 
-  for (const budget of budgets) {
-    // Sumar todas las transacciones de gasto de esa categoría, usuario y período
-    const spent = await prisma.transaction.aggregate({
-      _sum: { amount: true },
-      where: {
-        userId,
-        category_id: categoryId,
-        type: 'EXPENSE',
-        date: {
-          gte: budget.start_date,
-          lte: budget.end_date
-        }
-      }
-    });
-    await prisma.budget.update({
-      where: { id: budget.id },
-      data: { spent: spent._sum.amount || 0 }
-    });
+  if (budgets.length === 0) {
+    return;
   }
+
+  // Encontrar el rango de fechas más amplio que cubra todos los presupuestos
+  const minStartDate = budgets.reduce((min, b) =>
+    b.start_date < min ? b.start_date : min, budgets[0].start_date);
+  const maxEndDate = budgets.reduce((max, b) =>
+    b.end_date > max ? b.end_date : max, budgets[0].end_date);
+
+  // Una sola query para obtener todas las transacciones relevantes
+  const transactions = await prisma.transaction.findMany({
+    where: {
+      userId,
+      category_id: categoryId,
+      type: 'EXPENSE',
+      date: {
+        gte: minStartDate,
+        lte: maxEndDate
+      }
+    },
+    select: { amount: true, date: true }
+  });
+
+  // Calcular el gasto para cada presupuesto en memoria
+  const updates = budgets.map(budget => {
+    const spent = transactions
+      .filter(tx => tx.date >= budget.start_date && tx.date <= budget.end_date)
+      .reduce((sum, tx) => sum + Number(tx.amount), 0);
+
+    return prisma.budget.update({
+      where: { id: budget.id },
+      data: { spent }
+    });
+  });
+
+  // Ejecutar todas las actualizaciones en una transacción atómica
+  await prisma.$transaction(updates);
 }
 
 // Tipos para las peticiones
@@ -391,7 +427,7 @@ export const getTransactions = async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Get transactions error:', error);
+    logger.error('Get transactions error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to fetch transactions'
@@ -431,7 +467,7 @@ export const getTransactionById = async (req: Request, res: Response) => {
 
     return res.json({ transaction });
   } catch (error) {
-    console.error('Get transaction by ID error:', error);
+    logger.error('Get transaction by ID error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to fetch transaction'
@@ -508,7 +544,7 @@ export const createTransaction = async (req: Request, res: Response) => {
       try {
         await NotificationService.checkBudgetAlerts(userId, category_id, amount, transaction.date);
       } catch (error) {
-        console.error('Error checking budget alerts:', error);
+        logger.error('Error checking budget alerts:', error);
       }
     }
 
@@ -516,7 +552,7 @@ export const createTransaction = async (req: Request, res: Response) => {
     try {
       await analyzeAndDispatchTransactionEvents(userId, transaction);
     } catch (error) {
-      console.error('Error dispatching gamification events:', error);
+      logger.error('Error dispatching gamification events:', error);
       // No fallar la transacción por error de gamificación
     }
 
@@ -525,7 +561,7 @@ export const createTransaction = async (req: Request, res: Response) => {
       transaction
     });
   } catch (error) {
-    console.error('Create transaction error:', error);
+    logger.error('Create transaction error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to create transaction'
@@ -630,9 +666,9 @@ export const updateTransaction = async (req: Request, res: Response) => {
             source: MappingSource.USER_CORRECTION
           });
 
-          console.log(`[Transactions] Mapeo guardado: "${merchantName}" -> categoría ${updateData.category_id}`);
+          logger.log(`[Transactions] Mapeo guardado: "${merchantName}" -> categoría ${updateData.category_id}`);
         } catch (error) {
-          console.error('[Transactions] Error guardando mapeo:', error);
+          logger.error('[Transactions] Error guardando mapeo:', error);
           // No fallar la transacción por error de mapeo
         }
       }
@@ -643,7 +679,7 @@ export const updateTransaction = async (req: Request, res: Response) => {
       transaction
     });
   } catch (error) {
-    console.error('Update transaction error:', error);
+    logger.error('Update transaction error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to update transaction'
@@ -695,7 +731,7 @@ export const deleteTransaction = async (req: Request, res: Response) => {
         pointsAwarded: -5 // Restar 5 puntos
       });
     } catch (error) {
-      console.error('Error dispatching gamification event for delete:', error);
+      logger.error('Error dispatching gamification event for delete:', error);
       // No fallar la eliminación por error de gamificación
     }
 
@@ -703,7 +739,7 @@ export const deleteTransaction = async (req: Request, res: Response) => {
       message: 'Transaction deleted successfully'
     });
   } catch (error) {
-    console.error('Delete transaction error:', error);
+    logger.error('Delete transaction error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to delete transaction'

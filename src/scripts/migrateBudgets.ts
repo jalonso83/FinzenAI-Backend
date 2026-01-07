@@ -1,14 +1,13 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { BudgetRenewalService } from '../services/budgetRenewalService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 /**
  * Script para migrar presupuestos existentes al nuevo sistema
  * Renueva automáticamente los presupuestos vencidos
  */
 async function migrateBudgets() {
-  console.log('🔄 Iniciando migración de presupuestos existentes...');
+  logger.log('🔄 Iniciando migración de presupuestos existentes...');
   
   try {
     // 1. Obtener todos los presupuestos vencidos que siguen activos
@@ -35,25 +34,25 @@ async function migrateBudgets() {
       }
     });
 
-    console.log(`📊 Encontrados ${expiredBudgets.length} presupuestos vencidos para migrar`);
+    logger.log(`📊 Encontrados ${expiredBudgets.length} presupuestos vencidos para migrar`);
 
     if (expiredBudgets.length === 0) {
-      console.log('✅ No hay presupuestos vencidos que migrar');
+      logger.log('✅ No hay presupuestos vencidos que migrar');
       return;
     }
 
     // 2. Mostrar resumen de lo que se va a migrar
-    console.log('\n📋 Resumen de migración:');
+    logger.log('\n📋 Resumen de migración:');
     for (const budget of expiredBudgets) {
-      console.log(`- ${budget.user.name} | ${budget.category.name} | ${budget.name} | Vencido: ${budget.end_date.toISOString().split('T')[0]}`);
+      logger.log(`- ${budget.user.name} | ${budget.category.name} | ${budget.name} | Vencido: ${budget.end_date.toISOString().split('T')[0]}`);
     }
 
     // 3. Confirmar migración (en producción, quitar esto)
-    console.log('\n⚠️  ¿Continuar con la migración? (y/n)');
+    logger.log('\n⚠️  ¿Continuar con la migración? (y/n)');
     
     // Para ambiente de desarrollo/script, auto-continuar
     if (process.env.NODE_ENV !== 'production') {
-      console.log('🧪 Ambiente de desarrollo - continuando automáticamente...');
+      logger.log('🧪 Ambiente de desarrollo - continuando automáticamente...');
     }
 
     let migratedCount = 0;
@@ -62,27 +61,27 @@ async function migrateBudgets() {
     // 4. Procesar cada presupuesto vencido
     for (const budget of expiredBudgets) {
       try {
-        console.log(`\n🔄 Procesando: ${budget.name} (${budget.user.name})`);
+        logger.log(`\n🔄 Procesando: ${budget.name} (${budget.user.name})`);
         
         // Usar el servicio existente para renovar
         await renewExpiredBudget(budget);
         
         migratedCount++;
-        console.log(`  ✅ Migrado correctamente`);
+        logger.log(`  ✅ Migrado correctamente`);
         
       } catch (error) {
         errorCount++;
-        console.error(`  ❌ Error migrando presupuesto ${budget.id}:`, error);
+        logger.error(`  ❌ Error migrando presupuesto ${budget.id}:`, error);
       }
     }
 
-    console.log(`\n📊 Migración completada:`);
-    console.log(`  ✅ Exitosos: ${migratedCount}`);
-    console.log(`  ❌ Errores: ${errorCount}`);
-    console.log(`  📊 Total: ${expiredBudgets.length}`);
+    logger.log(`\n📊 Migración completada:`);
+    logger.log(`  ✅ Exitosos: ${migratedCount}`);
+    logger.log(`  ❌ Errores: ${errorCount}`);
+    logger.log(`  📊 Total: ${expiredBudgets.length}`);
 
   } catch (error) {
-    console.error('❌ Error en migración:', error);
+    logger.error('❌ Error en migración:', error);
   } finally {
     await prisma.$disconnect();
   }
@@ -155,11 +154,11 @@ async function renewExpiredBudget(expiredBudget: any): Promise<void> {
 if (require.main === module) {
   migrateBudgets()
     .then(() => {
-      console.log('🎉 Migración completada');
+      logger.log('🎉 Migración completada');
       process.exit(0);
     })
     .catch((error) => {
-      console.error('💥 Error fatal en migración:', error);
+      logger.error('💥 Error fatal en migración:', error);
       process.exit(1);
     });
 }

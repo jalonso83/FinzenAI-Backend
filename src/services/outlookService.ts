@@ -1,12 +1,13 @@
-import { PrismaClient, EmailConnection } from '@prisma/client';
+import { EmailConnection } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { ENV } from '../config/env';
 import axios from 'axios';
-
-const prisma = new PrismaClient();
+import { logger } from '../utils/logger';
 
 // Configuración de Microsoft OAuth
-const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID;
-const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET;
-const MICROSOFT_REDIRECT_URI = process.env.MICROSOFT_REDIRECT_URI || 'https://finzenai-backend-production.up.railway.app/api/email-sync/outlook/callback';
+const MICROSOFT_CLIENT_ID = ENV.MICROSOFT_CLIENT_ID;
+const MICROSOFT_CLIENT_SECRET = ENV.MICROSOFT_CLIENT_SECRET;
+const MICROSOFT_REDIRECT_URI = ENV.MICROSOFT_REDIRECT_URI;
 
 // Scopes necesarios para leer emails de Outlook
 const OUTLOOK_SCOPES = [
@@ -214,7 +215,7 @@ export class OutlookService {
     } catch (error: any) {
       // Si el filtro es muy complejo, intentar sin filtro de sender (buscar todos y filtrar después)
       if (error.response?.status === 400) {
-        console.warn('[OutlookService] Complex filter failed, fetching recent emails and filtering locally');
+        logger.warn('[OutlookService] Complex filter failed, fetching recent emails and filtering locally');
 
         let dateFilter = '';
         if (afterDate) {
@@ -319,7 +320,7 @@ export class OutlookService {
     // Microsoft Graph no tiene un endpoint de revocación directo
     // La recomendación es simplemente eliminar los tokens almacenados
     // El usuario puede revocar permisos desde https://account.live.com/consent/Manage
-    console.log('[OutlookService] Access revoked (tokens removed from database)');
+    logger.log('[OutlookService] Access revoked (tokens removed from database)');
   }
 }
 

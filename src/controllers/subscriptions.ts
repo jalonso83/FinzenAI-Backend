@@ -3,6 +3,7 @@ import { stripeService } from '../services/stripeService';
 import { subscriptionService } from '../services/subscriptionService';
 import { PLANS, PlanType, BillingPeriod, getPriceId, getPlanFromPriceId, stripe } from '../config/stripe';
 
+import { logger } from '../utils/logger';
 /**
  * Crear sesión de checkout para upgrade de plan
  */
@@ -49,7 +50,7 @@ export const createCheckout = async (req: Request, res: Response) => {
 
     res.json({ url: session.url, sessionId: session.id });
   } catch (error: any) {
-    console.error('Error creando checkout:', error);
+    logger.error('Error creando checkout:', error);
     res.status(500).json({
       message: 'Error al crear sesión de pago',
       error: error.message
@@ -68,7 +69,7 @@ export const getSubscription = async (req: Request, res: Response) => {
 
     res.json(subscription);
   } catch (error: any) {
-    console.error('Error obteniendo suscripción:', error);
+    logger.error('Error obteniendo suscripción:', error);
     res.status(500).json({
       message: 'Error al obtener suscripción',
       error: error.message
@@ -95,7 +96,7 @@ export const getPlans = async (req: Request, res: Response) => {
 
     res.json({ plans });
   } catch (error: any) {
-    console.error('Error obteniendo planes:', error);
+    logger.error('Error obteniendo planes:', error);
     res.status(500).json({
       message: 'Error al obtener planes',
       error: error.message
@@ -132,7 +133,7 @@ export const cancelSubscription = async (req: Request, res: Response) => {
       currentPeriodEnd: subscription.currentPeriodEnd,
     });
   } catch (error: any) {
-    console.error('Error cancelando suscripción:', error);
+    logger.error('Error cancelando suscripción:', error);
     res.status(500).json({
       message: 'Error al cancelar suscripción',
       error: error.message
@@ -168,7 +169,7 @@ export const reactivateSubscription = async (req: Request, res: Response) => {
       cancelAtPeriodEnd: false,
     });
   } catch (error: any) {
-    console.error('Error reactivando suscripción:', error);
+    logger.error('Error reactivando suscripción:', error);
     res.status(500).json({
       message: 'Error al reactivar suscripción',
       error: error.message
@@ -199,7 +200,7 @@ export const createCustomerPortal = async (req: Request, res: Response) => {
 
     res.json({ url: session.url });
   } catch (error: any) {
-    console.error('Error creando portal de cliente:', error);
+    logger.error('Error creando portal de cliente:', error);
     res.status(500).json({
       message: 'Error al crear portal de cliente',
       error: error.message
@@ -256,7 +257,7 @@ export const changePlan = async (req: Request, res: Response) => {
       billingPeriod,
     });
   } catch (error: any) {
-    console.error('Error cambiando plan:', error);
+    logger.error('Error cambiando plan:', error);
     res.status(500).json({
       message: 'Error al cambiar plan',
       error: error.message
@@ -276,7 +277,7 @@ export const getPaymentHistory = async (req: Request, res: Response) => {
 
     res.json({ payments });
   } catch (error: any) {
-    console.error('Error obteniendo historial de pagos:', error);
+    logger.error('Error obteniendo historial de pagos:', error);
     res.status(500).json({
       message: 'Error al obtener historial',
       error: error.message
@@ -292,7 +293,7 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
     const { sessionId } = req.params;
     const userId = (req as any).user!.id;
 
-    console.log(`🔄 Verificando sesión ${sessionId} para usuario ${userId}`);
+    logger.log(`🔄 Verificando sesión ${sessionId} para usuario ${userId}`);
 
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
@@ -302,7 +303,7 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
 
     // Si el checkout se completó y hay suscripción, sincronizar
     if (session.status === 'complete' && session.subscription) {
-      console.log(`✅ Sesión completada, sincronizando suscripción ${session.subscription}`);
+      logger.log(`✅ Sesión completada, sincronizando suscripción ${session.subscription}`);
 
       try {
         const subscription = await stripe.subscriptions.retrieve(
@@ -319,7 +320,7 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
         if (planInfo) {
           plan = planInfo.plan as 'PREMIUM' | 'PRO';
           billingPeriod = planInfo.billingPeriod;
-          console.log(`📋 Plan detectado: ${plan} (${billingPeriod})`);
+          logger.log(`📋 Plan detectado: ${plan} (${billingPeriod})`);
         }
 
         // Actualizar suscripción en BD
@@ -350,9 +351,9 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
         const status = statusMap[subscription.status] || 'ACTIVE';
         await subscriptionService.updateSubscriptionStatus(userId, status);
 
-        console.log(`✅ Suscripción sincronizada: ${plan} (${status})`);
+        logger.log(`✅ Suscripción sincronizada: ${plan} (${status})`);
       } catch (syncError) {
-        console.error('❌ Error sincronizando suscripción:', syncError);
+        logger.error('❌ Error sincronizando suscripción:', syncError);
       }
     }
 
@@ -362,7 +363,7 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
       subscription: session.subscription,
     });
   } catch (error: any) {
-    console.error('Error verificando sesión:', error);
+    logger.error('Error verificando sesión:', error);
     res.status(500).json({
       message: 'Error al verificar sesión',
       error: error.message

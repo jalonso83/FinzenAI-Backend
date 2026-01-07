@@ -1,13 +1,18 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { ENV } from '../config/env';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/emailService';
 import { TrialScheduler } from '../services/trialScheduler';
 import { ReferralService } from '../services/referralService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
 
-const prisma = new PrismaClient();
+import { logger } from '../utils/logger';
+
+// Constantes
+const MIN_PASSWORD_LENGTH = 6;
+const BCRYPT_ROUNDS = 12;
 
 // Tipos para las peticiones
 interface RegisterRequest {
@@ -42,150 +47,181 @@ interface VerifyEmailRequest {
   token: string;
 }
 
+// ============================================
+// HELPER FUNCTIONS - Extraídas para legibilidad
+// ============================================
+
+/**
+ * Valida los datos de registro
+ */
+function validateRegistrationData(data: RegisterRequest): { valid: boolean; error?: string } {
+  const { name, lastName, email, password, phone, birthDate, country, state, city, currency, preferredLanguage, occupation } = data;
+
+  if (!name || !lastName || !email || !password || !phone || !birthDate || !country || !state || !city || !currency || !preferredLanguage || !occupation) {
+    return { valid: false, error: 'Todos los campos obligatorios deben ser completados' };
+  }
+
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return { valid: false, error: `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres` };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Envía email de verificación sin bloquear el registro
+ */
+async function sendVerificationEmailSafe(email: string, userId: string, name: string): Promise<void> {
+  try {
+    await sendVerificationEmail(email, userId, name);
+  } catch (emailError) {
+    logger.error('❌ Error enviando email de verificación:', emailError);
+  }
+}
+
+/**
+ * Inicia período de prueba sin bloquear el registro
+ */
+async function startUserTrial(
+  userId: string,
+  deviceInfo: { deviceId?: string; platform?: string; deviceName?: string }
+): Promise<{ success: boolean; trialStarted: boolean; reason?: string }> {
+  try {
+    return await TrialScheduler.startTrialForUser(userId, deviceInfo);
+  } catch (trialError) {
+    logger.error('❌ Error iniciando trial:', trialError);
+    return { success: false, trialStarted: false };
+  }
+}
+
+/**
+ * Campos de selección del perfil de usuario (evita repetición)
+ */
+const USER_PROFILE_SELECT = {
+  id: true, name: true, lastName: true, email: true, phone: true,
+  birthDate: true, country: true, state: true, city: true,
+  currency: true, preferredLanguage: true, occupation: true, company: true,
+  verified: true, onboardingCompleted: true, createdAt: true, updatedAt: true
+} as const;
+
+/**
+ * Valida campos obligatorios del perfil
+ */
+function validateProfileData(data: {
+  name?: string; lastName?: string; email?: string; phone?: string;
+  birthDate?: string; country?: string; state?: string; city?: string;
+  currency?: string; preferredLanguage?: string; occupation?: string;
+}): { valid: boolean; error?: string } {
+  const { name, lastName, email, phone, birthDate, country, state, city, currency, preferredLanguage, occupation } = data;
+
+  if (!name || !lastName || !email || !phone || !birthDate || !country || !state || !city || !currency || !preferredLanguage || !occupation) {
+    return { valid: false, error: 'Todos los campos obligatorios deben ser completados' };
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return { valid: false, error: 'Email inválido' };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Verifica si el email ya está en uso por otro usuario
+ */
+async function isEmailTakenByOther(email: string, excludeUserId: string): Promise<boolean> {
+  const existingUser = await prisma.user.findFirst({
+    where: { email, id: { not: excludeUserId } }
+  });
+  return !!existingUser;
+}
+
+/**
+ * Procesa código de referido sin bloquear el registro
+ */
+async function processReferralCode(
+  userId: string,
+  email: string,
+  referralCode: string
+): Promise<{ applied: boolean; discount: string | null; reason?: string }> {
+  try {
+    const fraudCheck = await ReferralService.checkFraudIndicators('', email);
+
+    if (fraudCheck.suspicious) {
+      logger.warn(`⚠️ Referido sospechoso detectado para ${email}: ${fraudCheck.reasons.join(', ')}`);
+      return { applied: false, discount: null, reason: 'SUSPICIOUS_REFERRAL' };
+    }
+
+    const result = await ReferralService.applyReferralCode(userId, email, referralCode);
+
+    if (result.success) {
+      logger.log(`✅ Código de referido aplicado: ${referralCode} para usuario ${userId}`);
+    }
+
+    return {
+      applied: result.success,
+      discount: result.success ? `${result.discountPercent}%` : null,
+      reason: result.reason
+    };
+  } catch (referralError) {
+    logger.error('❌ Error aplicando código de referido:', referralError);
+    return { applied: false, discount: null };
+  }
+}
+
+// ============================================
+// CONTROLLERS
+// ============================================
+
 export const register = async (req: Request, res: Response) => {
   try {
-    const {
-      name,
-      lastName,
-      email,
-      password,
-      phone,
-      birthDate,
-      country,
-      state,
-      city,
-      currency,
-      preferredLanguage,
-      occupation,
-      company,
-      deviceId,
-      devicePlatform,
-      deviceName,
-      referralCode
-    }: RegisterRequest = req.body;
+    const registerData: RegisterRequest = req.body;
+    const { name, lastName, email, password, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company, deviceId, devicePlatform, deviceName, referralCode } = registerData;
 
-    // Validaciones básicas
-    if (!name || !lastName || !email || !password || !phone || !birthDate || !country || !state || !city || !currency || !preferredLanguage || !occupation) {
-      return res.status(400).json({
-        error: 'Validation error',
-        message: 'Todos los campos obligatorios deben ser completados'
-      });
+    // 1. Validar datos de entrada
+    const validation = validateRegistrationData(registerData);
+    if (!validation.valid) {
+      return res.status(400).json({ error: 'Validation error', message: validation.error });
     }
-    if (password.length < 6) {
-      return res.status(400).json({
-        error: 'Validation error',
-        message: 'La contraseña debe tener al menos 6 caracteres'
-      });
-    }
-    // Verificar si el usuario ya existe
-    const existingUser = await prisma.user.findUnique({
-      where: { email }
-    });
+
+    // 2. Verificar si el usuario ya existe
+    const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
-      return res.status(409).json({
-        error: 'User already exists',
-        message: 'Ya existe una cuenta con este email'
-      });
+      return res.status(409).json({ error: 'User already exists', message: 'Ya existe una cuenta con este email' });
     }
-    // Encriptar contraseña
-    const hashedPassword = await bcrypt.hash(password, 12);
-    // Crear usuario
+
+    // 3. Crear usuario en base de datos
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const user = await prisma.user.create({
       data: {
-        name,
-        lastName,
-        email,
-        password: hashedPassword,
-        phone,
-        birthDate: new Date(birthDate),
-        country,
-        state,
-        city,
-        currency,
-        preferredLanguage,
-        occupation,
-        company,
-        verified: false
+        name, lastName, email, password: hashedPassword, phone,
+        birthDate: new Date(birthDate), country, state, city,
+        currency, preferredLanguage, occupation, company, verified: false
       },
-      select: {
-        id: true,
-        email: true,
-        verified: true,
-        createdAt: true
-      }
+      select: { id: true, email: true, verified: true, createdAt: true }
     });
-    // Enviar email de verificación (no bloquear el registro si falla)
-    try {
-      await sendVerificationEmail(user.email, user.id, name);
-    } catch (emailError) {
-      console.error('❌ Error enviando email de verificación:', emailError);
-      // No fallar el registro por error de email
-    }
 
-    // Iniciar período de prueba de 7 días (no bloquear el registro si falla)
-    let trialResult: { success: boolean; trialStarted: boolean; reason?: string } = { success: false, trialStarted: false };
-    try {
-      trialResult = await TrialScheduler.startTrialForUser(user.id, {
-        deviceId,
-        platform: devicePlatform,
-        deviceName
-      });
-    } catch (trialError) {
-      console.error('❌ Error iniciando trial:', trialError);
-      // No fallar el registro por error de trial
-    }
+    // 4. Procesos secundarios (no bloquean el registro)
+    await sendVerificationEmailSafe(user.email, user.id, name);
 
-    // Procesar código de referido si se proporciona (no bloquear el registro si falla)
-    let referralResult = { applied: false, discount: null as string | null, reason: undefined as string | undefined };
-    if (referralCode && REFERRAL_CONFIG.ENABLED) {
-      try {
-        // Verificar anti-fraude antes de aplicar
-        const fraudCheck = await ReferralService.checkFraudIndicators('', email);
+    const trialResult = await startUserTrial(user.id, {
+      deviceId, platform: devicePlatform, deviceName
+    });
 
-        if (!fraudCheck.suspicious) {
-          const result = await ReferralService.applyReferralCode(user.id, email, referralCode);
-          referralResult = {
-            applied: result.success,
-            discount: result.success ? `${result.discountPercent}%` : null,
-            reason: result.reason
-          };
+    const referralResult = (referralCode && REFERRAL_CONFIG.ENABLED)
+      ? await processReferralCode(user.id, email, referralCode)
+      : { applied: false, discount: null, reason: undefined };
 
-          if (result.success) {
-            console.log(`✅ Código de referido aplicado: ${referralCode} para usuario ${user.id}`);
-          }
-        } else {
-          console.warn(`⚠️ Referido sospechoso detectado para ${email}: ${fraudCheck.reasons.join(', ')}`);
-          referralResult.reason = 'SUSPICIOUS_REFERRAL';
-        }
-      } catch (referralError) {
-        console.error('❌ Error aplicando código de referido:', referralError);
-        // No fallar el registro por error de referido
-      }
-    }
-
+    // 5. Respuesta exitosa
     return res.status(201).json({
       message: 'Usuario registrado exitosamente. Por favor revisa tu email para verificar tu cuenta.',
-      user: {
-        id: user.id,
-        email: user.email,
-        verified: user.verified
-      },
-      trial: {
-        started: trialResult.trialStarted,
-        reason: trialResult.reason // 'EMAIL_ALREADY_USED_TRIAL' | 'DEVICE_ALREADY_USED_TRIAL' | undefined
-      },
-      referral: {
-        applied: referralResult.applied,
-        discount: referralResult.discount,
-        reason: referralResult.reason
-      }
+      user: { id: user.id, email: user.email, verified: user.verified },
+      trial: { started: trialResult.trialStarted, reason: trialResult.reason },
+      referral: { applied: referralResult.applied, discount: referralResult.discount, reason: referralResult.reason }
     });
   } catch (error) {
-    console.error('Register error:', error);
-    return res.status(500).json({
-      error: 'Internal server error',
-      message: 'Error al registrar usuario'
-    });
+    logger.error('Register error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Error al registrar usuario' });
   }
 };
 
@@ -234,7 +270,7 @@ export const login = async (req: Request, res: Response) => {
     // Generar token JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
-      process.env.JWT_SECRET!,
+      ENV.JWT_SECRET,
       { expiresIn: '7d' }
     );
 
@@ -250,7 +286,7 @@ export const login = async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to login'
@@ -311,7 +347,7 @@ export const verifyEmail = async (req: Request, res: Response) => {
       });
     }
   } catch (error) {
-    console.error('Verify email error:', error);
+    logger.error('Verify email error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to verify email'
@@ -366,7 +402,7 @@ export const forgotPassword = async (req: Request, res: Response) => {
       message: 'Si existe una cuenta con ese email, se ha enviado un código de recuperación'
     });
   } catch (error) {
-    console.error('Forgot password error:', error);
+    logger.error('Forgot password error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to process password reset request'
@@ -437,7 +473,7 @@ export const resetPassword = async (req: Request, res: Response) => {
       message: 'Tu contraseña ha sido actualizada exitosamente'
     });
   } catch (error) {
-    console.error('Reset password error:', error);
+    logger.error('Reset password error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Error al restablecer la contraseña'
@@ -518,7 +554,7 @@ export const changePassword = async (req: Request, res: Response) => {
     });
 
   } catch (error) {
-    console.error('Change password error:', error);
+    logger.error('Change password error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Error al cambiar la contraseña'
@@ -556,7 +592,7 @@ export const checkTrialEligibility = async (req: Request, res: Response) => {
     });
 
   } catch (error) {
-    console.error('Check trial eligibility error:', error);
+    logger.error('Check trial eligibility error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Error al verificar elegibilidad'
@@ -569,46 +605,22 @@ export const getProfile = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
     if (!userId) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Usuario no autenticado'
-      });
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
     }
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        lastName: true,
-        email: true,
-        phone: true,
-        birthDate: true,
-        country: true,
-        state: true,
-        city: true,
-        currency: true,
-        preferredLanguage: true,
-        occupation: true,
-        company: true,
-        verified: true,
-        onboardingCompleted: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: USER_PROFILE_SELECT
     });
+
     if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        message: 'Usuario no encontrado'
-      });
+      return res.status(404).json({ error: 'User not found', message: 'Usuario no encontrado' });
     }
+
     return res.json(user);
   } catch (error) {
-    console.error('Get profile error:', error);
-    return res.status(500).json({
-      error: 'Internal server error',
-      message: 'Error al obtener perfil'
-    });
+    logger.error('Get profile error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Error al obtener perfil' });
   }
 };
 
@@ -617,99 +629,35 @@ export const updateProfile = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
     if (!userId) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Usuario no autenticado'
-      });
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
     }
-    const {
-      name,
-      lastName,
-      email,
-      phone,
-      birthDate,
-      country,
-      state,
-      city,
-      currency,
-      preferredLanguage,
-      occupation,
-      company
-    } = req.body;
-    // Validaciones básicas
-    if (!name || !lastName || !email || !phone || !birthDate || !country || !state || !city || !currency || !preferredLanguage || !occupation) {
-      return res.status(400).json({
-        error: 'Validation error',
-        message: 'Todos los campos obligatorios deben ser completados'
-      });
+
+    const { name, lastName, email, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company } = req.body;
+
+    // 1. Validar datos
+    const validation = validateProfileData(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ error: 'Validation error', message: validation.error });
     }
-    // Validar email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({
-        error: 'Validation error',
-        message: 'Email inválido'
-      });
+
+    // 2. Verificar email único
+    if (await isEmailTakenByOther(email, userId)) {
+      return res.status(409).json({ error: 'Email already exists', message: 'Ya existe una cuenta con este email' });
     }
-    // Verificar si el email ya existe en otro usuario
-    const existingUser = await prisma.user.findFirst({
-      where: {
-        email,
-        id: { not: userId }
-      }
-    });
-    if (existingUser) {
-      return res.status(409).json({
-        error: 'Email already exists',
-        message: 'Ya existe una cuenta con este email'
-      });
-    }
-    // Actualizar usuario
+
+    // 3. Actualizar usuario
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: {
-        name,
-        lastName,
-        email,
-        phone,
-        birthDate: new Date(birthDate),
-        country,
-        state,
-        city,
-        currency,
-        preferredLanguage,
-        occupation,
-        company
+        name, lastName, email, phone, birthDate: new Date(birthDate),
+        country, state, city, currency, preferredLanguage, occupation, company
       },
-      select: {
-        id: true,
-        name: true,
-        lastName: true,
-        email: true,
-        phone: true,
-        birthDate: true,
-        country: true,
-        state: true,
-        city: true,
-        currency: true,
-        preferredLanguage: true,
-        occupation: true,
-        company: true,
-        verified: true,
-        onboardingCompleted: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: USER_PROFILE_SELECT
     });
-    return res.json({
-      message: 'Perfil actualizado exitosamente',
-      user: updatedUser
-    });
+
+    return res.json({ message: 'Perfil actualizado exitosamente', user: updatedUser });
   } catch (error) {
-    console.error('Update profile error:', error);
-    return res.status(500).json({
-      error: 'Internal server error',
-      message: 'Error al actualizar perfil'
-    });
+    logger.error('Update profile error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Error al actualizar perfil' });
   }
 };

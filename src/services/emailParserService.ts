@@ -1,10 +1,11 @@
 import OpenAI from 'openai';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { ENV } from '../config/env';
 import { merchantMappingService } from './merchantMappingService';
+import { logger } from '../utils/logger';
 
-const prisma = new PrismaClient();
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: ENV.OPENAI_API_KEY
 });
 
 export interface ParsedTransaction {
@@ -139,7 +140,7 @@ export class EmailParserService {
       const categoryNames = expenseCategories.map(c => c.name);
       const categoryList = categoryNames.join(', ');
 
-      console.log(`[EmailParser] Using ${categoryNames.length} categories from DB: ${categoryList}`);
+      logger.log(`[EmailParser] Using ${categoryNames.length} categories from DB: ${categoryList}`);
 
       const prompt = this.buildParserPrompt(emailContent, subject, bankName, categoryList);
 
@@ -211,7 +212,7 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
 
       // Si la AI detectó que es un pago de tarjeta, ignorar
       if (parsed.is_payment_email === true) {
-        console.log(`[EmailParser] AI detected payment email, skipping: ${subject}`);
+        logger.log(`[EmailParser] AI detected payment email, skipping: ${subject}`);
         return {
           success: false,
           error: 'PAYMENT_EMAIL_SKIPPED: AI detectó que es un pago de tarjeta, no un consumo'
@@ -240,12 +241,12 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
             category = mapping.categoryName;
             categorySource = mapping.source === 'user' ? 'mapping_user' : 'mapping_global';
 
-            console.log(`[EmailParser] Usando mapeo ${mapping.source} para "${merchant}" -> "${category}" (confianza: ${mapping.confidence}%)`);
+            logger.log(`[EmailParser] Usando mapeo ${mapping.source} para "${merchant}" -> "${category}" (confianza: ${mapping.confidence}%)`);
           } else {
-            console.log(`[EmailParser] No hay mapeo para "${merchant}", usando categoría de IA: "${category}"`);
+            logger.log(`[EmailParser] No hay mapeo para "${merchant}", usando categoría de IA: "${category}"`);
           }
         } catch (error) {
-          console.error('[EmailParser] Error buscando mapeo:', error);
+          logger.error('[EmailParser] Error buscando mapeo:', error);
           // Continuar con la categoría de la IA
         }
       }
@@ -267,7 +268,7 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
       return { success: true, transaction };
 
     } catch (error: any) {
-      console.error('[EmailParserService] Parse error:', error);
+      logger.error('[EmailParserService] Parse error:', error);
       return {
         success: false,
         error: error.message || 'Unknown parsing error'

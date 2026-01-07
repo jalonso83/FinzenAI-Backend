@@ -1,7 +1,7 @@
 import express, { Application } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { PrismaClient } from '@prisma/client';
+import { prisma, disconnectPrisma } from './lib/prisma';
 import { BudgetScheduler } from './services/budgetScheduler';
 import { EmailSyncScheduler } from './services/emailSyncScheduler';
 import { ReminderScheduler } from './services/reminderScheduler';
@@ -33,23 +33,36 @@ import webRoutes from './routes/web';
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
 
+// Importar rate limiters
+import { webhookLimiter, apiLimiter } from './config/rateLimiter';
+
+import { logger } from './utils/logger';
 // Configurar variables de entorno
 dotenv.config();
 
 const app: Application = express();
-const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
+
+// Habilitar trust proxy para obtener IP real detrás de Railway/proxies
+app.set('trust proxy', 1);
 
 // Webhook de Stripe - DEBE ir ANTES de express.json() para recibir raw body
 app.post(
   '/webhooks/stripe',
+  webhookLimiter,
   express.raw({ type: 'application/json' }),
   handleStripeWebhook
 );
 
+// Validación de CORS en producción
+const corsOrigin = process.env.CORS_ORIGIN;
+if (!corsOrigin && process.env.NODE_ENV === 'production') {
+  throw new Error('CORS_ORIGIN must be set in production environment');
+}
+
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: corsOrigin?.split(',') || 'http://localhost:5173',
   credentials: true
 }));
 app.use(express.json());
@@ -57,7 +70,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Middleware de logging
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  logger.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
 
@@ -98,7 +111,7 @@ app.get('/health', (req, res) => {
 
 // Middleware de manejo de errores
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('Error:', err);
+  logger.error('Error:', err);
   return res.status(500).json({
     error: 'Internal Server Error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
@@ -121,7 +134,7 @@ async function startServer() {
 
     // Conectar a la base de datos
     await prisma.$connect();
-    console.log('✅ Database connected successfully');
+    logger.log('✅ Database connected successfully');
 
     // Iniciar scheduler de renovación de presupuestos
     BudgetScheduler.startScheduler();
@@ -143,19 +156,19 @@ async function startServer() {
 
     // Iniciar servidor
     app.listen(PORT, () => {
-      console.log(`🚀 FinZen AI Backend running on port ${PORT}`);
-      console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+      logger.log(`🚀 FinZen AI Backend running on port ${PORT}`);
+      logger.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+      logger.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    logger.error('❌ Failed to start server:', error);
     process.exit(1);
   }
 }
 
 // Manejo de señales de terminación
 process.on('SIGINT', async () => {
-  console.log('\n🛑 Shutting down server...');
+  logger.log('\n🛑 Shutting down server...');
   BudgetScheduler.stopScheduler();
   EmailSyncScheduler.stopScheduler();
   ReminderScheduler.stopScheduler();
@@ -167,7 +180,7 @@ process.on('SIGINT', async () => {
 });
 
 process.on('SIGTERM', async () => {
-  console.log('\n🛑 Shutting down server...');
+  logger.log('\n🛑 Shutting down server...');
   BudgetScheduler.stopScheduler();
   EmailSyncScheduler.stopScheduler();
   ReminderScheduler.stopScheduler();

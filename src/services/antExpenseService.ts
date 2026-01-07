@@ -6,7 +6,8 @@
  * de gastos hormiga. La generación de insights creativos se delega a Zenio IA.
  */
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { logger } from '../utils/logger';
 import {
   AntExpenseConfig,
   DEFAULT_ANT_EXPENSE_CONFIG,
@@ -20,8 +21,6 @@ import {
   AntExpenseCalculations,
   AnalysisWarning,
 } from '../types/antExpense';
-
-const prisma = new PrismaClient();
 
 // =============================================
 // CONSTANTES
@@ -418,15 +417,15 @@ export class AntExpenseService {
     canAnalyze: boolean;
     cannotAnalyzeReason?: string;
   }> {
-    console.log(`[AntExpenseService] Iniciando análisis para usuario ${userId}`);
+    logger.log(`[AntExpenseService] Iniciando análisis para usuario ${userId}`);
 
     // 1. Validar configuración
     const config = this.validateAndNormalizeConfig(userConfig);
-    console.log(`[AntExpenseService] Configuración: ${JSON.stringify(config)}`);
+    logger.log(`[AntExpenseService] Configuración: ${JSON.stringify(config)}`);
 
     // 2. Obtener información del historial del usuario
     const userHistory = await this.getUserHistoryInfo(userId);
-    console.log(`[AntExpenseService] Historial del usuario: ${JSON.stringify(userHistory)}`);
+    logger.log(`[AntExpenseService] Historial del usuario: ${JSON.stringify(userHistory)}`);
 
     // 3. Verificar si puede analizar
     if (!userHistory.hasEnoughData) {
@@ -448,7 +447,7 @@ export class AntExpenseService {
       userId,
       config.monthsToAnalyze
     );
-    console.log(`[AntExpenseService] Transacciones obtenidas: ${allExpenses.length}`);
+    logger.log(`[AntExpenseService] Transacciones obtenidas: ${allExpenses.length}`);
 
     // Si no hay transacciones en el período
     if (allExpenses.length === 0) {
@@ -462,7 +461,7 @@ export class AntExpenseService {
 
     // 6. Filtrar gastos hormiga
     const antExpenses = this.filterAntExpenses(allExpenses, config.antThreshold);
-    console.log(`[AntExpenseService] Gastos hormiga encontrados: ${antExpenses.length} de ${allExpenses.length} gastos totales`);
+    logger.log(`[AntExpenseService] Gastos hormiga encontrados: ${antExpenses.length} de ${allExpenses.length} gastos totales`);
 
     // Si no hay gastos que califiquen como "hormiga"
     if (antExpenses.length === 0) {
@@ -548,7 +547,7 @@ export class AntExpenseService {
       metadata,
     };
 
-    console.log(`[AntExpenseService] Análisis completado. Total hormiga: ${totalAntExpenses}`);
+    logger.log(`[AntExpenseService] Análisis completado. Total hormiga: ${totalAntExpenses}`);
 
     return {
       calculations,

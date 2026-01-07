@@ -1,8 +1,8 @@
-import { PrismaClient, PaymentType, PaymentReminder } from '@prisma/client';
+import { PaymentType, PaymentReminder } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { NotificationService, NotificationPayload } from './notificationService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Tipos para el servicio
 export interface CreateReminderInput {
   name: string;
@@ -104,7 +104,7 @@ export class ReminderService {
       }
     });
 
-    console.log(`[ReminderService] Created reminder "${reminder.name}" for user ${userId}`);
+    logger.log(`[ReminderService] Created reminder "${reminder.name}" for user ${userId}`);
     return reminder;
   }
 
@@ -139,7 +139,7 @@ export class ReminderService {
       data: input
     });
 
-    console.log(`[ReminderService] Updated reminder "${reminder.name}"`);
+    logger.log(`[ReminderService] Updated reminder "${reminder.name}"`);
     return reminder;
   }
 
@@ -159,7 +159,7 @@ export class ReminderService {
       where: { id: reminderId }
     });
 
-    console.log(`[ReminderService] Deleted reminder "${existing.name}"`);
+    logger.log(`[ReminderService] Deleted reminder "${existing.name}"`);
     return true;
   }
 
@@ -306,7 +306,7 @@ export class ReminderService {
     today.setHours(0, 0, 0, 0);
     const currentDay = today.getDate();
 
-    console.log(`[ReminderService] Processing payment reminders for day ${currentDay}`);
+    logger.log(`[ReminderService] Processing payment reminders for day ${currentDay}`);
 
     // Obtener todos los recordatorios activos
     const reminders = await prisma.paymentReminder.findMany({
@@ -363,12 +363,12 @@ export class ReminderService {
         }
 
       } catch (error: any) {
-        console.error(`[ReminderService] Error processing reminder ${reminder.id}:`, error);
+        logger.error(`[ReminderService] Error processing reminder ${reminder.id}:`, error);
         errors.push(`Reminder ${reminder.id}: ${error.message}`);
       }
     }
 
-    console.log(`[ReminderService] Processed ${processed} reminders, sent ${notificationsSent} notifications`);
+    logger.log(`[ReminderService] Processed ${processed} reminders, sent ${notificationsSent} notifications`);
     return { processed, notificationsSent, errors };
   }
 

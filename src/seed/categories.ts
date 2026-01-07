@@ -1,7 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 const defaultCategories = [
   // Datos exactos del JSON que proporcionaste, sin color y user_id
   { id: "0555933b-4456-42c7-81aa-4b52f3703cc1", name: "Regalos recibidos", type: "INCOME" as const, icon: "🎁", isDefault: true },
@@ -34,13 +33,13 @@ const defaultCategories = [
 
 export async function seedCategories() {
   try {
-    console.log('🌱 Poblando categorías por defecto...');
+    logger.log('🌱 Poblando categorías por defecto...');
 
     // Verificar si ya existen categorías
     const existingCategories = await prisma.category.count();
     
     if (existingCategories > 0) {
-      console.log('✅ Las categorías ya existen, saltando...');
+      logger.log('✅ Las categorías ya existen, saltando...');
       return;
     }
 
@@ -51,9 +50,9 @@ export async function seedCategories() {
       });
     }
 
-    console.log(`✅ ${defaultCategories.length} categorías creadas exitosamente`);
+    logger.log(`✅ ${defaultCategories.length} categorías creadas exitosamente`);
   } catch (error) {
-    console.error('❌ Error poblando categorías:', error);
+    logger.error('❌ Error poblando categorías:', error);
     throw error;
   }
 }
@@ -62,11 +61,11 @@ export async function seedCategories() {
 if (require.main === module) {
   seedCategories()
     .then(() => {
-      console.log('✅ Seed completado');
+      logger.log('✅ Seed completado');
       process.exit(0);
     })
     .catch((error) => {
-      console.error('❌ Error en seed:', error);
+      logger.error('❌ Error en seed:', error);
       process.exit(1);
     });
 } 

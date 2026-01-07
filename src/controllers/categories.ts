@@ -1,8 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 export const getCategories = async (req: Request, res: Response) => {
   try {
     const categories = await prisma.category.findMany({
@@ -26,7 +25,7 @@ export const getCategories = async (req: Request, res: Response) => {
 
     res.json(categories);
   } catch (error) {
-    console.error('Error fetching categories:', error);
+    logger.error('Error fetching categories:', error);
     res.status(500).json({ 
       error: 'Error interno del servidor al obtener categorías' 
     });
@@ -75,7 +74,7 @@ export const createCategory = async (req: Request, res: Response) => {
       category
     });
   } catch (error) {
-    console.error('Create category error:', error);
+    logger.error('Create category error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to create category'
@@ -130,7 +129,7 @@ export const updateCategory = async (req: Request, res: Response) => {
       category
     });
   } catch (error) {
-    console.error('Update category error:', error);
+    logger.error('Update category error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to update category'
@@ -187,7 +186,7 @@ export const deleteCategory = async (req: Request, res: Response) => {
       message: 'Category deleted successfully'
     });
   } catch (error) {
-    console.error('Delete category error:', error);
+    logger.error('Delete category error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to delete category'

@@ -1,22 +1,16 @@
 import axios from 'axios';
 import { Request, Response } from 'express';
-import { PrismaClient, MappingSource } from '@prisma/client';
+import { MappingSource } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { ENV } from '../config/env';
 import fs from 'fs';
 import FormData from 'form-data';
 import { merchantMappingService } from '../services/merchantMappingService';
+import { logger } from '../utils/logger';
 
-const prisma = new PrismaClient();
-const API_KEY = process.env.OPENAI_API_KEY;
-const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID;
+const API_KEY = ENV.OPENAI_API_KEY;
+const ASSISTANT_ID = ENV.OPENAI_ASSISTANT_ID;
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
-
-// Validar que las variables de entorno estén configuradas
-if (!API_KEY) {
-  console.error('[Zenio] ERROR: OPENAI_API_KEY no está configurada');
-}
-if (!ASSISTANT_ID) {
-  console.error('[Zenio] ERROR: OPENAI_ASSISTANT_ID no está configurada');
-}
 
 const OPENAI_HEADERS = {
   Authorization: `Bearer ${API_KEY}`,
@@ -239,13 +233,13 @@ function procesarFechasEnDatosTransaccion(data: any, timezone?: string, includeP
     }
     
     if (fechaNormalizada) {
-      console.log(`[Zenio] Fecha procesada: "${datosProcesados.date}" -> "${fechaNormalizada}"`);
+      logger.log(`[Zenio] Fecha procesada: "${datosProcesados.date}" -> "${fechaNormalizada}"`);
       datosProcesados.date = fechaNormalizada;
       
       // Solo agregar _processedDate si se solicita (solo para insert)
       if (includeProcessedDate && timezone) {
         datosProcesados._processedDate = procesarFechaConZonaHoraria(fechaNormalizada, timezone);
-        console.log(`[Zenio] Fecha con zona horaria ${timezone}:`, datosProcesados._processedDate);
+        logger.log(`[Zenio] Fecha con zona horaria ${timezone}:`, datosProcesados._processedDate);
       }
     }
   }
@@ -774,7 +768,7 @@ async function pollRunStatus(threadId: string, runId: string, maxRetries: number
     } catch (error) {
       // Si es el último intento, lanzar error
       if (retries === maxRetries - 1) {
-        console.error('[Zenio] Error final en polling:', error);
+        logger.error('[Zenio] Error final en polling:', error);
         throw error;
       }
       
@@ -843,7 +837,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
       });
 
     } catch (error: any) {
-      console.error(`[Zenio] Error ejecutando ${functionName}:`, error);
+      logger.error(`[Zenio] Error ejecutando ${functionName}:`, error);
       
       toolOutputs.push({
         tool_call_id: toolCallId,
@@ -864,7 +858,7 @@ async function executeToolCalls(threadId: string, runId: string, toolCalls: any[
         { headers: OPENAI_HEADERS }
       );
     } catch (error) {
-      console.error('[Zenio] Error enviando tool outputs:', error);
+      logger.error('[Zenio] Error enviando tool outputs:', error);
       throw error;
     }
   }
@@ -1098,7 +1092,7 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
       });
       categories = dbCategories;
     } catch (error) {
-      console.error('[Zenio] Error obteniendo categorías de la BD:', error);
+      logger.error('[Zenio] Error obteniendo categorías de la BD:', error);
       return {
         error: true,
         message: 'Error al obtener categorías de la base de datos'
@@ -1379,9 +1373,9 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
           source: MappingSource.ZENIO_CORRECTION
         });
 
-        console.log(`[Zenio] Mapeo guardado: "${merchantName}" -> categoría ${updateData.category_id}`);
+        logger.log(`[Zenio] Mapeo guardado: "${merchantName}" -> categoría ${updateData.category_id}`);
       } catch (error) {
-        console.error('[Zenio] Error guardando mapeo:', error);
+        logger.error('[Zenio] Error guardando mapeo:', error);
         // No fallar la operación por error de mapeo
       }
     }
@@ -2423,7 +2417,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       user = await prisma.user.findUnique({ where: { id: userId } });
       userName = user?.name || user?.email || 'Usuario';
     } catch (e) {
-      console.error('No se pudo obtener el nombre del usuario:', e);
+      logger.error('No se pudo obtener el nombre del usuario:', e);
     }
 
     // 2.1. Validar límite de consultas de Zenio según el plan del usuario
@@ -2449,7 +2443,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           zenioQueriesResetAt: new Date(),
         }
       });
-      console.log(`[Zenio] Suscripción FREE creada para usuario ${userId}`);
+      logger.log(`[Zenio] Suscripción FREE creada para usuario ${userId}`);
     }
 
     // Verificar si necesitamos resetear el contador mensual
@@ -2466,7 +2460,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           zenioQueriesResetAt: now,
         }
       });
-      console.log(`[Zenio] Fecha de reseteo establecida para usuario ${userId}`);
+      logger.log(`[Zenio] Fecha de reseteo establecida para usuario ${userId}`);
     } else if (now.getMonth() !== resetDate.getMonth() || now.getFullYear() !== resetDate.getFullYear()) {
       // Nuevo mes - resetear contador
       subscription = await prisma.subscription.update({
@@ -2476,7 +2470,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           zenioQueriesResetAt: now,
         }
       });
-      console.log(`[Zenio] Contador de consultas reseteado para usuario ${userId} (nuevo mes)`);
+      logger.log(`[Zenio] Contador de consultas reseteado para usuario ${userId} (nuevo mes)`);
     }
 
     // Verificar si el usuario ha alcanzado el límite
@@ -2484,7 +2478,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     const currentCount = subscription.zenioQueriesUsed || 0;
 
     if (zenioLimit !== -1 && currentCount >= zenioLimit) {
-      console.log(`[Zenio] Límite alcanzado para usuario ${userId}: ${currentCount}/${zenioLimit}`);
+      logger.log(`[Zenio] Límite alcanzado para usuario ${userId}: ${currentCount}/${zenioLimit}`);
       return res.status(403).json({
         success: false,
         error: 'ZENIO_LIMIT_REACHED',
@@ -2498,7 +2492,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       });
     }
 
-    console.log(`[Zenio] Consultas usadas: ${currentCount}/${zenioLimit === -1 ? '∞' : zenioLimit}`);
+    logger.log(`[Zenio] Consultas usadas: ${currentCount}/${zenioLimit === -1 ? '∞' : zenioLimit}`);
 
     // 3. Obtener datos de la petición
     let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactions } = req.body;
@@ -2515,7 +2509,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         });
         categories = dbCategories.map(cat => cat.name);
       } catch (error) {
-        console.error('[Zenio] Error obteniendo categorías de la BD:', error);
+        logger.error('[Zenio] Error obteniendo categorías de la BD:', error);
         categories = [];
       }
     }
@@ -2650,7 +2644,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     if (toolCallIterations >= maxToolCallIterations) {
-      console.warn('[Zenio] Se alcanzó el límite máximo de iteraciones de tool calls');
+      logger.warn('[Zenio] Se alcanzó el límite máximo de iteraciones de tool calls');
     }
 
     // 9. Obtener la respuesta final del assistant
@@ -2691,7 +2685,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
             limit: limit,
             remaining: limit === -1 ? -1 : Math.max(0, limit - updatedSubscription.zenioQueriesUsed),
           };
-          console.log(`[Zenio] Consulta contada. Uso: ${updatedSubscription.zenioQueriesUsed}/${limit === -1 ? '∞' : limit}`);
+          logger.log(`[Zenio] Consulta contada. Uso: ${updatedSubscription.zenioQueriesUsed}/${limit === -1 ? '∞' : limit}`);
         } else {
           // Es autoGreeting - no incrementar, solo retornar el uso actual
           zenioUsage = {
@@ -2699,11 +2693,11 @@ export const chatWithZenio = async (req: Request, res: Response) => {
             limit: limit,
             remaining: limit === -1 ? -1 : Math.max(0, limit - (subscription.zenioQueriesUsed || 0)),
           };
-          console.log(`[Zenio] Saludo automático - NO cuenta como consulta. Uso actual: ${subscription.zenioQueriesUsed || 0}/${limit === -1 ? '∞' : limit}`);
+          logger.log(`[Zenio] Saludo automático - NO cuenta como consulta. Uso actual: ${subscription.zenioQueriesUsed || 0}/${limit === -1 ? '∞' : limit}`);
         }
       }
     } catch (usageError) {
-      console.error('[Zenio] Error actualizando contador de uso:', usageError);
+      logger.error('[Zenio] Error actualizando contador de uso:', usageError);
       // No fallar la respuesta si hay error en el contador
     }
 
@@ -2730,11 +2724,11 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     return res.json(response);
 
   } catch (error) {
-    console.error('[Zenio] Error:', error);
+    logger.error('[Zenio] Error:', error);
 
     // Manejo específico de errores
     if (axios.isAxiosError(error)) {
-      console.error('[Zenio] Axios Error Details:', {
+      logger.error('[Zenio] Axios Error Details:', {
         status: error.response?.status,
         statusText: error.response?.statusText,
         data: error.response?.data,
@@ -2780,7 +2774,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       }
 
       if (error && typeof error === 'object' && 'response' in error && error.response && typeof error.response === 'object' && 'data' in error.response) {
-        console.error('❌ OpenAI API error:', error.response.data);
+        logger.error('❌ OpenAI API error:', error.response.data);
         return res.status(500).json({ 
           error: 'Error al comunicarse con Zenio.', 
           openai: error.response.data 
@@ -2789,7 +2783,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
     }
 
     // Error general
-    console.error('❌ Error general:', error);
+    logger.error('❌ Error general:', error);
     return res.status(500).json({ 
       error: 'Error al comunicarse con Zenio.',
       message: error instanceof Error ? error.message : 'Error desconocido'
@@ -2809,7 +2803,7 @@ export const getChatHistory = async (req: Request, res: Response) => {
       });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
+    if (!API_KEY) {
       return res.status(500).json({
         error: 'Configuration error',
         message: 'OpenAI configuration is missing'
@@ -2904,7 +2898,7 @@ export const createTransactionFromZenio = async (req: Request, res: Response) =>
       const { analyzeAndDispatchTransactionEvents } = await import('./transactions');
       await analyzeAndDispatchTransactionEvents(userId, newTransaction);
     } catch (error) {
-      console.error('[Zenio] Error dispatching gamification event:', error);
+      logger.error('[Zenio] Error dispatching gamification event:', error);
       // No fallar la transacción por error de gamificación
     }
 
@@ -2918,7 +2912,7 @@ export const createTransactionFromZenio = async (req: Request, res: Response) =>
     });
 
   } catch (error) {
-    console.error('Error creating transaction from Zenio:', error);
+    logger.error('Error creating transaction from Zenio:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Error al crear la transacción'
@@ -2953,7 +2947,7 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
       });
 
       if (currentBudgetCount >= budgetLimit) {
-        console.log(`[Zenio] Límite de presupuestos alcanzado para usuario ${userId}: ${currentBudgetCount}/${budgetLimit}`);
+        logger.log(`[Zenio] Límite de presupuestos alcanzado para usuario ${userId}: ${currentBudgetCount}/${budgetLimit}`);
         return res.status(403).json({
           success: false,
           error: 'BUDGET_LIMIT_REACHED',
@@ -3046,7 +3040,7 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
     });
 
   } catch (error) {
-    console.error('Error creating budget from Zenio:', error);
+    logger.error('Error creating budget from Zenio:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Error al crear el presupuesto'
@@ -3081,7 +3075,7 @@ export const createGoalFromZenio = async (req: Request, res: Response) => {
       });
 
       if (currentGoalCount >= goalLimit) {
-        console.log(`[Zenio] Límite de metas alcanzado para usuario ${userId}: ${currentGoalCount}/${goalLimit}`);
+        logger.log(`[Zenio] Límite de metas alcanzado para usuario ${userId}: ${currentGoalCount}/${goalLimit}`);
         return res.status(403).json({
           success: false,
           error: 'GOAL_LIMIT_REACHED',
@@ -3179,7 +3173,7 @@ export const createGoalFromZenio = async (req: Request, res: Response) => {
     });
 
   } catch (error) {
-    console.error('Error creating goal from Zenio:', error);
+    logger.error('Error creating goal from Zenio:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Error al crear la meta'
@@ -3211,7 +3205,7 @@ export const transcribeAudio = async (req: Request, res: Response) => {
     // Usar axios en lugar de fetch para Node.js
     const response: any = await axios.post<{ text: string }>('https://api.openai.com/v1/audio/transcriptions', formData, {
       headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${API_KEY}`,
         ...formData.getHeaders()
       },
       timeout: 30000
@@ -3228,7 +3222,7 @@ export const transcribeAudio = async (req: Request, res: Response) => {
     });
 
   } catch (error) {
-    console.error('[Transcribe] Error:', error);
+    logger.error('[Transcribe] Error:', error);
 
     // Limpiar archivo temporal si existe
     if (req.file?.path) {

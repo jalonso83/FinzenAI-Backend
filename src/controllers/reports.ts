@@ -1,8 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 interface Alert {
   type: string;
   category: string;
@@ -264,7 +263,7 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
     return res.json(reportData);
 
   } catch (error) {
-    console.error('Error generando reporte por categorías:', error);
+    logger.error('Error generando reporte por categorías:', error);
     return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };
@@ -439,7 +438,7 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
     return res.status(400).json({ message: 'Formato no soportado. Use: csv o json' });
     
   } catch (error) {
-    console.error('Error exportando reporte:', error);
+    logger.error('Error exportando reporte:', error);
     return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };
@@ -698,7 +697,7 @@ export const getIncomeReport = async (req: Request, res: Response): Promise<Resp
     return res.json(reportData);
 
   } catch (error) {
-    console.error('Error generando reporte de ingresos por categorías:', error);
+    logger.error('Error generando reporte de ingresos por categorías:', error);
     return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };
@@ -709,7 +708,7 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
     
     const userId = req.user?.id;
     if (!userId) {
-      console.log('[Reports] Usuario no autenticado');
+      logger.log('[Reports] Usuario no autenticado');
       return res.status(401).json({ message: 'Usuario no autenticado' });
     }
 
@@ -947,7 +946,7 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
     return res.json(reportData);
 
   } catch (error) {
-    console.error('Error generando reporte por fechas:', error);
+    logger.error('Error generando reporte por fechas:', error);
     return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };
@@ -1115,7 +1114,7 @@ export const getDashboardTotals = async (req: Request, res: Response): Promise<R
     });
 
   } catch (error) {
-    console.error('Error obteniendo totales del dashboard:', error);
+    logger.error('Error obteniendo totales del dashboard:', error);
     return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };
@@ -1398,7 +1397,7 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
     return res.json(reportData);
 
   } catch (error) {
-    console.error('Error generando reporte de presupuestos:', error);
+    logger.error('Error generando reporte de presupuestos:', error);
     return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };

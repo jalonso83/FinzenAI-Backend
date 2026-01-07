@@ -1,10 +1,10 @@
 import admin from 'firebase-admin';
-import { PrismaClient, NotificationType, NotificationStatus, DevicePlatform } from '@prisma/client';
+import { NotificationType, NotificationStatus, DevicePlatform } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { subscriptionService } from './subscriptionService';
 import { PLANS } from '../config/stripe';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Inicializar Firebase Admin SDK
 let firebaseInitialized = false;
 
@@ -14,7 +14,7 @@ const initializeFirebase = () => {
   const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 
   if (!serviceAccount) {
-    console.warn('[NotificationService] FIREBASE_SERVICE_ACCOUNT not configured - push notifications disabled');
+    logger.warn('[NotificationService] FIREBASE_SERVICE_ACCOUNT not configured - push notifications disabled');
     return;
   }
 
@@ -24,9 +24,9 @@ const initializeFirebase = () => {
       credential: admin.credential.cert(credentials)
     });
     firebaseInitialized = true;
-    console.log('[NotificationService] Firebase Admin initialized successfully');
+    logger.log('[NotificationService] Firebase Admin initialized successfully');
   } catch (error) {
-    console.error('[NotificationService] Failed to initialize Firebase:', error);
+    logger.error('[NotificationService] Failed to initialize Firebase:', error);
   }
 };
 
@@ -112,11 +112,11 @@ export class NotificationService {
         }
       });
 
-      console.log(`[NotificationService] Device registered for user ${userId}: ${device.id}`);
+      logger.log(`[NotificationService] Device registered for user ${userId}: ${device.id}`);
       return { success: true, deviceId: device.id };
 
     } catch (error: any) {
-      console.error('[NotificationService] Error registering device:', error);
+      logger.error('[NotificationService] Error registering device:', error);
       return { success: false, error: error.message };
     }
   }
@@ -132,7 +132,7 @@ export class NotificationService {
       });
       return true;
     } catch (error) {
-      console.error('[NotificationService] Error unregistering device:', error);
+      logger.error('[NotificationService] Error unregistering device:', error);
       return false;
     }
   }
@@ -147,7 +147,7 @@ export class NotificationService {
   ): Promise<SendNotificationResult> {
     try {
       if (!firebaseInitialized) {
-        console.warn('[NotificationService] Firebase not initialized, skipping notification');
+        logger.warn('[NotificationService] Firebase not initialized, skipping notification');
         return { success: false, successCount: 0, failureCount: 1, errors: ['Firebase not initialized'] };
       }
 
@@ -157,13 +157,13 @@ export class NotificationService {
       });
 
       if (preferences && !this.isNotificationTypeEnabled(preferences, type)) {
-        console.log(`[NotificationService] User ${userId} has disabled ${type} notifications`);
+        logger.log(`[NotificationService] User ${userId} has disabled ${type} notifications`);
         return { success: true, successCount: 0, failureCount: 0 };
       }
 
       // Verificar horario silencioso
       if (preferences && this.isInQuietHours(preferences)) {
-        console.log(`[NotificationService] User ${userId} is in quiet hours, skipping notification`);
+        logger.log(`[NotificationService] User ${userId} is in quiet hours, skipping notification`);
         return { success: true, successCount: 0, failureCount: 0 };
       }
 
@@ -176,7 +176,7 @@ export class NotificationService {
       });
 
       if (devices.length === 0) {
-        console.log(`[NotificationService] No active devices for user ${userId}`);
+        logger.log(`[NotificationService] No active devices for user ${userId}`);
         return { success: true, successCount: 0, failureCount: 0 };
       }
 
@@ -199,7 +199,7 @@ export class NotificationService {
       };
 
     } catch (error: any) {
-      console.error('[NotificationService] Error sending notification to user:', error);
+      logger.error('[NotificationService] Error sending notification to user:', error);
       await this.logNotification(userId, type, payload, 'FAILED', error.message);
       return { success: false, successCount: 0, failureCount: 1, errors: [error.message] };
     }
@@ -256,7 +256,7 @@ export class NotificationService {
         }
       });
 
-      console.log(`[NotificationService] Multicast result: ${response.successCount} success, ${response.failureCount} failures`);
+      logger.log(`[NotificationService] Multicast result: ${response.successCount} success, ${response.failureCount} failures`);
 
       return {
         successCount: response.successCount,
@@ -266,7 +266,7 @@ export class NotificationService {
       };
 
     } catch (error: any) {
-      console.error('[NotificationService] Multicast error:', error);
+      logger.error('[NotificationService] Multicast error:', error);
       return { successCount: 0, failureCount: tokens.length, errors: [error.message] };
     }
   }
@@ -351,7 +351,7 @@ export class NotificationService {
         }
       });
     } catch (error) {
-      console.error('[NotificationService] Error logging notification:', error);
+      logger.error('[NotificationService] Error logging notification:', error);
     }
   }
 
@@ -364,9 +364,9 @@ export class NotificationService {
         where: { fcmToken: { in: tokens } },
         data: { isActive: false }
       });
-      console.log(`[NotificationService] Deactivated ${tokens.length} invalid tokens`);
+      logger.log(`[NotificationService] Deactivated ${tokens.length} invalid tokens`);
     } catch (error) {
-      console.error('[NotificationService] Error cleaning up invalid tokens:', error);
+      logger.error('[NotificationService] Error cleaning up invalid tokens:', error);
     }
   }
 
@@ -740,7 +740,7 @@ export class NotificationService {
 
       return true;
     } catch (error) {
-      console.error('[NotificationService] Error deleting notification:', error);
+      logger.error('[NotificationService] Error deleting notification:', error);
       return false;
     }
   }
@@ -755,7 +755,7 @@ export class NotificationService {
       });
       return result.count;
     } catch (error) {
-      console.error('[NotificationService] Error deleting all notifications:', error);
+      logger.error('[NotificationService] Error deleting all notifications:', error);
       return 0;
     }
   }
@@ -821,7 +821,7 @@ export class NotificationService {
             budgetAmount - currentSpent,
             currency
           );
-          console.log(`[NotificationService] Sent budget alert for ${budget.name}`);
+          logger.log(`[NotificationService] Sent budget alert for ${budget.name}`);
         }
 
         // Si el presupuesto fue excedido
@@ -832,11 +832,11 @@ export class NotificationService {
             currentSpent - budgetAmount,
             currency
           );
-          console.log(`[NotificationService] Sent budget exceeded alert for ${budget.name}`);
+          logger.log(`[NotificationService] Sent budget exceeded alert for ${budget.name}`);
         }
       }
     } catch (error) {
-      console.error('[NotificationService] Error checking budget alerts:', error);
+      logger.error('[NotificationService] Error checking budget alerts:', error);
     }
   }
 }

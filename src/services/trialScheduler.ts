@@ -1,9 +1,9 @@
 import * as cron from 'node-cron';
-import { PrismaClient, NotificationType } from '@prisma/client';
+import { NotificationType } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { NotificationService } from './notificationService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Tipos de notificación de trial y sus días correspondientes
 const TRIAL_NOTIFICATIONS: { day: number; type: NotificationType }[] = [
   { day: 1, type: 'TRIAL_WELCOME' },
@@ -22,35 +22,35 @@ export class TrialScheduler {
    */
   static startScheduler(): void {
     if (this.isRunning) {
-      console.log('[TrialScheduler] Scheduler ya está ejecutándose');
+      logger.log('[TrialScheduler] Scheduler ya está ejecutándose');
       return;
     }
 
-    console.log('[TrialScheduler] 🎯 Iniciando scheduler de notificaciones de trial...');
-    console.log('[TrialScheduler] 📅 Se ejecutará diariamente a las 9:00 AM UTC');
+    logger.log('[TrialScheduler] 🎯 Iniciando scheduler de notificaciones de trial...');
+    logger.log('[TrialScheduler] 📅 Se ejecutará diariamente a las 9:00 AM UTC');
 
     // Ejecutar todos los días a las 9 AM UTC
     this.cronTask = cron.schedule('0 9 * * *', async () => {
-      console.log('[TrialScheduler] 🔄 Ejecutando verificación de trials...');
+      logger.log('[TrialScheduler] 🔄 Ejecutando verificación de trials...');
 
       try {
         await this.processTrialNotifications();
       } catch (error) {
-        console.error('[TrialScheduler] ❌ Error en ejecución del scheduler:', error);
+        logger.error('[TrialScheduler] ❌ Error en ejecución del scheduler:', error);
       }
     });
 
     this.isRunning = true;
-    console.log('[TrialScheduler] ✅ Scheduler iniciado correctamente');
+    logger.log('[TrialScheduler] ✅ Scheduler iniciado correctamente');
 
     // Opcional: Ejecutar una vez al inicio para testing/desarrollo
     if (process.env.NODE_ENV === 'development') {
-      console.log('[TrialScheduler] 🧪 Ejecutando verificación inicial (desarrollo)...');
+      logger.log('[TrialScheduler] 🧪 Ejecutando verificación inicial (desarrollo)...');
       setTimeout(async () => {
         try {
           await this.processTrialNotifications();
         } catch (error) {
-          console.error('[TrialScheduler] ❌ Error en verificación inicial:', error);
+          logger.error('[TrialScheduler] ❌ Error en verificación inicial:', error);
         }
       }, 15000); // Esperar 15 segundos después del inicio
     }
@@ -61,21 +61,21 @@ export class TrialScheduler {
    */
   static stopScheduler(): void {
     if (!this.isRunning || !this.cronTask) {
-      console.log('[TrialScheduler] Scheduler no está ejecutándose');
+      logger.log('[TrialScheduler] Scheduler no está ejecutándose');
       return;
     }
 
     this.cronTask.stop();
     this.cronTask = null;
     this.isRunning = false;
-    console.log('[TrialScheduler] ⏹️ Scheduler detenido');
+    logger.log('[TrialScheduler] ⏹️ Scheduler detenido');
   }
 
   /**
    * Procesa las notificaciones de trial para todos los usuarios
    */
   static async processTrialNotifications(): Promise<void> {
-    console.log('[TrialScheduler] 🔍 Buscando usuarios en período de prueba...');
+    logger.log('[TrialScheduler] 🔍 Buscando usuarios en período de prueba...');
 
     try {
       // Obtener todos los usuarios con trial activo
@@ -100,7 +100,7 @@ export class TrialScheduler {
         }
       });
 
-      console.log(`[TrialScheduler] 👥 ${usersInTrial.length} usuarios en período de prueba`);
+      logger.log(`[TrialScheduler] 👥 ${usersInTrial.length} usuarios en período de prueba`);
 
       let notificationsSent = 0;
       let trialsEnded = 0;
@@ -157,22 +157,22 @@ export class TrialScheduler {
 
             if (sent) {
               notificationsSent++;
-              console.log(`[TrialScheduler] 📨 ${notificationToSend.type} enviado a ${user.email} (día ${dayOfTrial})`);
+              logger.log(`[TrialScheduler] 📨 ${notificationToSend.type} enviado a ${user.email} (día ${dayOfTrial})`);
             }
           }
 
         } catch (userError) {
-          console.error(`[TrialScheduler] Error procesando usuario:`, userError);
+          logger.error(`[TrialScheduler] Error procesando usuario:`, userError);
         }
       }
 
-      console.log(`[TrialScheduler] ✅ Proceso completado:`);
-      console.log(`   - Notificaciones enviadas: ${notificationsSent}`);
-      console.log(`   - Trials finalizados: ${trialsEnded}`);
-      console.log(`   - Usuarios omitidos: ${skipped}`);
+      logger.log(`[TrialScheduler] ✅ Proceso completado:`);
+      logger.log(`   - Notificaciones enviadas: ${notificationsSent}`);
+      logger.log(`   - Trials finalizados: ${trialsEnded}`);
+      logger.log(`   - Usuarios omitidos: ${skipped}`);
 
     } catch (error) {
-      console.error('[TrialScheduler] ❌ Error procesando notificaciones de trial:', error);
+      logger.error('[TrialScheduler] ❌ Error procesando notificaciones de trial:', error);
       throw error;
     }
   }
@@ -240,7 +240,7 @@ export class TrialScheduler {
 
       return false;
     } catch (error) {
-      console.error(`[TrialScheduler] Error enviando ${notificationType}:`, error);
+      logger.error(`[TrialScheduler] Error enviando ${notificationType}:`, error);
       return false;
     }
   }
@@ -269,9 +269,9 @@ export class TrialScheduler {
         }
       });
 
-      console.log(`[TrialScheduler] 🔄 Trial terminado para usuario ${userId} - Cambiado a plan FREE`);
+      logger.log(`[TrialScheduler] 🔄 Trial terminado para usuario ${userId} - Cambiado a plan FREE`);
     } catch (error) {
-      console.error(`[TrialScheduler] Error manejando fin de trial:`, error);
+      logger.error(`[TrialScheduler] Error manejando fin de trial:`, error);
     }
   }
 
@@ -279,13 +279,13 @@ export class TrialScheduler {
    * Ejecuta manualmente el procesamiento (útil para testing)
    */
   static async runManual(): Promise<void> {
-    console.log('[TrialScheduler] 🔧 Ejecutando verificación manual...');
+    logger.log('[TrialScheduler] 🔧 Ejecutando verificación manual...');
 
     try {
       await this.processTrialNotifications();
-      console.log('[TrialScheduler] ✅ Verificación manual completada');
+      logger.log('[TrialScheduler] ✅ Verificación manual completada');
     } catch (error) {
-      console.error('[TrialScheduler] ❌ Error en verificación manual:', error);
+      logger.error('[TrialScheduler] ❌ Error en verificación manual:', error);
       throw error;
     }
   }
@@ -366,10 +366,10 @@ export class TrialScheduler {
           deviceName
         }
       });
-      console.log(`[TrialScheduler] 📱 Dispositivo registrado para trial: ${deviceId}`);
+      logger.log(`[TrialScheduler] 📱 Dispositivo registrado para trial: ${deviceId}`);
     } catch (error) {
       // Si ya existe, ignorar (puede pasar en race conditions)
-      console.warn(`[TrialScheduler] Dispositivo ya registrado o error:`, error);
+      logger.warn(`[TrialScheduler] Dispositivo ya registrado o error:`, error);
     }
   }
 
@@ -402,7 +402,7 @@ export class TrialScheduler {
       const eligibility = await this.checkTrialEligibility(userId, deviceInfo?.deviceId);
 
       if (!eligibility.eligible) {
-        console.log(`[TrialScheduler] ⚠️ Usuario ${userId} no elegible para trial: ${eligibility.reason}`);
+        logger.log(`[TrialScheduler] ⚠️ Usuario ${userId} no elegible para trial: ${eligibility.reason}`);
 
         // Crear suscripción FREE (sin trial)
         await prisma.subscription.upsert({
@@ -466,7 +466,7 @@ export class TrialScheduler {
         );
       }
 
-      console.log(`[TrialScheduler] 🎯 Trial iniciado para usuario ${userId} - Termina: ${trialEndsAt.toISOString()}`);
+      logger.log(`[TrialScheduler] 🎯 Trial iniciado para usuario ${userId} - Termina: ${trialEndsAt.toISOString()}`);
 
       // Enviar notificación de bienvenida inmediatamente
       setTimeout(async () => {
@@ -480,16 +480,16 @@ export class TrialScheduler {
               trialNotificationsSent: ['TRIAL_WELCOME']
             }
           });
-          console.log(`[TrialScheduler] 📨 Notificación de bienvenida enviada a ${userId}`);
+          logger.log(`[TrialScheduler] 📨 Notificación de bienvenida enviada a ${userId}`);
         } catch (error) {
-          console.error(`[TrialScheduler] Error enviando bienvenida:`, error);
+          logger.error(`[TrialScheduler] Error enviando bienvenida:`, error);
         }
       }, 5000); // Esperar 5 segundos
 
       return { success: true, trialStarted: true };
 
     } catch (error) {
-      console.error(`[TrialScheduler] Error iniciando trial para ${userId}:`, error);
+      logger.error(`[TrialScheduler] Error iniciando trial para ${userId}:`, error);
       throw error;
     }
   }

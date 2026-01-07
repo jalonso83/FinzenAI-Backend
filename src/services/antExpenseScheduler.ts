@@ -1,12 +1,11 @@
 import * as cron from 'node-cron';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { NotificationService } from './notificationService';
 import { antExpenseService } from './antExpenseService';
 import { subscriptionService } from './subscriptionService';
 import { PLANS } from '../config/stripe';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 export class AntExpenseScheduler {
   private static isRunning: boolean = false;
   private static cronTask: cron.ScheduledTask | null = null;
@@ -17,37 +16,37 @@ export class AntExpenseScheduler {
    */
   static startScheduler(): void {
     if (this.isRunning) {
-      console.log('[AntExpenseScheduler] Scheduler ya está ejecutándose');
+      logger.log('[AntExpenseScheduler] Scheduler ya está ejecutándose');
       return;
     }
 
-    console.log('[AntExpenseScheduler] 🐜 Iniciando scheduler de alertas de gastos hormiga...');
-    console.log('[AntExpenseScheduler] 📅 Se ejecutará todos los lunes a las 10:00 AM UTC');
+    logger.log('[AntExpenseScheduler] 🐜 Iniciando scheduler de alertas de gastos hormiga...');
+    logger.log('[AntExpenseScheduler] 📅 Se ejecutará todos los lunes a las 10:00 AM UTC');
 
     // Ejecutar todos los lunes a las 10 AM UTC
     // Formato cron: minuto hora día-del-mes mes día-de-la-semana
     // 0 10 * * 1 = A las 10:00 AM, cualquier día del mes, cualquier mes, solo los lunes (1)
     this.cronTask = cron.schedule('0 10 * * 1', async () => {
-      console.log('[AntExpenseScheduler] 🔄 Ejecutando análisis de gastos hormiga...');
+      logger.log('[AntExpenseScheduler] 🔄 Ejecutando análisis de gastos hormiga...');
 
       try {
         await this.analyzeAllEligibleUsers();
       } catch (error) {
-        console.error('[AntExpenseScheduler] ❌ Error en ejecución del scheduler:', error);
+        logger.error('[AntExpenseScheduler] ❌ Error en ejecución del scheduler:', error);
       }
     });
 
     this.isRunning = true;
-    console.log('[AntExpenseScheduler] ✅ Scheduler iniciado correctamente');
+    logger.log('[AntExpenseScheduler] ✅ Scheduler iniciado correctamente');
 
     // Opcional: Ejecutar una vez al inicio para testing/desarrollo
     if (process.env.NODE_ENV === 'development') {
-      console.log('[AntExpenseScheduler] 🧪 Ejecutando análisis inicial (desarrollo)...');
+      logger.log('[AntExpenseScheduler] 🧪 Ejecutando análisis inicial (desarrollo)...');
       setTimeout(async () => {
         try {
           await this.analyzeAllEligibleUsers();
         } catch (error) {
-          console.error('[AntExpenseScheduler] ❌ Error en análisis inicial:', error);
+          logger.error('[AntExpenseScheduler] ❌ Error en análisis inicial:', error);
         }
       }, 10000); // Esperar 10 segundos después del inicio
     }
@@ -58,14 +57,14 @@ export class AntExpenseScheduler {
    */
   static stopScheduler(): void {
     if (!this.isRunning || !this.cronTask) {
-      console.log('[AntExpenseScheduler] Scheduler no está ejecutándose');
+      logger.log('[AntExpenseScheduler] Scheduler no está ejecutándose');
       return;
     }
 
     this.cronTask.stop();
     this.cronTask = null;
     this.isRunning = false;
-    console.log('[AntExpenseScheduler] ⏹️ Scheduler detenido');
+    logger.log('[AntExpenseScheduler] ⏹️ Scheduler detenido');
   }
 
   /**
@@ -73,7 +72,7 @@ export class AntExpenseScheduler {
    * Solo usuarios PLUS/PRO con alertas habilitadas
    */
   static async analyzeAllEligibleUsers(): Promise<void> {
-    console.log('[AntExpenseScheduler] 🔍 Buscando usuarios elegibles para alertas...');
+    logger.log('[AntExpenseScheduler] 🔍 Buscando usuarios elegibles para alertas...');
 
     try {
       // Obtener todos los usuarios con dispositivos activos y alertas habilitadas
@@ -95,7 +94,7 @@ export class AntExpenseScheduler {
         }
       });
 
-      console.log(`[AntExpenseScheduler] 👥 ${eligibleUsers.length} usuarios elegibles encontrados`);
+      logger.log(`[AntExpenseScheduler] 👥 ${eligibleUsers.length} usuarios elegibles encontrados`);
 
       let notificationsSent = 0;
       let usersSkipped = 0;
@@ -141,23 +140,23 @@ export class AntExpenseScheduler {
             );
 
             notificationsSent++;
-            console.log(`[AntExpenseScheduler] 📨 Alerta enviada a ${user.email} (${calculations.percentageOfTotal}% > ${alertThreshold}%)`);
+            logger.log(`[AntExpenseScheduler] 📨 Alerta enviada a ${user.email} (${calculations.percentageOfTotal}% > ${alertThreshold}%)`);
           } else {
             usersSkipped++;
           }
 
         } catch (userError) {
-          console.error(`[AntExpenseScheduler] Error procesando usuario ${user.id}:`, userError);
+          logger.error(`[AntExpenseScheduler] Error procesando usuario ${user.id}:`, userError);
         }
       }
 
-      console.log(`[AntExpenseScheduler] ✅ Análisis completado:`);
-      console.log(`   - Notificaciones enviadas: ${notificationsSent}`);
-      console.log(`   - Usuarios sin alertas (bajo umbral o sin datos): ${usersSkipped}`);
-      console.log(`   - Usuarios FREE (sin acceso): ${usersFree}`);
+      logger.log(`[AntExpenseScheduler] ✅ Análisis completado:`);
+      logger.log(`   - Notificaciones enviadas: ${notificationsSent}`);
+      logger.log(`   - Usuarios sin alertas (bajo umbral o sin datos): ${usersSkipped}`);
+      logger.log(`   - Usuarios FREE (sin acceso): ${usersFree}`);
 
     } catch (error) {
-      console.error('[AntExpenseScheduler] ❌ Error analizando usuarios:', error);
+      logger.error('[AntExpenseScheduler] ❌ Error analizando usuarios:', error);
       throw error;
     }
   }
@@ -166,13 +165,13 @@ export class AntExpenseScheduler {
    * Ejecuta manualmente el análisis (útil para testing)
    */
   static async runManual(): Promise<void> {
-    console.log('[AntExpenseScheduler] 🔧 Ejecutando análisis manual...');
+    logger.log('[AntExpenseScheduler] 🔧 Ejecutando análisis manual...');
 
     try {
       await this.analyzeAllEligibleUsers();
-      console.log('[AntExpenseScheduler] ✅ Análisis manual completado');
+      logger.log('[AntExpenseScheduler] ✅ Análisis manual completado');
     } catch (error) {
-      console.error('[AntExpenseScheduler] ❌ Error en análisis manual:', error);
+      logger.error('[AntExpenseScheduler] ❌ Error en análisis manual:', error);
       throw error;
     }
   }
@@ -185,7 +184,7 @@ export class AntExpenseScheduler {
     reason: string;
     data?: any;
   }> {
-    console.log(`[AntExpenseScheduler] 🔍 Analizando usuario ${userId}...`);
+    logger.log(`[AntExpenseScheduler] 🔍 Analizando usuario ${userId}...`);
 
     try {
       // Verificar plan
@@ -266,7 +265,7 @@ export class AntExpenseScheduler {
       };
 
     } catch (error: any) {
-      console.error(`[AntExpenseScheduler] Error analizando usuario ${userId}:`, error);
+      logger.error(`[AntExpenseScheduler] Error analizando usuario ${userId}:`, error);
       return {
         sent: false,
         reason: `Error: ${error.message}`

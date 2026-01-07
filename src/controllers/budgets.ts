@@ -1,9 +1,8 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Tipos para las peticiones
 interface CreateBudgetRequest {
   name: string;
@@ -85,7 +84,7 @@ export const getBudgets = async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Get budgets error:', error);
+    logger.error('Get budgets error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to fetch budgets'
@@ -133,7 +132,7 @@ export const getBudgetById = async (req: Request, res: Response) => {
 
     return res.json({ budget: serializedBudget });
   } catch (error) {
-    console.error('Get budget by ID error:', error);
+    logger.error('Get budget by ID error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to fetch budget'
@@ -311,7 +310,7 @@ export const createBudget = async (req: Request, res: Response) => {
         pointsAwarded: 20
       });
     } catch (error) {
-      console.error('Error dispatching gamification event:', error);
+      logger.error('Error dispatching gamification event:', error);
       // No fallar la creación del presupuesto por error de gamificación
     }
 
@@ -320,7 +319,7 @@ export const createBudget = async (req: Request, res: Response) => {
       budget: serializedBudget
     });
   } catch (error) {
-    console.error('Create budget error:', error);
+    logger.error('Create budget error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to create budget'
@@ -437,7 +436,7 @@ export const updateBudget = async (req: Request, res: Response) => {
       budget: serializedBudget
     });
   } catch (error) {
-    console.error('Update budget error:', error);
+    logger.error('Update budget error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to update budget'
@@ -484,7 +483,7 @@ export const deleteBudget = async (req: Request, res: Response) => {
         pointsAwarded: -20 // Restar 20 puntos
       });
     } catch (error) {
-      console.error('Error dispatching gamification event for delete:', error);
+      logger.error('Error dispatching gamification event for delete:', error);
       // No fallar la eliminación por error de gamificación
     }
 
@@ -492,7 +491,7 @@ export const deleteBudget = async (req: Request, res: Response) => {
       message: 'Budget deleted successfully'
     });
   } catch (error) {
-    console.error('Delete budget error:', error);
+    logger.error('Delete budget error:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to delete budget'

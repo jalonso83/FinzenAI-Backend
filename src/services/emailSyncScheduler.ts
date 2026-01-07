@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { EmailSyncService } from './emailSyncService';
 
+import { logger } from '../utils/logger';
 let schedulerTask: cron.ScheduledTask | null = null;
 
 export class EmailSyncScheduler {
@@ -11,20 +12,20 @@ export class EmailSyncScheduler {
    */
   static startScheduler(): void {
     if (schedulerTask) {
-      console.log('[EmailSyncScheduler] Scheduler already running');
+      logger.log('[EmailSyncScheduler] Scheduler already running');
       return;
     }
 
     // Ejecutar cada hora en el minuto 0
     // '0 * * * *' = cada hora
     schedulerTask = cron.schedule('0 * * * *', async () => {
-      console.log('[EmailSyncScheduler] Starting scheduled email sync...');
+      logger.log('[EmailSyncScheduler] Starting scheduled email sync...');
       await this.runSync();
     }, {
       timezone: 'America/Santo_Domingo'
     });
 
-    console.log('✅ Email Sync Scheduler started (runs every hour)');
+    logger.log('✅ Email Sync Scheduler started (runs every hour)');
   }
 
   /**
@@ -34,7 +35,7 @@ export class EmailSyncScheduler {
     if (schedulerTask) {
       schedulerTask.stop();
       schedulerTask = null;
-      console.log('🛑 Email Sync Scheduler stopped');
+      logger.log('🛑 Email Sync Scheduler stopped');
     }
   }
 
@@ -48,7 +49,7 @@ export class EmailSyncScheduler {
       // Obtener conexiones activas que necesitan sincronizacion
       const connections = await EmailSyncService.getActiveConnectionsForSync();
 
-      console.log(`[EmailSyncScheduler] Found ${connections.length} connections to sync`);
+      logger.log(`[EmailSyncScheduler] Found ${connections.length} connections to sync`);
 
       let successCount = 0;
       let errorCount = 0;
@@ -57,7 +58,7 @@ export class EmailSyncScheduler {
       // Procesar cada conexion
       for (const connection of connections) {
         try {
-          console.log(`[EmailSyncScheduler] Syncing connection ${connection.id} (${connection.email})`);
+          logger.log(`[EmailSyncScheduler] Syncing connection ${connection.id} (${connection.email})`);
 
           const result = await EmailSyncService.syncUserEmails(connection.id);
 
@@ -72,14 +73,14 @@ export class EmailSyncScheduler {
           await this.sleep(1000);
 
         } catch (error: any) {
-          console.error(`[EmailSyncScheduler] Error syncing ${connection.id}:`, error.message);
+          logger.error(`[EmailSyncScheduler] Error syncing ${connection.id}:`, error.message);
           errorCount++;
         }
       }
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-      console.log(`[EmailSyncScheduler] Sync completed in ${duration}s:`, {
+      logger.log(`[EmailSyncScheduler] Sync completed in ${duration}s:`, {
         connections: connections.length,
         success: successCount,
         errors: errorCount,
@@ -87,7 +88,7 @@ export class EmailSyncScheduler {
       });
 
     } catch (error: any) {
-      console.error('[EmailSyncScheduler] Fatal error during sync:', error);
+      logger.error('[EmailSyncScheduler] Fatal error during sync:', error);
     }
   }
 
@@ -100,7 +101,7 @@ export class EmailSyncScheduler {
     errors: number;
     transactions: number;
   }> {
-    console.log('[EmailSyncScheduler] Manual sync triggered');
+    logger.log('[EmailSyncScheduler] Manual sync triggered');
 
     const connections = await EmailSyncService.getActiveConnectionsForSync();
     let successCount = 0;

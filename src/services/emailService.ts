@@ -1,7 +1,9 @@
 import { Resend } from 'resend';
+import { ENV } from '../config/env';
+import { logger } from '../utils/logger';
 
 // Configurar Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(ENV.RESEND_API_KEY);
 
 // Template HTML personalizado de FinZen AI
 const getEmailTemplate = (name: string, token: string, email: string) => {
@@ -213,7 +215,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
                 <strong>Para comenzar tu viaje hacia la libertad financiera, confirma tu cuenta:</strong>
             </p>
 
-            <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${token}&email=${email}" class="confirm-button">
+            <a href="${ENV.FRONTEND_URL}/verify-email?token=${token}&email=${email}" class="confirm-button">
                 🎯 Confirmar Cuenta y Comenzar
             </a>
 
@@ -260,23 +262,23 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
 
 export const sendVerificationEmail = async (email: string, userId: string, name: string) => {
   try {
-    console.log('🔍 Verificando configuración de Resend...');
-    console.log('RESEND_API_KEY existe:', !!process.env.RESEND_API_KEY);
+    logger.log('🔍 Verificando configuración de Resend...');
+    logger.log('RESEND_API_KEY existe:', !!ENV.RESEND_API_KEY);
 
     // Verificar si Resend está configurado
-    if (!process.env.RESEND_API_KEY) {
+    if (!ENV.RESEND_API_KEY) {
       // Modo simulación para desarrollo
-      console.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-      console.log(`[SIMULACIÓN] Enlace: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${userId}&email=${email}`);
+      logger.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
+      logger.log(`[SIMULACIÓN] Enlace: ${ENV.FRONTEND_URL}/verify-email?token=${userId}&email=${email}`);
       return;
     }
 
     // Envío real con Resend
-    console.log('📧 Intentando enviar email real con Resend...');
+    logger.log('📧 Intentando enviar email real con Resend...');
     const htmlContent = getEmailTemplate(name, userId, email);
 
-    console.log('📤 Enviando email a:', email);
-    console.log('📤 Desde: noreply@finzenai.com');
+    logger.log('📤 Enviando email a:', email);
+    logger.log('📤 Desde: noreply@finzenai.com');
 
     const { data, error } = await resend.emails.send({
       from: 'FinZen AI <noreply@finzenai.com>',
@@ -286,16 +288,16 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
     });
 
     if (error) {
-      console.error('❌ Error de Resend:', error);
+      logger.error('❌ Error de Resend:', error);
       throw error;
     }
 
-    console.log(`✅ Verification email sent to ${email}`, data);
+    logger.log(`✅ Verification email sent to ${email}`, data);
   } catch (error) {
-    console.error('❌ Error sending verification email:', error);
+    logger.error('❌ Error sending verification email:', error);
     // No fallar en ningún entorno, solo simular
-    console.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-    console.log(`[SIMULACIÓN] Enlace: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${userId}&email=${email}`);
+    logger.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
+    logger.log(`[SIMULACIÓN] Enlace: ${ENV.FRONTEND_URL}/verify-email?token=${userId}&email=${email}`);
   }
 };
 
@@ -471,23 +473,23 @@ const getPasswordResetTemplate = (name: string, resetCode: string) => {
 
 export const sendPasswordResetEmail = async (email: string, resetCode: string, name?: string) => {
   try {
-    console.log('🔍 Verificando configuración de Resend para reset...');
+    logger.log('🔍 Verificando configuración de Resend para reset...');
 
     // Verificar si Resend está configurado
-    if (!process.env.RESEND_API_KEY) {
+    if (!ENV.RESEND_API_KEY) {
       // Modo simulación para desarrollo
-      console.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
-      console.log(`[SIMULACIÓN] Código de 6 dígitos: ${resetCode}`);
-      console.log(`[SIMULACIÓN] El código expirará en 15 minutos`);
+      logger.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
+      logger.log(`[SIMULACIÓN] Código de 6 dígitos: ${resetCode}`);
+      logger.log(`[SIMULACIÓN] El código expirará en 15 minutos`);
       return;
     }
 
     // Envío real con Resend
-    console.log('📧 Intentando enviar email de reset con Resend...');
+    logger.log('📧 Intentando enviar email de reset con Resend...');
     const htmlContent = getPasswordResetTemplate(name || 'Usuario', resetCode);
 
-    console.log('📤 Enviando email de reset a:', email);
-    console.log('📤 Código:', resetCode);
+    logger.log('📤 Enviando email de reset a:', email);
+    logger.log('📤 Código:', resetCode);
 
     const { data, error } = await resend.emails.send({
       from: 'FinZen AI <noreply@finzenai.com>',
@@ -497,15 +499,15 @@ export const sendPasswordResetEmail = async (email: string, resetCode: string, n
     });
 
     if (error) {
-      console.error('❌ Error de Resend en reset:', error);
+      logger.error('❌ Error de Resend en reset:', error);
       throw error;
     }
 
-    console.log(`✅ Password reset email sent to ${email}`, data);
+    logger.log(`✅ Password reset email sent to ${email}`, data);
   } catch (error) {
-    console.error('❌ Error sending password reset email:', error);
+    logger.error('❌ Error sending password reset email:', error);
     // No fallar en ningún entorno, solo simular
-    console.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
-    console.log(`[SIMULACIÓN] Código de 6 dígitos: ${resetCode}`);
+    logger.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
+    logger.log(`[SIMULACIÓN] Código de 6 dígitos: ${resetCode}`);
   }
 }; 

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { ReferralService } from '../services/referralService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
 
+import { logger } from '../utils/logger';
 interface AuthRequest extends Request {
   user?: {
     id: string;
@@ -39,7 +40,7 @@ export const getOrCreateReferralCode = async (req: AuthRequest, res: Response) =
     });
 
   } catch (error: any) {
-    console.error('[ReferralsController] Error getting referral code:', error);
+    logger.error('[ReferralsController] Error getting referral code:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -87,7 +88,7 @@ export const validateReferralCode = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[ReferralsController] Error validating code:', error);
+    logger.error('[ReferralsController] Error validating code:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -126,7 +127,7 @@ export const getReferralStats = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[ReferralsController] Error getting stats:', error);
+    logger.error('[ReferralsController] Error getting stats:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -161,7 +162,7 @@ export const getPendingRewards = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[ReferralsController] Error getting rewards:', error);
+    logger.error('[ReferralsController] Error getting rewards:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -201,7 +202,7 @@ export const getReferralInfo = async (_req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[ReferralsController] Error getting info:', error);
+    logger.error('[ReferralsController] Error getting info:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message

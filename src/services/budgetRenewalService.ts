@@ -1,7 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Mapeo de países a zonas horarias (usando la misma lógica que el proyecto móvil)
 const COUNTRY_TO_TIMEZONE: Record<string, string> = {
   // Países latinoamericanos
@@ -82,7 +81,7 @@ export class BudgetRenewalService {
    * Se ejecuta diariamente via cron job
    */
   static async renewExpiredBudgets(): Promise<void> {
-    console.log('[BudgetRenewal] Iniciando renovación de presupuestos vencidos...');
+    logger.log('[BudgetRenewal] Iniciando renovación de presupuestos vencidos...');
     
     try {
       // Buscar presupuestos vencidos que sean activos
@@ -110,7 +109,7 @@ export class BudgetRenewalService {
         }
       });
 
-      console.log(`[BudgetRenewal] Encontrados ${expiredBudgets.length} presupuestos vencidos`);
+      logger.log(`[BudgetRenewal] Encontrados ${expiredBudgets.length} presupuestos vencidos`);
 
       let renewedCount = 0;
 
@@ -118,16 +117,16 @@ export class BudgetRenewalService {
         try {
           await this.renewSingleBudget(budget);
           renewedCount++;
-          console.log(`[BudgetRenewal] ✅ Renovado: ${budget.name} del usuario ${budget.user.name}`);
+          logger.log(`[BudgetRenewal] ✅ Renovado: ${budget.name} del usuario ${budget.user.name}`);
         } catch (error) {
-          console.error(`[BudgetRenewal] ❌ Error renovando presupuesto ${budget.id}:`, error);
+          logger.error(`[BudgetRenewal] ❌ Error renovando presupuesto ${budget.id}:`, error);
         }
       }
 
-      console.log(`[BudgetRenewal] ✅ Renovación completada. ${renewedCount}/${expiredBudgets.length} presupuestos renovados.`);
+      logger.log(`[BudgetRenewal] ✅ Renovación completada. ${renewedCount}/${expiredBudgets.length} presupuestos renovados.`);
 
     } catch (error) {
-      console.error('[BudgetRenewal] ❌ Error en renovación de presupuestos:', error);
+      logger.error('[BudgetRenewal] ❌ Error en renovación de presupuestos:', error);
     }
   }
 

@@ -1,8 +1,7 @@
 import axios from 'axios';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // URL del Banco Central de República Dominicana
 const BCRD_URL = 'https://www.bancentral.gov.do';
 
@@ -21,7 +20,7 @@ export class ExchangeRateService {
    */
   static async getCurrentRate(): Promise<ExchangeRate> {
     try {
-      console.log('[ExchangeRate] Fetching rate from BCRD...');
+      logger.log('[ExchangeRate] Fetching rate from BCRD...');
 
       const response = await axios.get(BCRD_URL, {
         headers: {
@@ -48,7 +47,7 @@ export class ExchangeRateService {
         source: 'Banco Central de la República Dominicana'
       };
 
-      console.log(`[ExchangeRate] USD/DOP - Buy: ${rate.buy}, Sell: ${rate.sell}`);
+      logger.log(`[ExchangeRate] USD/DOP - Buy: ${rate.buy}, Sell: ${rate.sell}`);
 
       // Guardar en cache/DB para no hacer muchas peticiones
       await this.cacheRate(rate);
@@ -56,12 +55,12 @@ export class ExchangeRateService {
       return rate;
 
     } catch (error: any) {
-      console.error('[ExchangeRate] Error fetching rate:', error.message);
+      logger.error('[ExchangeRate] Error fetching rate:', error.message);
 
       // Intentar obtener la última tasa cacheada
       const cachedRate = await this.getCachedRate();
       if (cachedRate) {
-        console.log('[ExchangeRate] Using cached rate');
+        logger.log('[ExchangeRate] Using cached rate');
         return cachedRate;
       }
 
@@ -121,7 +120,7 @@ export class ExchangeRateService {
       ExchangeRateService.cachedRate = rate;
       ExchangeRateService.cacheTime = Date.now();
     } catch (error) {
-      console.error('[ExchangeRate] Error caching rate:', error);
+      logger.error('[ExchangeRate] Error caching rate:', error);
     }
   }
 

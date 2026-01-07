@@ -8,10 +8,10 @@
  * 3. Si no encuentra, retorna null (usar IA)
  */
 
-import { PrismaClient, MappingSource } from '@prisma/client';
+import { MappingSource } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Umbral mínimo de usuarios para considerar un mapeo global confiable
 const MIN_USERS_FOR_GLOBAL_TRUST = 3;
 const MIN_CONFIDENCE_FOR_GLOBAL = 70;
@@ -185,7 +185,7 @@ class MerchantMappingService {
       await this.updateGlobalMapping(normalized, categoryId, source);
 
     } catch (error) {
-      console.error('[MerchantMappingService] Error saving mapping:', error);
+      logger.error('[MerchantMappingService] Error saving mapping:', error);
     }
   }
 

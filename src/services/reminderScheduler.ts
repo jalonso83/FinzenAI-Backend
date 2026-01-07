@@ -1,6 +1,7 @@
 import * as cron from 'node-cron';
 import { ReminderService } from './reminderService';
 
+import { logger } from '../utils/logger';
 export class ReminderScheduler {
   private static isRunning: boolean = false;
   private static cronTask: cron.ScheduledTask | null = null;
@@ -12,32 +13,32 @@ export class ReminderScheduler {
    */
   static startScheduler(): void {
     if (this.isRunning) {
-      console.log('[ReminderScheduler] Scheduler ya está ejecutándose');
+      logger.log('[ReminderScheduler] Scheduler ya está ejecutándose');
       return;
     }
 
-    console.log('[ReminderScheduler] Iniciando scheduler de recordatorios de pago...');
-    console.log('[ReminderScheduler] Se ejecutará diariamente a las 8:00 AM UTC');
+    logger.log('[ReminderScheduler] Iniciando scheduler de recordatorios de pago...');
+    logger.log('[ReminderScheduler] Se ejecutará diariamente a las 8:00 AM UTC');
 
     // Ejecutar todos los días a las 8 AM UTC
     // En República Dominicana (UTC-4) esto es a las 4:00 AM
     this.cronTask = cron.schedule('0 8 * * *', async () => {
-      console.log('[ReminderScheduler] Ejecutando procesamiento de recordatorios...');
+      logger.log('[ReminderScheduler] Ejecutando procesamiento de recordatorios...');
 
       try {
         const result = await ReminderService.processPaymentReminders();
-        console.log(`[ReminderScheduler] Procesamiento completado: ${result.notificationsSent} notificaciones enviadas`);
+        logger.log(`[ReminderScheduler] Procesamiento completado: ${result.notificationsSent} notificaciones enviadas`);
 
         if (result.errors.length > 0) {
-          console.warn('[ReminderScheduler] Errores durante procesamiento:', result.errors);
+          logger.warn('[ReminderScheduler] Errores durante procesamiento:', result.errors);
         }
       } catch (error) {
-        console.error('[ReminderScheduler] Error en ejecución del scheduler:', error);
+        logger.error('[ReminderScheduler] Error en ejecución del scheduler:', error);
       }
     });
 
     this.isRunning = true;
-    console.log('[ReminderScheduler] Scheduler iniciado correctamente');
+    logger.log('[ReminderScheduler] Scheduler iniciado correctamente');
   }
 
   /**
@@ -45,14 +46,14 @@ export class ReminderScheduler {
    */
   static stopScheduler(): void {
     if (!this.isRunning || !this.cronTask) {
-      console.log('[ReminderScheduler] Scheduler no está ejecutándose');
+      logger.log('[ReminderScheduler] Scheduler no está ejecutándose');
       return;
     }
 
     this.cronTask.stop();
     this.cronTask = null;
     this.isRunning = false;
-    console.log('[ReminderScheduler] Scheduler detenido');
+    logger.log('[ReminderScheduler] Scheduler detenido');
   }
 
   /**
@@ -63,14 +64,14 @@ export class ReminderScheduler {
     notificationsSent: number;
     errors: string[];
   }> {
-    console.log('[ReminderScheduler] Ejecutando procesamiento manual...');
+    logger.log('[ReminderScheduler] Ejecutando procesamiento manual...');
 
     try {
       const result = await ReminderService.processPaymentReminders();
-      console.log('[ReminderScheduler] Procesamiento manual completado');
+      logger.log('[ReminderScheduler] Procesamiento manual completado');
       return result;
     } catch (error) {
-      console.error('[ReminderScheduler] Error en procesamiento manual:', error);
+      logger.error('[ReminderScheduler] Error en procesamiento manual:', error);
       throw error;
     }
   }

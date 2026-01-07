@@ -10,6 +10,7 @@ import { Request, Response } from 'express';
 import { antExpenseService } from '../services/antExpenseService';
 import { subscriptionService } from '../services/subscriptionService';
 import { PLANS } from '../config/stripe';
+import { logger } from '../utils/logger';
 import {
   AntExpenseConfig,
   DEFAULT_ANT_EXPENSE_CONFIG,
@@ -35,8 +36,8 @@ async function generateZenioInsights(
     // Preparar datos resumidos para la IA
     const dataForZenio = antExpenseService.prepareDataForZenio(calculations);
 
-    console.log('[AntDetective] Preparando datos para Zenio IA...');
-    console.log('[AntDetective] Datos para Zenio:', JSON.stringify(dataForZenio, null, 2));
+    logger.log('[AntDetective] Preparando datos para Zenio IA...');
+    logger.log('[AntDetective] Datos para Zenio:', JSON.stringify(dataForZenio, null, 2));
 
     // Importar el controlador de Zenio
     const { chatWithZenio } = await import('./zenio');
@@ -109,21 +110,21 @@ Considera:
         timeoutPromise
       ]);
     } catch (timeoutError) {
-      console.error('[AntDetective] Timeout o error en llamada a Zenio:', timeoutError);
-      console.log('[AntDetective] Usando fallback por timeout');
+      logger.error('[AntDetective] Timeout o error en llamada a Zenio:', timeoutError);
+      logger.log('[AntDetective] Usando fallback por timeout');
       return generateFallbackInsights(calculations);
     }
 
     // Verificar si hubo error en la respuesta
     if (responseStatus >= 400) {
-      console.error('[AntDetective] Zenio retornó error:', responseStatus, zenioResponse);
-      console.log('[AntDetective] Usando fallback por error de Zenio');
+      logger.error('[AntDetective] Zenio retornó error:', responseStatus, zenioResponse);
+      logger.log('[AntDetective] Usando fallback por error de Zenio');
       return generateFallbackInsights(calculations);
     }
 
     // Extraer respuesta JSON de Zenio
     if (zenioResponse?.message) {
-      console.log('[AntDetective] Respuesta de Zenio recibida, longitud:', zenioResponse.message.length);
+      logger.log('[AntDetective] Respuesta de Zenio recibida, longitud:', zenioResponse.message.length);
       try {
         // Buscar el JSON que contiene "impactMessage" (el JSON correcto)
         // Primero intentar encontrar un bloque JSON que empiece con {"impactMessage"
@@ -158,12 +159,12 @@ Considera:
         }
 
         if (jsonString) {
-          console.log('[AntDetective] JSON encontrado, intentando parsear...');
+          logger.log('[AntDetective] JSON encontrado, intentando parsear...');
           const parsed = JSON.parse(jsonString);
 
           // Verificar que tenga los campos esperados
           if (parsed.impactMessage || parsed.equivalencies || parsed.summary) {
-            console.log('[AntDetective] JSON parseado exitosamente con campos válidos');
+            logger.log('[AntDetective] JSON parseado exitosamente con campos válidos');
             return {
               impactMessage: parsed.impactMessage || generateFallbackImpactMessage(calculations),
               equivalencies: parsed.equivalencies || generateFallbackEquivalencies(calculations),
@@ -173,26 +174,26 @@ Considera:
               summary: parsed.summary || `Detectamos RD$${calculations.totalAntExpenses.toLocaleString()} en gastos hormiga.`,
             };
           } else {
-            console.log('[AntDetective] JSON parseado pero no tiene campos esperados:', Object.keys(parsed));
+            logger.log('[AntDetective] JSON parseado pero no tiene campos esperados:', Object.keys(parsed));
           }
         } else {
-          console.log('[AntDetective] No se encontró JSON en la respuesta de Zenio');
+          logger.log('[AntDetective] No se encontró JSON en la respuesta de Zenio');
         }
       } catch (parseError) {
-        console.error('[AntDetective] Error parseando respuesta de Zenio:', parseError);
+        logger.error('[AntDetective] Error parseando respuesta de Zenio:', parseError);
         // Log parte de la respuesta para debug
-        console.log('[AntDetective] Primeros 500 chars de respuesta:', zenioResponse.message.substring(0, 500));
+        logger.log('[AntDetective] Primeros 500 chars de respuesta:', zenioResponse.message.substring(0, 500));
       }
     } else {
-      console.log('[AntDetective] Zenio no retornó mensaje, zenioResponse:', zenioResponse);
+      logger.log('[AntDetective] Zenio no retornó mensaje, zenioResponse:', zenioResponse);
     }
 
     // Si falla, usar fallback
-    console.log('[AntDetective] Usando insights de fallback');
+    logger.log('[AntDetective] Usando insights de fallback');
     return generateFallbackInsights(calculations);
 
   } catch (error) {
-    console.error('[AntDetective] Error generando insights con Zenio:', error);
+    logger.error('[AntDetective] Error generando insights con Zenio:', error);
     return generateFallbackInsights(calculations);
   }
 }
@@ -360,7 +361,7 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
     const analysisType = planLimits.antExpenseAnalysis || 'basic';
     const isBasicAnalysis = analysisType === 'basic';
 
-    console.log(`[AntDetective] Usuario ${userId}, Plan: ${subscription.plan}, Análisis: ${analysisType}`);
+    logger.log(`[AntDetective] Usuario ${userId}, Plan: ${subscription.plan}, Análisis: ${analysisType}`);
 
     // Obtener configuración de query params
     const userConfig: Partial<AntExpenseConfig> = {};
@@ -375,7 +376,7 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
       userConfig.monthsToAnalyze = parseInt(req.query.monthsToAnalyze as string);
     }
 
-    console.log(`[AntDetective] Config recibida: ${JSON.stringify(userConfig)}`);
+    logger.log(`[AntDetective] Config recibida: ${JSON.stringify(userConfig)}`);
 
     // 1. Realizar cálculos
     const {
@@ -407,7 +408,7 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
 
     if (isBasicAnalysis) {
       // Plan FREE: Solo análisis básico (top 3 gastos)
-      console.log(`[AntDetective] Aplicando restricciones de plan FREE`);
+      logger.log(`[AntDetective] Aplicando restricciones de plan FREE`);
 
       finalCalculations = {
         ...calculations,
@@ -426,7 +427,7 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
       };
     } else {
       // Plan PLUS/PRO: Análisis completo con IA
-      console.log(`[AntDetective] Análisis completo para plan ${subscription.plan}`);
+      logger.log(`[AntDetective] Análisis completo para plan ${subscription.plan}`);
 
       // Determinar si usar IA o fallback
       const useAI = req.query.useAI !== 'false'; // Por defecto usa IA
@@ -458,12 +459,12 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
       },
     };
 
-    console.log(`[AntDetective] Análisis completado exitosamente (${analysisType})`);
+    logger.log(`[AntDetective] Análisis completado exitosamente (${analysisType})`);
 
     return res.json(response);
 
   } catch (error: any) {
-    console.error('[AntDetective] Error en análisis:', error);
+    logger.error('[AntDetective] Error en análisis:', error);
 
     return res.status(500).json({
       success: false,
@@ -518,7 +519,7 @@ export const getAntExpenseConfig = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[AntDetective] Error obteniendo config:', error);
+    logger.error('[AntDetective] Error obteniendo config:', error);
 
     return res.status(500).json({
       success: false,

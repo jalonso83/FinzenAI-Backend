@@ -1,12 +1,13 @@
 import Stripe from 'stripe';
+import { ENV } from './env';
 
-// Inicializar Stripe
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
+// Inicializar Stripe con validación
+export const stripe = new Stripe(ENV.STRIPE_SECRET_KEY, {
   apiVersion: '2025-10-29.clover',
   typescript: true,
 });
 
-export const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+export const STRIPE_WEBHOOK_SECRET = ENV.STRIPE_WEBHOOK_SECRET;
 
 // Tipo para período de facturación
 export type BillingPeriod = 'monthly' | 'yearly';
@@ -55,8 +56,8 @@ export const PLANS = {
       yearly: 49.99,
     },
     stripePriceId: {
-      monthly: process.env.STRIPE_PLUS_MONTHLY_PRICE_ID || '',
-      yearly: process.env.STRIPE_PLUS_YEARLY_PRICE_ID || '',
+      monthly: ENV.STRIPE_PLUS_MONTHLY_PRICE_ID,
+      yearly: ENV.STRIPE_PLUS_YEARLY_PRICE_ID,
     },
     savings: {
       yearly: 9.89, // Ahorro anual (17%)
@@ -98,8 +99,8 @@ export const PLANS = {
       yearly: 99.99,
     },
     stripePriceId: {
-      monthly: process.env.STRIPE_PRO_MONTHLY_PRICE_ID || '',
-      yearly: process.env.STRIPE_PRO_YEARLY_PRICE_ID || '',
+      monthly: ENV.STRIPE_PRO_MONTHLY_PRICE_ID,
+      yearly: ENV.STRIPE_PRO_YEARLY_PRICE_ID,
     },
     savings: {
       yearly: 19.89, // Ahorro anual (17%)

@@ -1,9 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { PLANS, PlanType } from '../config/stripe';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 export class SubscriptionService {
   /**
    * Obtener suscripción de un usuario
@@ -34,7 +33,7 @@ export class SubscriptionService {
         zenioUsage,
       };
     } catch (error) {
-      console.error('Error obteniendo suscripción:', error);
+      logger.error('Error obteniendo suscripción:', error);
       throw new Error('No se pudo obtener la suscripción');
     }
   }
@@ -85,7 +84,7 @@ export class SubscriptionService {
         remaining: zenioLimit === -1 ? -1 : Math.max(0, zenioLimit - currentCount),
       };
     } catch (error) {
-      console.error('Error obteniendo uso de Zenio:', error);
+      logger.error('Error obteniendo uso de Zenio:', error);
       return { used: 0, limit: 10, remaining: 10 };
     }
   }
@@ -103,10 +102,10 @@ export class SubscriptionService {
         },
       });
 
-      console.log(`✅ Suscripción FREE creada para usuario ${userId}`);
+      logger.log(`✅ Suscripción FREE creada para usuario ${userId}`);
       return subscription;
     } catch (error) {
-      console.error('Error creando suscripción FREE:', error);
+      logger.error('Error creando suscripción FREE:', error);
       throw new Error('No se pudo crear la suscripción');
     }
   }
@@ -121,7 +120,7 @@ export class SubscriptionService {
 
       return limits[feature] === true || limits[feature] === -1;
     } catch (error) {
-      console.error('Error verificando feature:', error);
+      logger.error('Error verificando feature:', error);
       return false;
     }
   }
@@ -157,7 +156,7 @@ export class SubscriptionService {
         remaining,
       };
     } catch (error) {
-      console.error('Error verificando límite de recurso:', error);
+      logger.error('Error verificando límite de recurso:', error);
       return { allowed: false, limit: 0, remaining: 0 };
     }
   }
@@ -194,10 +193,10 @@ export class SubscriptionService {
         },
       });
 
-      console.log(`✅ Suscripción actualizada a ${plan} para usuario ${userId}`);
+      logger.log(`✅ Suscripción actualizada a ${plan} para usuario ${userId}`);
       return subscription;
     } catch (error) {
-      console.error('Error actualizando suscripción:', error);
+      logger.error('Error actualizando suscripción:', error);
       throw new Error('No se pudo actualizar la suscripción');
     }
   }
@@ -214,10 +213,10 @@ export class SubscriptionService {
         },
       });
 
-      console.log(`✅ Suscripción marcada para cancelación: usuario ${userId}`);
+      logger.log(`✅ Suscripción marcada para cancelación: usuario ${userId}`);
       return subscription;
     } catch (error) {
-      console.error('Error cancelando suscripción:', error);
+      logger.error('Error cancelando suscripción:', error);
       throw new Error('No se pudo cancelar la suscripción');
     }
   }
@@ -234,10 +233,10 @@ export class SubscriptionService {
         },
       });
 
-      console.log(`✅ Suscripción reactivada: usuario ${userId}`);
+      logger.log(`✅ Suscripción reactivada: usuario ${userId}`);
       return subscription;
     } catch (error) {
-      console.error('Error reactivando suscripción:', error);
+      logger.error('Error reactivando suscripción:', error);
       throw new Error('No se pudo reactivar la suscripción');
     }
   }
@@ -260,10 +259,10 @@ export class SubscriptionService {
         },
       });
 
-      console.log(`✅ Usuario ${userId} degradado a plan FREE`);
+      logger.log(`✅ Usuario ${userId} degradado a plan FREE`);
       return subscription;
     } catch (error) {
-      console.error('Error degradando a FREE:', error);
+      logger.error('Error degradando a FREE:', error);
       throw new Error('No se pudo degradar el plan');
     }
   }
@@ -278,10 +277,10 @@ export class SubscriptionService {
         data: { status },
       });
 
-      console.log(`✅ Estado de suscripción actualizado: usuario ${userId} -> ${status}`);
+      logger.log(`✅ Estado de suscripción actualizado: usuario ${userId} -> ${status}`);
       return subscription;
     } catch (error) {
-      console.error('Error actualizando estado de suscripción:', error);
+      logger.error('Error actualizando estado de suscripción:', error);
       throw new Error('No se pudo actualizar el estado');
     }
   }
@@ -304,10 +303,10 @@ export class SubscriptionService {
         data,
       });
 
-      console.log(`✅ Pago registrado: ${payment.id} - ${data.status}`);
+      logger.log(`✅ Pago registrado: ${payment.id} - ${data.status}`);
       return payment;
     } catch (error) {
-      console.error('Error registrando pago:', error);
+      logger.error('Error registrando pago:', error);
       throw new Error('No se pudo registrar el pago');
     }
   }
@@ -325,7 +324,7 @@ export class SubscriptionService {
 
       return payments;
     } catch (error) {
-      console.error('Error obteniendo historial de pagos:', error);
+      logger.error('Error obteniendo historial de pagos:', error);
       throw new Error('No se pudo obtener el historial');
     }
   }
@@ -351,7 +350,7 @@ export class SubscriptionService {
         activeByPlan,
       };
     } catch (error) {
-      console.error('Error obteniendo estadísticas:', error);
+      logger.error('Error obteniendo estadísticas:', error);
       throw new Error('No se pudieron obtener las estadísticas');
     }
   }

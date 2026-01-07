@@ -1,8 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 export const saveOnboarding = async (req: Request, res: Response) => {
   try {
     const { userId, answers } = req.body;
@@ -65,7 +64,7 @@ export const saveOnboarding = async (req: Request, res: Response) => {
 
     return res.json({ message: 'Onboarding completado y guardado' });
   } catch (error) {
-    console.error('Error guardando onboarding:', error);
+    logger.error('Error guardando onboarding:', error);
     return res.status(500).json({ error: 'Error guardando onboarding' });
   }
 }; 

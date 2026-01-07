@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 /**
  * Configuración del Sistema de Referidos - FinZen AI
  *
@@ -225,13 +226,13 @@ export function validateReferralConfig(): void {
   }
 
   // Log de configuración
-  console.log('[ReferralConfig] ✅ Configuración validada correctamente:');
-  console.log(`  📊 Sistema habilitado: ${config.ENABLED ? 'Sí' : 'No'}`);
-  console.log(`  🎁 Descuento referido: ${config.REFEREE_DISCOUNT_PERCENT}%`);
-  console.log(`  🏆 Meses gratis referidor: ${config.REFERRER_FREE_MONTHS}`);
-  console.log(`  ⏰ Días para expirar: ${config.EXPIRY_DAYS}`);
-  console.log(`  🛡️ Anti-fraude: ${config.FRAUD_CHECK_ENABLED ? 'Activo' : 'Inactivo'}`);
-  console.log(`  📝 Max referidos/día: ${config.MAX_REFERRALS_PER_DAY}`);
+  logger.log('[ReferralConfig] ✅ Configuración validada correctamente:');
+  logger.log(`  📊 Sistema habilitado: ${config.ENABLED ? 'Sí' : 'No'}`);
+  logger.log(`  🎁 Descuento referido: ${config.REFEREE_DISCOUNT_PERCENT}%`);
+  logger.log(`  🏆 Meses gratis referidor: ${config.REFERRER_FREE_MONTHS}`);
+  logger.log(`  ⏰ Días para expirar: ${config.EXPIRY_DAYS}`);
+  logger.log(`  🛡️ Anti-fraude: ${config.FRAUD_CHECK_ENABLED ? 'Activo' : 'Inactivo'}`);
+  logger.log(`  📝 Max referidos/día: ${config.MAX_REFERRALS_PER_DAY}`);
 }
 
 /**

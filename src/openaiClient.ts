@@ -1,7 +1,8 @@
 import OpenAI from "openai";
+import { ENV } from "./config/env";
 
 export const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: ENV.OPENAI_API_KEY,
   defaultHeaders: {
     "OpenAI-Beta": "assistants=v2"
   },

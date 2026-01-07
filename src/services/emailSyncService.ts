@@ -1,12 +1,12 @@
-import { PrismaClient, EmailConnection, EmailSyncStatus, ImportedEmailStatus } from '@prisma/client';
+import { EmailConnection, EmailSyncStatus, ImportedEmailStatus } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { GmailService } from './gmailService';
 import { OutlookService } from './outlookService';
 import { EmailParserService, ParsedTransaction } from './emailParserService';
 import { NotificationService } from './notificationService';
 import { GamificationService } from './gamificationService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 export interface SyncResult {
   success: boolean;
   emailsFound: number;
@@ -73,9 +73,9 @@ export class EmailSyncService {
         eventData: { provider: 'GMAIL', email: gmailEmail },
         pointsAwarded: 50
       });
-      console.log('[EmailSync] Gamification: email_sync_setup event dispatched for Gmail');
+      logger.log('[EmailSync] Gamification: email_sync_setup event dispatched for Gmail');
     } catch (gamificationError) {
-      console.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
+      logger.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
     }
 
     return connection;
@@ -136,9 +136,9 @@ export class EmailSyncService {
         eventData: { provider: 'OUTLOOK', email: outlookEmail },
         pointsAwarded: 50
       });
-      console.log('[EmailSync] Gamification: email_sync_setup event dispatched for Outlook');
+      logger.log('[EmailSync] Gamification: email_sync_setup event dispatched for Outlook');
     } catch (gamificationError) {
-      console.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
+      logger.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
     }
 
     return connection;
@@ -191,7 +191,7 @@ export class EmailSyncService {
     });
 
     if (supportedBanks.length === 0) {
-      console.warn(`[EmailSync] No supported banks found for country: ${userCountry}`);
+      logger.warn(`[EmailSync] No supported banks found for country: ${userCountry}`);
       return;
     }
 
@@ -441,7 +441,7 @@ export class EmailSyncService {
           result.emailsProcessed++;
 
         } catch (error: any) {
-          console.error(`[EmailSync] Error processing message ${message.id}:`, error);
+          logger.error(`[EmailSync] Error processing message ${message.id}:`, error);
           result.errors.push(`Error processing ${message.id}: ${error.message}`);
         }
       }
@@ -465,10 +465,10 @@ export class EmailSyncService {
             },
             pointsAwarded: 5
           });
-          console.log('[EmailSync] Gamification: email_sync_daily bonus awarded');
+          logger.log('[EmailSync] Gamification: email_sync_daily bonus awarded');
         }
       } catch (gamificationError) {
-        console.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
+        logger.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
       }
 
       // Enviar notificación push si se importaron transacciones
@@ -479,12 +479,12 @@ export class EmailSyncService {
             result.transactionsCreated
           );
         } catch (notifyError) {
-          console.error('[EmailSync] Error sending notification:', notifyError);
+          logger.error('[EmailSync] Error sending notification:', notifyError);
         }
       }
 
     } catch (error: any) {
-      console.error('[EmailSync] Sync failed:', error);
+      logger.error('[EmailSync] Sync failed:', error);
       result.errors.push(error.message);
       await this.finalizeSyncLog(syncLog.id, result, 'FAILED', error.message);
       await this.updateConnectionStatus(connectionId, 'FAILED', error.message);
@@ -514,7 +514,7 @@ export class EmailSyncService {
       }
 
       if (!categoryId) {
-        console.error('[EmailSync] No category found for transaction');
+        logger.error('[EmailSync] No category found for transaction');
         return null;
       }
 
@@ -566,13 +566,13 @@ export class EmailSyncService {
           pointsAwarded: 1
         });
       } catch (gamificationError) {
-        console.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
+        logger.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
       }
 
       return transaction;
 
     } catch (error) {
-      console.error('[EmailSync] Error creating transaction:', error);
+      logger.error('[EmailSync] Error creating transaction:', error);
       return null;
     }
   }
@@ -856,7 +856,7 @@ export class EmailSyncService {
               currency
             );
           } catch (notifyError) {
-            console.error('[EmailSync] Error sending budget alert:', notifyError);
+            logger.error('[EmailSync] Error sending budget alert:', notifyError);
           }
         }
 
@@ -870,12 +870,12 @@ export class EmailSyncService {
               currency
             );
           } catch (notifyError) {
-            console.error('[EmailSync] Error sending budget exceeded:', notifyError);
+            logger.error('[EmailSync] Error sending budget exceeded:', notifyError);
           }
         }
       }
     } catch (error) {
-      console.error('[EmailSync] Error recalculating budget:', error);
+      logger.error('[EmailSync] Error recalculating budget:', error);
     }
   }
 }

@@ -4,6 +4,7 @@ import { authenticateToken } from '../middlewares/auth';
 import { saveOnboarding } from '../controllers/onboarding';
 import { analyzeAntExpenses, getAntExpenseConfig } from '../controllers/antExpenseDetective';
 import { checkZenioLimit } from '../middleware/planLimits';
+import { strictApiLimiter, apiLimiter } from '../config/rateLimiter';
 import multer from 'multer';
 
 const router: Router = express.Router();
@@ -24,27 +25,24 @@ const upload = multer({
 // Todas las rutas requieren autenticación
 router.use(authenticateToken);
 
-// Rutas de Zenio (Asistente IA) - con validación de límite
-router.post('/chat', checkZenioLimit, chatWithZenio);
-router.get('/history', getChatHistory);
+// Rutas de Zenio (Asistente IA) - con validación de límite + rate limiting estricto
+router.post('/chat', strictApiLimiter, checkZenioLimit, chatWithZenio);
+router.get('/history', apiLimiter, getChatHistory);
 
 // Ruta para crear transacciones desde Zenio
-router.post('/transaction', createTransactionFromZenio);
+router.post('/transaction', apiLimiter, createTransactionFromZenio);
 
 // Ruta para crear presupuestos desde Zenio
-router.post('/budget', createBudgetFromZenio);
+router.post('/budget', apiLimiter, createBudgetFromZenio);
 
 // Ruta para guardar el onboarding
-router.post('/onboarding', saveOnboarding);
+router.post('/onboarding', apiLimiter, saveOnboarding);
 
-// Rutas para análisis de gastos hormiga con Zenio
-// GET /api/zenio/ant-expense-config - Obtener configuración y opciones disponibles
-router.get('/ant-expense-config', getAntExpenseConfig);
-// GET /api/zenio/ant-expense-analysis - Analizar gastos hormiga
-// Query params opcionales: antThreshold, minFrequency, monthsToAnalyze, useAI
-router.get('/ant-expense-analysis', analyzeAntExpenses);
+// Rutas para análisis de gastos hormiga con Zenio (usan IA = estricto)
+router.get('/ant-expense-config', apiLimiter, getAntExpenseConfig);
+router.get('/ant-expense-analysis', strictApiLimiter, analyzeAntExpenses);
 
-// Ruta para transcribir audio con Whisper
-router.post('/transcribe', upload.single('audio'), transcribeAudio);
+// Ruta para transcribir audio con Whisper (usa IA = estricto)
+router.post('/transcribe', strictApiLimiter, upload.single('audio'), transcribeAudio);
 
 export default router; 

@@ -1,8 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../lib/prisma';
+import { ENV } from '../config/env';
 
 // Extender la interfaz Request para incluir el usuario
 declare global {
@@ -32,7 +31,7 @@ export const authenticateToken = async (
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+    const decoded = jwt.verify(token, ENV.JWT_SECRET) as any;
     
     // Verificar que el usuario existe en la base de datos
     const user = await prisma.user.findUnique({

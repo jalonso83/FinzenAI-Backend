@@ -1,9 +1,8 @@
 import { Request, Response } from 'express';
 import { GamificationService } from '../services/gamificationService';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 export class GamificationController {
   // Obtener FinScore del usuario
   static async getFinScore(req: Request, res: Response): Promise<void> {
@@ -33,7 +32,7 @@ export class GamificationController {
         data: finScore
       });
     } catch (error) {
-      console.error('[GamificationController] Error obteniendo FinScore:', error);
+      logger.error('[GamificationController] Error obteniendo FinScore:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -63,7 +62,7 @@ export class GamificationController {
         data: history
       });
     } catch (error) {
-      console.error('[GamificationController] Error obteniendo historial FinScore:', error);
+      logger.error('[GamificationController] Error obteniendo historial FinScore:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -93,7 +92,7 @@ export class GamificationController {
         data: badgesWithInfo
       });
     } catch (error) {
-      console.error('[GamificationController] Error obteniendo badges:', error);
+      logger.error('[GamificationController] Error obteniendo badges:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -146,7 +145,7 @@ export class GamificationController {
         data: streak
       });
     } catch (error) {
-      console.error('[GamificationController] Error obteniendo racha:', error);
+      logger.error('[GamificationController] Error obteniendo racha:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -198,7 +197,7 @@ export class GamificationController {
         data: stats
       });
     } catch (error) {
-      console.error('[GamificationController] Error obteniendo estadísticas:', error);
+      logger.error('[GamificationController] Error obteniendo estadísticas:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -223,7 +222,7 @@ export class GamificationController {
         message: 'FinScore recalculado exitosamente'
       });
     } catch (error) {
-      console.error('[GamificationController] Error recalculando FinScore:', error);
+      logger.error('[GamificationController] Error recalculando FinScore:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -263,7 +262,7 @@ export class GamificationController {
         message: 'Evento disparado exitosamente'
       });
     } catch (error) {
-      console.error('[GamificationController] Error disparando evento:', error);
+      logger.error('[GamificationController] Error disparando evento:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -305,7 +304,7 @@ export class GamificationController {
         data: events
       });
     } catch (error) {
-      console.error('[GamificationController] Error obteniendo eventos recientes:', error);
+      logger.error('[GamificationController] Error obteniendo eventos recientes:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -399,7 +398,7 @@ export class GamificationController {
         }
       });
     } catch (error) {
-      console.error('[GamificationController] Error obteniendo leaderboard:', error);
+      logger.error('[GamificationController] Error obteniendo leaderboard:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'

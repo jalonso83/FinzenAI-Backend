@@ -6,6 +6,7 @@ import { getPlanFromPriceId } from '../config/stripe';
 import { ReferralService } from '../services/referralService';
 import Stripe from 'stripe';
 
+import { logger } from '../utils/logger';
 /**
  * Handler principal del webhook de Stripe
  */
@@ -22,11 +23,11 @@ export const handleStripeWebhook = async (req: Request, res: Response) => {
       STRIPE_WEBHOOK_SECRET
     );
   } catch (err: any) {
-    console.error('❌ Webhook signature verification failed:', err.message);
+    logger.error('❌ Webhook signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  console.log(`📬 Webhook received: ${event.type}`);
+  logger.log(`📬 Webhook received: ${event.type}`);
 
   try {
     // Procesar evento según tipo
@@ -60,12 +61,12 @@ export const handleStripeWebhook = async (req: Request, res: Response) => {
         break;
 
       default:
-        console.log(`⚠️  Unhandled event type: ${event.type}`);
+        logger.log(`⚠️  Unhandled event type: ${event.type}`);
     }
 
     res.json({ received: true });
   } catch (error: any) {
-    console.error('❌ Error processing webhook:', error);
+    logger.error('❌ Error processing webhook:', error);
     res.status(500).json({
       error: 'Webhook processing failed',
       message: error.message
@@ -77,11 +78,11 @@ export const handleStripeWebhook = async (req: Request, res: Response) => {
  * Checkout completado - primera suscripción o cambio de plan
  */
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
-  console.log('✅ Checkout completed:', session.id);
+  logger.log('✅ Checkout completed:', session.id);
 
   const userId = session.metadata?.userId;
   if (!userId) {
-    console.error('❌ No userId in session metadata');
+    logger.error('❌ No userId in session metadata');
     return;
   }
 
@@ -98,11 +99,11 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
  * Suscripción creada
  */
 async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
-  console.log('✅ Subscription created:', subscription.id);
+  logger.log('✅ Subscription created:', subscription.id);
 
   const userId = subscription.metadata?.userId;
   if (!userId) {
-    console.error('❌ No userId in subscription metadata');
+    logger.error('❌ No userId in subscription metadata');
     return;
   }
 
@@ -113,11 +114,11 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
  * Suscripción actualizada (cambio de plan, renovación, etc)
  */
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
-  console.log('✅ Subscription updated:', subscription.id);
+  logger.log('✅ Subscription updated:', subscription.id);
 
   const userId = subscription.metadata?.userId;
   if (!userId) {
-    console.error('❌ No userId in subscription metadata');
+    logger.error('❌ No userId in subscription metadata');
     return;
   }
 
@@ -128,11 +129,11 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
  * Suscripción eliminada/cancelada
  */
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
-  console.log('✅ Subscription deleted:', subscription.id);
+  logger.log('✅ Subscription deleted:', subscription.id);
 
   const userId = subscription.metadata?.userId;
   if (!userId) {
-    console.error('❌ No userId in subscription metadata');
+    logger.error('❌ No userId in subscription metadata');
     return;
   }
 
@@ -144,13 +145,13 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
  * Pago exitoso
  */
 async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
-  console.log('✅ Payment succeeded:', invoice.id);
+  logger.log('✅ Payment succeeded:', invoice.id);
 
   // Obtener el subscription ID del invoice (cast necesario por tipos de Stripe)
   const invoiceAny = invoice as any;
   const subscriptionId = invoiceAny.subscription as string;
   if (!subscriptionId) {
-    console.error('❌ No subscription ID in invoice');
+    logger.error('❌ No subscription ID in invoice');
     return;
   }
 
@@ -159,7 +160,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   const userId = subscription.metadata?.userId;
 
   if (!userId) {
-    console.error('❌ No userId in subscription metadata');
+    logger.error('❌ No userId in subscription metadata');
     return;
   }
 
@@ -178,13 +179,13 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   // Asegurar que la suscripción está activa
   await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.ACTIVE);
 
-  console.log(`✅ Payment recorded for user ${userId}: $${invoice.amount_paid / 100}`);
+  logger.log(`✅ Payment recorded for user ${userId}: $${invoice.amount_paid / 100}`);
 
   // Procesar conversión de referido si aplica (no bloquear si falla)
   try {
     await ReferralService.handleRefereeConversion(userId, invoice.id);
   } catch (referralError) {
-    console.error('❌ Error processing referral conversion:', referralError);
+    logger.error('❌ Error processing referral conversion:', referralError);
     // No fallar el webhook por error de referido
   }
 }
@@ -193,13 +194,13 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
  * Pago fallido
  */
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
-  console.log('❌ Payment failed:', invoice.id);
+  logger.log('❌ Payment failed:', invoice.id);
 
   // Obtener el subscription ID del invoice (cast necesario por tipos de Stripe)
   const invoiceAny = invoice as any;
   const subscriptionId = invoiceAny.subscription as string;
   if (!subscriptionId) {
-    console.error('❌ No subscription ID in invoice');
+    logger.error('❌ No subscription ID in invoice');
     return;
   }
 
@@ -208,7 +209,7 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
   const userId = subscription.metadata?.userId;
 
   if (!userId) {
-    console.error('❌ No userId in subscription metadata');
+    logger.error('❌ No userId in subscription metadata');
     return;
   }
 
@@ -226,7 +227,7 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
   // Marcar suscripción como PAST_DUE
   await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.PAST_DUE);
 
-  console.log(`❌ Failed payment recorded for user ${userId}: $${invoice.amount_due / 100}`);
+  logger.log(`❌ Failed payment recorded for user ${userId}: $${invoice.amount_due / 100}`);
 
   // TODO: Enviar email notificando pago fallido
 }
@@ -235,16 +236,16 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
  * Trial va a terminar (3 días antes)
  */
 async function handleTrialWillEnd(subscription: Stripe.Subscription) {
-  console.log('⏰ Trial will end:', subscription.id);
+  logger.log('⏰ Trial will end:', subscription.id);
 
   const userId = subscription.metadata?.userId;
   if (!userId) {
-    console.error('❌ No userId in subscription metadata');
+    logger.error('❌ No userId in subscription metadata');
     return;
   }
 
   // TODO: Enviar email notificando que el trial termina pronto
-  console.log(`📧 Should send trial ending email to user ${userId}`);
+  logger.log(`📧 Should send trial ending email to user ${userId}`);
 }
 
 /**
@@ -299,5 +300,5 @@ async function updateSubscriptionFromStripe(
   // Actualizar status si es necesario
   await subscriptionService.updateSubscriptionStatus(userId, status);
 
-  console.log(`✅ Subscription updated in DB: User ${userId} -> ${plan} (${status})`);
+  logger.log(`✅ Subscription updated in DB: User ${userId} -> ${plan} (${status})`);
 }

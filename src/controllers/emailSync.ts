@@ -1,11 +1,10 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { GmailService } from '../services/gmailService';
 import { OutlookService } from '../services/outlookService';
 import { EmailSyncService } from '../services/emailSyncService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 /**
  * Obtiene la URL de autorizacion para Gmail
  * GET /api/email-sync/gmail/auth-url
@@ -43,7 +42,7 @@ export const getGmailAuthUrl = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Error getting auth URL:', error);
+    logger.error('[EmailSync] Error getting auth URL:', error);
     return res.status(500).json({
       error: 'Error al obtener URL de autorizacion',
       message: error.message
@@ -76,7 +75,7 @@ export const handleGmailCallback = async (req: Request, res: Response) => {
     }
 
     if (error) {
-      console.error('[EmailSync] OAuth error:', error);
+      logger.error('[EmailSync] OAuth error:', error);
       return res.redirect(`${mobileRedirectUrl}?error=${error}`);
     }
 
@@ -90,13 +89,13 @@ export const handleGmailCallback = async (req: Request, res: Response) => {
       code as string
     );
 
-    console.log(`[EmailSync] Gmail connected for user ${userId}: ${connection.email}`);
+    logger.log(`[EmailSync] Gmail connected for user ${userId}: ${connection.email}`);
 
     // Redirigir a la app con exito
     return res.redirect(`${mobileRedirectUrl}?success=true&email=${encodeURIComponent(connection.email)}`);
 
   } catch (error: any) {
-    console.error('[EmailSync] Callback error:', error);
+    logger.error('[EmailSync] Callback error:', error);
     return res.redirect(`${mobileRedirectUrl}?error=${encodeURIComponent(error.message)}`);
   }
 };
@@ -138,7 +137,7 @@ export const getOutlookAuthUrl = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Error getting Outlook auth URL:', error);
+    logger.error('[EmailSync] Error getting Outlook auth URL:', error);
     return res.status(500).json({
       error: 'Error al obtener URL de autorizacion',
       message: error.message
@@ -159,7 +158,7 @@ export const handleOutlookCallback = async (req: Request, res: Response) => {
     const { code, state, error, error_description, error_uri } = req.query;
 
     // Log all query params for debugging
-    console.log('[EmailSync] Outlook callback received:', {
+    logger.log('[EmailSync] Outlook callback received:', {
       hasCode: !!code,
       hasState: !!state,
       error,
@@ -180,7 +179,7 @@ export const handleOutlookCallback = async (req: Request, res: Response) => {
     }
 
     if (error) {
-      console.error('[EmailSync] Outlook OAuth error:', {
+      logger.error('[EmailSync] Outlook OAuth error:', {
         error,
         description: error_description,
         uri: error_uri
@@ -203,7 +202,7 @@ export const handleOutlookCallback = async (req: Request, res: Response) => {
     return res.redirect(`${mobileRedirectUrl}?success=true&email=${encodeURIComponent(connection.email)}&provider=outlook`);
 
   } catch (error: any) {
-    console.error('[EmailSync] Outlook callback error:', error);
+    logger.error('[EmailSync] Outlook callback error:', error);
     return res.redirect(`${mobileRedirectUrl}?error=${encodeURIComponent(error.message)}`);
   }
 };
@@ -228,7 +227,7 @@ export const getConnectionStatus = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Error getting status:', error);
+    logger.error('[EmailSync] Error getting status:', error);
     return res.status(500).json({
       error: 'Error al obtener estado',
       message: error.message
@@ -268,7 +267,7 @@ export const triggerSync = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Sync error:', error);
+    logger.error('[EmailSync] Sync error:', error);
     return res.status(500).json({
       error: 'Error en sincronizacion',
       message: error.message
@@ -303,7 +302,7 @@ export const disconnectEmail = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Disconnect error:', error);
+    logger.error('[EmailSync] Disconnect error:', error);
     return res.status(500).json({
       error: 'Error al desconectar',
       message: error.message
@@ -371,7 +370,7 @@ export const getImportHistory = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] History error:', error);
+    logger.error('[EmailSync] History error:', error);
     return res.status(500).json({
       error: 'Error al obtener historial',
       message: error.message
@@ -415,7 +414,7 @@ export const getSyncLogs = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Logs error:', error);
+    logger.error('[EmailSync] Logs error:', error);
     return res.status(500).json({
       error: 'Error al obtener logs',
       message: error.message
@@ -461,7 +460,7 @@ export const getConfiguredBanks = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Banks error:', error);
+    logger.error('[EmailSync] Banks error:', error);
     return res.status(500).json({
       error: 'Error al obtener bancos',
       message: error.message
@@ -510,7 +509,7 @@ export const toggleBankFilter = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Toggle bank error:', error);
+    logger.error('[EmailSync] Toggle bank error:', error);
     return res.status(500).json({
       error: 'Error al actualizar filtro',
       message: error.message
@@ -549,7 +548,7 @@ export const getSupportedBanks = async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[EmailSync] Supported banks error:', error);
+    logger.error('[EmailSync] Supported banks error:', error);
     return res.status(500).json({
       error: 'Error al obtener bancos soportados',
       message: error.message

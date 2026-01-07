@@ -1,12 +1,13 @@
-import { PrismaClient, EmailConnection, EmailSyncStatus } from '@prisma/client';
+import { EmailConnection, EmailSyncStatus } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { ENV } from '../config/env';
 import axios from 'axios';
-
-const prisma = new PrismaClient();
+import { logger } from '../utils/logger';
 
 // Configuracion de Google OAuth
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'https://finzenai-backend-production.up.railway.app/api/email-sync/gmail/callback';
+const GOOGLE_CLIENT_ID = ENV.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = ENV.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REDIRECT_URI = ENV.GOOGLE_REDIRECT_URI;
 
 // Scopes necesarios para leer emails
 const GMAIL_SCOPES = [
@@ -242,7 +243,7 @@ export class GmailService {
     try {
       await axios.post(`https://oauth2.googleapis.com/revoke?token=${accessToken}`);
     } catch (error) {
-      console.error('[GmailService] Error revoking access:', error);
+      logger.error('[GmailService] Error revoking access:', error);
     }
   }
 }

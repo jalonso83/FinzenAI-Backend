@@ -1,10 +1,9 @@
 import { stripe } from '../config/stripe';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import Stripe from 'stripe';
 import { ReferralService } from './referralService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 export class StripeService {
   /**
    * Crear un customer en Stripe
@@ -23,10 +22,10 @@ export class StripeService {
         data: { stripeCustomerId: customer.id },
       });
 
-      console.log(`✅ Stripe customer creado: ${customer.id} para usuario ${userId}`);
+      logger.log(`✅ Stripe customer creado: ${customer.id} para usuario ${userId}`);
       return customer;
     } catch (error) {
-      console.error('Error creando customer en Stripe:', error);
+      logger.error('Error creando customer en Stripe:', error);
       throw new Error('No se pudo crear el customer en Stripe');
     }
   }
@@ -64,10 +63,10 @@ export class StripeService {
       try {
         refereeCoupon = await ReferralService.getRefereeCouponForCheckout(userId);
         if (refereeCoupon) {
-          console.log(`[StripeService] Aplicando cupón de referido ${refereeCoupon} para usuario ${userId}`);
+          logger.log(`[StripeService] Aplicando cupón de referido ${refereeCoupon} para usuario ${userId}`);
         }
       } catch (couponError) {
-        console.error('[StripeService] Error obteniendo cupón de referido:', couponError);
+        logger.error('[StripeService] Error obteniendo cupón de referido:', couponError);
         // Continuar sin cupón si hay error
       }
 
@@ -102,10 +101,10 @@ export class StripeService {
       // Crear sesión de checkout
       const session = await stripe.checkout.sessions.create(sessionConfig);
 
-      console.log(`✅ Checkout session creada: ${session.id} para usuario ${userId}`);
+      logger.log(`✅ Checkout session creada: ${session.id} para usuario ${userId}`);
       return session;
     } catch (error) {
-      console.error('Error creando checkout session:', error);
+      logger.error('Error creando checkout session:', error);
       throw new Error('No se pudo crear la sesión de pago');
     }
   }
@@ -119,10 +118,10 @@ export class StripeService {
         cancel_at_period_end: true,
       });
 
-      console.log(`✅ Suscripción marcada para cancelación: ${subscriptionId}`);
+      logger.log(`✅ Suscripción marcada para cancelación: ${subscriptionId}`);
       return subscription;
     } catch (error) {
-      console.error('Error cancelando suscripción:', error);
+      logger.error('Error cancelando suscripción:', error);
       throw new Error('No se pudo cancelar la suscripción');
     }
   }
@@ -136,10 +135,10 @@ export class StripeService {
         cancel_at_period_end: false,
       });
 
-      console.log(`✅ Suscripción reactivada: ${subscriptionId}`);
+      logger.log(`✅ Suscripción reactivada: ${subscriptionId}`);
       return subscription;
     } catch (error) {
-      console.error('Error reactivando suscripción:', error);
+      logger.error('Error reactivando suscripción:', error);
       throw new Error('No se pudo reactivar la suscripción');
     }
   }
@@ -151,10 +150,10 @@ export class StripeService {
     try {
       const subscription = await stripe.subscriptions.cancel(subscriptionId);
 
-      console.log(`✅ Suscripción cancelada inmediatamente: ${subscriptionId}`);
+      logger.log(`✅ Suscripción cancelada inmediatamente: ${subscriptionId}`);
       return subscription;
     } catch (error) {
-      console.error('Error cancelando suscripción inmediatamente:', error);
+      logger.error('Error cancelando suscripción inmediatamente:', error);
       throw new Error('No se pudo cancelar la suscripción');
     }
   }
@@ -172,10 +171,10 @@ export class StripeService {
         return_url: returnUrl,
       });
 
-      console.log(`✅ Portal de cliente creado para: ${customerId}`);
+      logger.log(`✅ Portal de cliente creado para: ${customerId}`);
       return session;
     } catch (error) {
-      console.error('Error creando portal de cliente:', error);
+      logger.error('Error creando portal de cliente:', error);
       throw new Error('No se pudo crear el portal de cliente');
     }
   }
@@ -188,7 +187,7 @@ export class StripeService {
       const subscription = await stripe.subscriptions.retrieve(subscriptionId);
       return subscription;
     } catch (error) {
-      console.error('Error obteniendo detalles de suscripción:', error);
+      logger.error('Error obteniendo detalles de suscripción:', error);
       throw new Error('No se pudo obtener la suscripción');
     }
   }
@@ -211,10 +210,10 @@ export class StripeService {
         proration_behavior: 'create_prorations', // Prorratear el cambio
       });
 
-      console.log(`✅ Plan de suscripción cambiado: ${subscriptionId}`);
+      logger.log(`✅ Plan de suscripción cambiado: ${subscriptionId}`);
       return updatedSubscription;
     } catch (error) {
-      console.error('Error cambiando plan de suscripción:', error);
+      logger.error('Error cambiando plan de suscripción:', error);
       throw new Error('No se pudo cambiar el plan');
     }
   }
@@ -231,7 +230,7 @@ export class StripeService {
 
       return invoices.data;
     } catch (error) {
-      console.error('Error obteniendo facturas:', error);
+      logger.error('Error obteniendo facturas:', error);
       throw new Error('No se pudieron obtener las facturas');
     }
   }

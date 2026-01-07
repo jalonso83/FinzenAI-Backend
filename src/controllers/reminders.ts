@@ -4,6 +4,7 @@ import { PaymentType } from '@prisma/client';
 import { subscriptionService } from '../services/subscriptionService';
 import { PLANS } from '../config/stripe';
 
+import { logger } from '../utils/logger';
 // Extender Request para incluir usuario autenticado
 interface AuthRequest extends Request {
   user?: { id: string; email: string };
@@ -39,7 +40,7 @@ export const getReminders = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error getting reminders:', error);
+    logger.error('[RemindersController] Error getting reminders:', error);
     return res.status(500).json({
       error: 'Error interno',
       message: error.message
@@ -78,7 +79,7 @@ export const getReminderById = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error getting reminder:', error);
+    logger.error('[RemindersController] Error getting reminder:', error);
     return res.status(500).json({
       error: 'Error interno',
       message: error.message
@@ -162,7 +163,7 @@ export const createReminder = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error creating reminder:', error);
+    logger.error('[RemindersController] Error creating reminder:', error);
     return res.status(400).json({
       error: 'Error al crear recordatorio',
       message: error.message
@@ -218,7 +219,7 @@ export const updateReminder = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error updating reminder:', error);
+    logger.error('[RemindersController] Error updating reminder:', error);
 
     if (error.message === 'Recordatorio no encontrado') {
       return res.status(404).json({
@@ -254,7 +255,7 @@ export const deleteReminder = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error deleting reminder:', error);
+    logger.error('[RemindersController] Error deleting reminder:', error);
 
     if (error.message === 'Recordatorio no encontrado') {
       return res.status(404).json({
@@ -299,7 +300,7 @@ export const getUpcomingPayments = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error getting upcoming payments:', error);
+    logger.error('[RemindersController] Error getting upcoming payments:', error);
     return res.status(500).json({
       error: 'Error interno',
       message: error.message
@@ -326,7 +327,7 @@ export const getReminderStats = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error getting reminder stats:', error);
+    logger.error('[RemindersController] Error getting reminder stats:', error);
     return res.status(500).json({
       error: 'Error interno',
       message: error.message
@@ -352,7 +353,7 @@ export const getPaymentTypes = async (_req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error getting payment types:', error);
+    logger.error('[RemindersController] Error getting payment types:', error);
     return res.status(500).json({
       error: 'Error interno',
       message: error.message
@@ -417,7 +418,7 @@ export const toggleReminder = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('[RemindersController] Error toggling reminder:', error);
+    logger.error('[RemindersController] Error toggling reminder:', error);
 
     if (error.message === 'Recordatorio no encontrado') {
       return res.status(404).json({

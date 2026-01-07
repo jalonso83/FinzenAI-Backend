@@ -1,7 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 export interface GamificationEventData {
   userId: string;
   eventType: string;
@@ -35,7 +34,7 @@ export class GamificationService {
       // Procesar el evento según su tipo
       await this.processEvent(event);
     } catch (error) {
-      console.error('[Gamification] Error al despachar evento:', error);
+      logger.error('[Gamification] Error al despachar evento:', error);
       throw error;
     }
   }
@@ -103,7 +102,7 @@ export class GamificationService {
       await this.updateUserStreak(event.userId, event.eventType);
       
     } catch (error) {
-      console.error(`[Gamification] Error procesando evento ${event.eventType}:`, error);
+      logger.error(`[Gamification] Error procesando evento ${event.eventType}:`, error);
     }
   }
 
@@ -300,7 +299,7 @@ export class GamificationService {
         });
       }
     } catch (error) {
-      console.error('[Gamification] Error otorgando puntos:', error);
+      logger.error('[Gamification] Error otorgando puntos:', error);
     }
   }
 
@@ -323,7 +322,7 @@ export class GamificationService {
 
       return totalScore;
     } catch (error) {
-      console.error('[Gamification] Error calculando FinScore:', error);
+      logger.error('[Gamification] Error calculando FinScore:', error);
       return 0;
     }
   }
@@ -386,7 +385,7 @@ export class GamificationService {
 
       return { savings, budget, streak, debt, activity };
     } catch (error) {
-      console.error('[Gamification] Error en desglose FinScore:', error);
+      logger.error('[Gamification] Error en desglose FinScore:', error);
       return { savings: 0, budget: 0, streak: 0, debt: 0, activity: 0 };
     }
   }
@@ -503,7 +502,7 @@ export class GamificationService {
         }
       }
     } catch (error) {
-      console.error('[Gamification] Error verificando badges:', error);
+      logger.error('[Gamification] Error verificando badges:', error);
     }
   }
 
@@ -644,7 +643,7 @@ export class GamificationService {
       // Otorgar puntos bonus por el badge
       await this.awardPoints(userId, 50, `Badge desbloqueado: ${badgeId}`);
     } catch (error) {
-      console.error(`[Gamification] Error otorgando badge ${badgeId}:`, error);
+      logger.error(`[Gamification] Error otorgando badge ${badgeId}:`, error);
     }
   }
 
@@ -714,7 +713,7 @@ export class GamificationService {
         });
       }
     } catch (error) {
-      console.error('[Gamification] Error actualizando racha:', error);
+      logger.error('[Gamification] Error actualizando racha:', error);
     }
   }
 
@@ -737,7 +736,7 @@ export class GamificationService {
         breakdown: latestScore.breakdown as any as FinScoreBreakdown
       };
     } catch (error) {
-      console.error('[Gamification] Error obteniendo FinScore:', error);
+      logger.error('[Gamification] Error obteniendo FinScore:', error);
       return { score: 0, breakdown: { savings: 0, budget: 0, streak: 0, debt: 0, activity: 0 } };
     }
   }
@@ -749,7 +748,7 @@ export class GamificationService {
         orderBy: { earnedAt: 'desc' }
       });
     } catch (error) {
-      console.error('[Gamification] Error obteniendo badges:', error);
+      logger.error('[Gamification] Error obteniendo badges:', error);
       return [];
     }
   }
@@ -799,7 +798,7 @@ export class GamificationService {
         isActive
       };
     } catch (error) {
-      console.error('[Gamification] Error obteniendo racha:', error);
+      logger.error('[Gamification] Error obteniendo racha:', error);
       return null;
     }
   }

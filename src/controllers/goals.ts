@@ -1,10 +1,9 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { subscriptionService } from '../services/subscriptionService';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Obtener todas las metas del usuario
 export const getUserGoals = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -37,7 +36,7 @@ export const getUserGoals = async (req: Request, res: Response): Promise<void> =
 
     res.json(goals);
   } catch (error) {
-    console.error('Error al obtener metas:', error);
+    logger.error('Error al obtener metas:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 };
@@ -77,7 +76,7 @@ export const getGoalById = async (req: Request, res: Response): Promise<void> =>
 
     res.json(goal);
   } catch (error) {
-    console.error('Error al obtener meta:', error);
+    logger.error('Error al obtener meta:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 };
@@ -194,13 +193,13 @@ export const createGoal = async (req: Request, res: Response): Promise<void> => 
         pointsAwarded: 15
       });
     } catch (error) {
-      console.error('Error dispatching gamification event:', error);
+      logger.error('Error dispatching gamification event:', error);
       // No fallar la creación de la meta por error de gamificación
     }
 
     res.status(201).json(goal);
   } catch (error) {
-    console.error('Error al crear meta:', error);
+    logger.error('Error al crear meta:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 };
@@ -284,7 +283,7 @@ export const updateGoal = async (req: Request, res: Response): Promise<void> => 
 
     res.json(updatedGoal);
   } catch (error) {
-    console.error('Error al actualizar meta:', error);
+    logger.error('Error al actualizar meta:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 };
@@ -330,13 +329,13 @@ export const deleteGoal = async (req: Request, res: Response): Promise<void> => 
         pointsAwarded: -15 // Restar 15 puntos
       });
     } catch (error) {
-      console.error('Error dispatching gamification event for delete:', error);
+      logger.error('Error dispatching gamification event for delete:', error);
       // No fallar la eliminación por error de gamificación
     }
 
     res.json({ message: 'Meta eliminada exitosamente' });
   } catch (error) {
-    console.error('Error al eliminar meta:', error);
+    logger.error('Error al eliminar meta:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 };
@@ -399,7 +398,7 @@ export const addContribution = async (req: Request, res: Response): Promise<void
 
     res.json(updatedGoal);
   } catch (error) {
-    console.error('Error al agregar contribución:', error);
+    logger.error('Error al agregar contribución:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 }; 

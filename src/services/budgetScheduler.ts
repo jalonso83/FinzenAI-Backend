@@ -1,6 +1,7 @@
 import * as cron from 'node-cron';
 import { BudgetRenewalService } from './budgetRenewalService';
 
+import { logger } from '../utils/logger';
 export class BudgetScheduler {
   private static isRunning: boolean = false;
   private static cronTask: cron.ScheduledTask | null = null;
@@ -11,36 +12,36 @@ export class BudgetScheduler {
    */
   static startScheduler(): void {
     if (this.isRunning) {
-      console.log('[BudgetScheduler] Scheduler ya está ejecutándose');
+      logger.log('[BudgetScheduler] Scheduler ya está ejecutándose');
       return;
     }
 
-    console.log('[BudgetScheduler] 🕐 Iniciando scheduler de renovación de presupuestos...');
-    console.log('[BudgetScheduler] 📅 Se ejecutará diariamente a la 1:00 AM UTC');
+    logger.log('[BudgetScheduler] 🕐 Iniciando scheduler de renovación de presupuestos...');
+    logger.log('[BudgetScheduler] 📅 Se ejecutará diariamente a la 1:00 AM UTC');
 
     // Ejecutar todos los días a la 1 AM UTC
     // Esto asegura que se chequeen presupuestos en todas las zonas horarias
     this.cronTask = cron.schedule('0 1 * * *', async () => {
-      console.log('[BudgetScheduler] 🔄 Ejecutando renovación de presupuestos...');
+      logger.log('[BudgetScheduler] 🔄 Ejecutando renovación de presupuestos...');
       
       try {
         await BudgetRenewalService.renewExpiredBudgets();
       } catch (error) {
-        console.error('[BudgetScheduler] ❌ Error en ejecución del scheduler:', error);
+        logger.error('[BudgetScheduler] ❌ Error en ejecución del scheduler:', error);
       }
     });
 
     this.isRunning = true;
-    console.log('[BudgetScheduler] ✅ Scheduler iniciado correctamente');
+    logger.log('[BudgetScheduler] ✅ Scheduler iniciado correctamente');
 
     // Opcional: Ejecutar una vez al inicio para testing/desarrollo
     if (process.env.NODE_ENV === 'development') {
-      console.log('[BudgetScheduler] 🧪 Ejecutando renovación inicial (desarrollo)...');
+      logger.log('[BudgetScheduler] 🧪 Ejecutando renovación inicial (desarrollo)...');
       setTimeout(async () => {
         try {
           await BudgetRenewalService.renewExpiredBudgets();
         } catch (error) {
-          console.error('[BudgetScheduler] ❌ Error en renovación inicial:', error);
+          logger.error('[BudgetScheduler] ❌ Error en renovación inicial:', error);
         }
       }, 5000); // Esperar 5 segundos después del inicio
     }
@@ -51,27 +52,27 @@ export class BudgetScheduler {
    */
   static stopScheduler(): void {
     if (!this.isRunning || !this.cronTask) {
-      console.log('[BudgetScheduler] Scheduler no está ejecutándose');
+      logger.log('[BudgetScheduler] Scheduler no está ejecutándose');
       return;
     }
 
     this.cronTask.stop();
     this.cronTask = null;
     this.isRunning = false;
-    console.log('[BudgetScheduler] ⏹️ Scheduler detenido');
+    logger.log('[BudgetScheduler] ⏹️ Scheduler detenido');
   }
 
   /**
    * Ejecuta manualmente la renovación (útil para testing)
    */
   static async runManual(): Promise<void> {
-    console.log('[BudgetScheduler] 🔧 Ejecutando renovación manual...');
+    logger.log('[BudgetScheduler] 🔧 Ejecutando renovación manual...');
     
     try {
       await BudgetRenewalService.renewExpiredBudgets();
-      console.log('[BudgetScheduler] ✅ Renovación manual completada');
+      logger.log('[BudgetScheduler] ✅ Renovación manual completada');
     } catch (error) {
-      console.error('[BudgetScheduler] ❌ Error en renovación manual:', error);
+      logger.error('[BudgetScheduler] ❌ Error en renovación manual:', error);
       throw error;
     }
   }

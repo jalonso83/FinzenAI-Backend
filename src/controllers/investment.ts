@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 
+import { logger } from '../utils/logger';
 // Tipos para el simulador de inversión
 interface InvestmentCalculationRequest {
   monthlyAmount: number;
@@ -205,13 +206,13 @@ export const calculateInvestment = async (req: Request, res: Response) => {
       riskProfile
     };
 
-    console.log(`[Investment Calculator] Calculated for RD$${monthlyAmount}/month over ${years} years at ${annualInterestRate}%`);
-    console.log(`[Investment Calculator] Result: RD$${finalAmount.toLocaleString()} (contributed: RD$${totalContributed.toLocaleString()}, interest: RD$${totalInterest.toLocaleString()})`);
+    logger.log(`[Investment Calculator] Calculated for RD$${monthlyAmount}/month over ${years} years at ${annualInterestRate}%`);
+    logger.log(`[Investment Calculator] Result: RD$${finalAmount.toLocaleString()} (contributed: RD$${totalContributed.toLocaleString()}, interest: RD$${totalInterest.toLocaleString()})`);
 
     return res.json(result);
 
   } catch (error) {
-    console.error('Error in investment calculation:', error);
+    logger.error('Error in investment calculation:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor al calcular la inversión' 
     });
@@ -223,7 +224,7 @@ export const getRiskProfiles = async (req: Request, res: Response) => {
   try {
     return res.json(riskProfiles);
   } catch (error) {
-    console.error('Error getting risk profiles:', error);
+    logger.error('Error getting risk profiles:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor' 
     });
@@ -240,7 +241,7 @@ export const getEquivalencyExamples = async (req: Request, res: Response) => {
     
     return res.json(examples);
   } catch (error) {
-    console.error('Error getting equivalency examples:', error);
+    logger.error('Error getting equivalency examples:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor' 
     });
@@ -438,13 +439,13 @@ export const calculateGoal = async (req: Request, res: Response) => {
       description: `${config.icon} ${config.name} - ${percentage}% del valor total`
     };
 
-    console.log(`[Goal Calculator] Calculated goal: ${config.name} RD$${goalAmount.toLocaleString()} in ${timeframe} months`);
-    console.log(`[Goal Calculator] Monthly required: Simple RD$${simpleSavings.monthlySavings.toFixed(0)} | Investment RD$${investmentSavings.monthlySavings.toFixed(0)}`);
+    logger.log(`[Goal Calculator] Calculated goal: ${config.name} RD$${goalAmount.toLocaleString()} in ${timeframe} months`);
+    logger.log(`[Goal Calculator] Monthly required: Simple RD$${simpleSavings.monthlySavings.toFixed(0)} | Investment RD$${investmentSavings.monthlySavings.toFixed(0)}`);
 
     return res.json(result);
 
   } catch (error) {
-    console.error('Error in goal calculation:', error);
+    logger.error('Error in goal calculation:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor al calcular la meta' 
     });
@@ -456,7 +457,7 @@ export const getGoalTypes = async (req: Request, res: Response) => {
   try {
     return res.json(goalConfigurations);
   } catch (error) {
-    console.error('Error getting goal types:', error);
+    logger.error('Error getting goal types:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor' 
     });
@@ -667,13 +668,13 @@ export const calculateSkipVsSave = async (req: Request, res: Response) => {
       }
     };
 
-    console.log(`[Skip vs Save] Challenge: RD$${dailyExpense} ${frequency} for ${timeframe} months`);
-    console.log(`[Skip vs Save] Results: Spent RD$${calculations.totalSpent.toLocaleString()} | Saved RD$${calculations.totalSaved.toLocaleString()} | Invested RD$${calculations.totalInvested.toLocaleString()}`);
+    logger.log(`[Skip vs Save] Challenge: RD$${dailyExpense} ${frequency} for ${timeframe} months`);
+    logger.log(`[Skip vs Save] Results: Spent RD$${calculations.totalSpent.toLocaleString()} | Saved RD$${calculations.totalSaved.toLocaleString()} | Invested RD$${calculations.totalInvested.toLocaleString()}`);
 
     return res.json(result);
 
   } catch (error) {
-    console.error('Error in skip vs save calculation:', error);
+    logger.error('Error in skip vs save calculation:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor al calcular el reto' 
     });
@@ -685,7 +686,7 @@ export const getCommonExpenses = async (req: Request, res: Response) => {
   try {
     return res.json(skipVsSaveExpenses);
   } catch (error) {
-    console.error('Error getting common expenses:', error);
+    logger.error('Error getting common expenses:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor' 
     });
@@ -820,13 +821,13 @@ export const calculateInflation = async (req: Request, res: Response) => {
       impactMessage
     };
 
-    console.log(`[Inflation Calculator] RD$${currentAmount} over ${years} years at ${inflationRate}% inflation`);
-    console.log(`[Inflation Calculator] Real value: RD$${result.realValue.toLocaleString()} (lost: RD$${result.lostValue.toLocaleString()})`);
+    logger.log(`[Inflation Calculator] RD$${currentAmount} over ${years} years at ${inflationRate}% inflation`);
+    logger.log(`[Inflation Calculator] Real value: RD$${result.realValue.toLocaleString()} (lost: RD$${result.lostValue.toLocaleString()})`);
 
     return res.json(result);
 
   } catch (error) {
-    console.error('Error in inflation calculation:', error);
+    logger.error('Error in inflation calculation:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor al calcular la inflación' 
     });
@@ -838,7 +839,7 @@ export const getCurrentPrices = async (req: Request, res: Response) => {
   try {
     return res.json(currentPricesDR);
   } catch (error) {
-    console.error('Error getting current prices:', error);
+    logger.error('Error getting current prices:', error);
     return res.status(500).json({ 
       error: 'Error interno del servidor' 
     });

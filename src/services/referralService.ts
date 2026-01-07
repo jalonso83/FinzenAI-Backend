@@ -1,10 +1,10 @@
-import { PrismaClient, ReferralStatus, RewardStatus, RewardType } from '@prisma/client';
+import { ReferralStatus, RewardStatus, RewardType } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { stripe } from '../config/stripe';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
 import Stripe from 'stripe';
 
-const prisma = new PrismaClient();
-
+import { logger } from '../utils/logger';
 // Tipos para respuestas
 interface FraudCheckResult {
   suspicious: boolean;
@@ -100,7 +100,7 @@ export class ReferralService {
       }
     });
 
-    console.log(`[ReferralService] Código generado: ${code} para usuario ${userId}`);
+    logger.log(`[ReferralService] Código generado: ${code} para usuario ${userId}`);
     return code!;
   }
 
@@ -196,7 +196,7 @@ export class ReferralService {
     if (REFERRAL_CONFIG.FRAUD_CHECK_ENABLED) {
       const fraudCheck = await this.checkFraudIndicators(codeInfo.referrerId!, refereeEmail);
       if (fraudCheck.suspicious) {
-        console.warn(`[ReferralService] Referido sospechoso detectado: ${fraudCheck.reasons.join(', ')}`);
+        logger.warn(`[ReferralService] Referido sospechoso detectado: ${fraudCheck.reasons.join(', ')}`);
         return { success: false, reason: 'SUSPICIOUS_REFERRAL' };
       }
     }
@@ -239,7 +239,7 @@ export class ReferralService {
       data: { usageCount: { increment: 1 } }
     });
 
-    console.log(`[ReferralService] Referido aplicado: ${refereeId} referido por ${codeInfo.referrerId}`);
+    logger.log(`[ReferralService] Referido aplicado: ${refereeId} referido por ${codeInfo.referrerId}`);
 
     return {
       success: true,
@@ -270,7 +270,7 @@ export class ReferralService {
           }
         });
 
-        console.log(`[ReferralService] Cupón creado en Stripe: ${couponId}`);
+        logger.log(`[ReferralService] Cupón creado en Stripe: ${couponId}`);
         return couponId;
       }
       throw error;
@@ -361,7 +361,7 @@ export class ReferralService {
       }
     });
 
-    console.log(`[ReferralService] Conversión procesada: referee ${refereeId}, referrer ${referral.referrerId}`);
+    logger.log(`[ReferralService] Conversión procesada: referee ${refereeId}, referrer ${referral.referrerId}`);
   }
 
   /**
@@ -393,7 +393,7 @@ export class ReferralService {
     });
 
     if (!subscription || !subscription.stripeSubscriptionId) {
-      console.log(`[ReferralService] Referidor ${referrerId} no tiene suscripción activa - recompensa guardada para después`);
+      logger.log(`[ReferralService] Referidor ${referrerId} no tiene suscripción activa - recompensa guardada para después`);
       return;
     }
 
@@ -428,10 +428,10 @@ export class ReferralService {
           }
         });
 
-        console.log(`[ReferralService] Crédito de ${creditAmount / 100} ${currentPrice.currency} aplicado a ${referrerId}`);
+        logger.log(`[ReferralService] Crédito de ${creditAmount / 100} ${currentPrice.currency} aplicado a ${referrerId}`);
       }
     } catch (error) {
-      console.error(`[ReferralService] Error aplicando crédito a referidor:`, error);
+      logger.error(`[ReferralService] Error aplicando crédito a referidor:`, error);
       // La recompensa queda pendiente para aplicar manualmente o en siguiente intento
     }
   }
@@ -563,7 +563,7 @@ export class ReferralService {
     });
 
     if (result.count > 0) {
-      console.log(`[ReferralService] ${result.count} referidos expirados`);
+      logger.log(`[ReferralService] ${result.count} referidos expirados`);
     }
 
     return { expired: result.count };
