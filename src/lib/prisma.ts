@@ -23,10 +23,12 @@ declare global {
 }
 
 // Configuracion de logging segun el entorno
+const logLevel = process.env.NODE_ENV === 'development'
+  ? ['error', 'warn']
+  : ['error'];
+
 const prismaClientOptions = {
-  log: process.env.NODE_ENV === 'development'
-    ? ['error', 'warn'] as const
-    : ['error'] as const,
+  log: logLevel as ('error' | 'warn')[],
 };
 
 /**
