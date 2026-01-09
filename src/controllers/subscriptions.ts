@@ -83,17 +83,15 @@ export const getSubscription = async (req: Request, res: Response) => {
  */
 export const getPlans = async (req: Request, res: Response) => {
   try {
-    // Excluir PREMIUM del response (es un alias de PLUS)
-    const plans = Object.entries(PLANS)
-      .filter(([key]) => key !== 'PREMIUM')
-      .map(([key, value]) => ({
-        id: key,
-        name: value.name,
-        price: value.price,
-        savings: (value as any).savings || null,
-        limits: value.limits,
-        features: value.features,
-      }));
+    // Retornar todos los planes: FREE, PREMIUM (Plus), PRO
+    const plans = Object.entries(PLANS).map(([key, value]) => ({
+      id: key,
+      name: value.name,
+      price: value.price, // { monthly: number, yearly: number }
+      savings: (value as any).savings || null,
+      limits: value.limits,
+      features: value.features,
+    }));
 
     res.json({ plans });
   } catch (error: any) {
