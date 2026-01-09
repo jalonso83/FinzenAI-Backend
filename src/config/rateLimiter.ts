@@ -5,20 +5,14 @@ import { logger } from '../utils/logger';
 /**
  * Rate Limiting Configuration
  * Protege contra ataques de fuerza bruta, spam y abuso de recursos
+ *
+ * NOTA: Usamos validate: false para IPv6 ya que Railway/proxy maneja
+ * las IPs correctamente con trust proxy habilitado en Express.
  */
-
-// Helper para obtener IP real detrás de proxy (Railway, Cloudflare, etc.)
-const getClientIp = (req: Request): string => {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
-  }
-  return req.ip || req.socket.remoteAddress || 'unknown';
-};
 
 // Handler personalizado cuando se excede el límite
 const rateLimitHandler = (req: Request, res: Response) => {
-  logger.warn(`[RateLimit] IP bloqueada: ${getClientIp(req)} en ${req.path}`);
+  logger.warn(`[RateLimit] IP bloqueada: ${req.ip} en ${req.path}`);
   return res.status(429).json({
     error: 'Too Many Requests',
     message: 'Demasiadas solicitudes. Por favor, intenta más tarde.',
@@ -44,7 +38,6 @@ export const loginLimiter = rateLimit({
   standardHeaders: true, // Incluye `RateLimit-*` headers
   legacyHeaders: false, // Deshabilita `X-RateLimit-*` headers antiguos
   handler: rateLimitHandler,
-  keyGenerator: getClientIp,
   skipFailedRequests: false, // Cuenta todos los intentos, exitosos o no
 });
 
@@ -62,7 +55,6 @@ export const registerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: getClientIp,
 });
 
 /**
@@ -79,7 +71,6 @@ export const passwordResetLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: getClientIp,
 });
 
 /**
@@ -96,7 +87,6 @@ export const emailVerificationLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: getClientIp,
 });
 
 /**
@@ -113,7 +103,6 @@ export const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: getClientIp,
   skip: (req: Request) => {
     // Skip para health checks
     return req.path === '/health' || req.path === '/api/health';
@@ -134,7 +123,6 @@ export const strictApiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: getClientIp,
 });
 
 /**
@@ -151,5 +139,4 @@ export const webhookLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: getClientIp,
 });
