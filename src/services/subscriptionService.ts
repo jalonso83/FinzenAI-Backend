@@ -18,7 +18,24 @@ export class SubscriptionService {
         subscription = await this.createFreeSubscription(userId);
       }
 
-      const plan = subscription.plan as PlanType;
+      let plan = subscription.plan as PlanType;
+
+      // Verificar que el plan existe en PLANS, si no, usar FREE
+      if (!PLANS[plan]) {
+        logger.warn(`Plan inválido detectado: ${plan} para usuario ${userId}. Reseteando a FREE.`);
+        // Auto-reparar: actualizar a FREE en la BD
+        subscription = await prisma.subscription.update({
+          where: { userId },
+          data: {
+            plan: 'FREE',
+            status: 'ACTIVE',
+            stripeSubscriptionId: null,
+            stripePriceId: null,
+          },
+        });
+        plan = 'FREE' as PlanType;
+      }
+
       const limits = PLANS[plan].limits;
       const features = PLANS[plan].features;
 
