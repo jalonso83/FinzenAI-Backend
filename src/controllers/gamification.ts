@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { GamificationService } from '../services/gamificationService';
 import { prisma } from '../lib/prisma';
+import { sanitizeLimit, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
 export class GamificationController {
@@ -49,12 +50,14 @@ export class GamificationController {
         return;
       }
 
-      const { limit = 30 } = req.query;
+      const { limit } = req.query;
+      // Sanitizar límite máximo de 50
+      const limitNum = sanitizeLimit(limit as string, PAGINATION.MAX_LIMITS.GAMIFICATION, 30);
 
       const history = await prisma.finScoreHistory.findMany({
         where: { userId },
         orderBy: { calculatedAt: 'desc' },
-        take: parseInt(limit as string)
+        take: limitNum
       });
 
       res.json({
@@ -315,7 +318,9 @@ export class GamificationController {
   // Obtener rankings globales
   static async getLeaderboard(req: Request, res: Response): Promise<void> {
     try {
-      const { type = 'finscore', limit = 10 } = req.query;
+      const { type = 'finscore', limit } = req.query;
+      // Sanitizar límite máximo de 50
+      const limitNum = sanitizeLimit(limit as string, PAGINATION.MAX_LIMITS.GAMIFICATION, 10);
 
       let leaderboard;
 
@@ -338,7 +343,7 @@ export class GamificationController {
               { calculatedAt: 'desc' }
             ],
             distinct: ['userId'],
-            take: parseInt(limit as string)
+            take: limitNum
           });
           break;
 
@@ -356,7 +361,7 @@ export class GamificationController {
               }
             },
             orderBy: { currentStreak: 'desc' },
-            take: parseInt(limit as string)
+            take: limitNum
           });
           break;
 
@@ -365,7 +370,7 @@ export class GamificationController {
             by: ['userId'],
             _sum: { pointsAwarded: true },
             orderBy: { _sum: { pointsAwarded: 'desc' } },
-            take: parseInt(limit as string)
+            take: limitNum
           });
 
           // Obtener información de usuarios

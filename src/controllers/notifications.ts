@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { DevicePlatform } from '@prisma/client';
 import NotificationService from '../services/notificationService';
+import { sanitizeLimit, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
 interface AuthRequest extends Request {
@@ -242,8 +243,9 @@ export const getNotificationHistory = async (req: AuthRequest, res: Response) =>
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const limit = parseInt(req.query.limit as string) || 50;
-    const notifications = await NotificationService.getNotificationHistory(userId, Math.min(limit, 100));
+    // Sanitizar límite máximo de 100
+    const limitNum = sanitizeLimit(req.query.limit as string, PAGINATION.MAX_LIMITS.NOTIFICATIONS, 50);
+    const notifications = await NotificationService.getNotificationHistory(userId, limitNum);
 
     return res.status(200).json({
       notifications: notifications.map(n => ({

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { stripeService } from '../services/stripeService';
 import { subscriptionService } from '../services/subscriptionService';
 import { PLANS, PlanType, BillingPeriod, getPriceId, getPlanFromPriceId, stripe } from '../config/stripe';
+import { sanitizeLimit, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
 /**
@@ -271,9 +272,10 @@ export const changePlan = async (req: Request, res: Response) => {
 export const getPaymentHistory = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user!.id;
-    const limit = parseInt(req.query.limit as string) || 10;
+    // Sanitizar límite máximo de 20
+    const limitNum = sanitizeLimit(req.query.limit as string, PAGINATION.MAX_LIMITS.SUBSCRIPTIONS, 10);
 
-    const payments = await subscriptionService.getPaymentHistory(userId, limit);
+    const payments = await subscriptionService.getPaymentHistory(userId, limitNum);
 
     res.json({ payments });
   } catch (error: any) {

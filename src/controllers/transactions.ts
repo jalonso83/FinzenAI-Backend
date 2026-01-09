@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { NotificationService } from '../services/notificationService';
 import { merchantMappingService } from '../services/merchantMappingService';
+import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
 // Función inteligente para analizar y disparar eventos de gamificación
@@ -369,10 +370,11 @@ interface UpdateTransactionRequest {
 export const getTransactions = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { page = '1', limit = '10', type, category_id, startDate, endDate } = req.query;
+    const { page, limit, type, category_id, startDate, endDate } = req.query;
 
-    const pageNum = parseInt(page as string);
-    const limitNum = parseInt(limit as string);
+    // Sanitizar paginación con límite máximo de 100
+    const pageNum = sanitizePage(page as string);
+    const limitNum = sanitizeLimit(limit as string, PAGINATION.MAX_LIMITS.TRANSACTIONS);
     const skip = (pageNum - 1) * limitNum;
 
     // Construir filtros

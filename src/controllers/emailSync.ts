@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { GmailService } from '../services/gmailService';
 import { OutlookService } from '../services/outlookService';
 import { EmailSyncService } from '../services/emailSyncService';
+import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
 /**
@@ -317,7 +318,11 @@ export const disconnectEmail = async (req: Request, res: Response) => {
 export const getImportHistory = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { page = 1, limit = 20, status } = req.query;
+    const { page, limit, status } = req.query;
+
+    // Sanitizar paginación con límite máximo de 50
+    const pageNum = sanitizePage(page as string);
+    const limitNum = sanitizeLimit(limit as string, PAGINATION.MAX_LIMITS.EMAIL_SYNC, 20);
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
@@ -344,8 +349,8 @@ export const getImportHistory = async (req: Request, res: Response) => {
       prisma.importedBankEmail.findMany({
         where,
         orderBy: { receivedAt: 'desc' },
-        skip: (Number(page) - 1) * Number(limit),
-        take: Number(limit),
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
         select: {
           id: true,
           subject: true,
@@ -385,7 +390,10 @@ export const getImportHistory = async (req: Request, res: Response) => {
 export const getSyncLogs = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { limit = 10 } = req.query;
+    const { limit } = req.query;
+
+    // Sanitizar límite máximo de 50
+    const limitNum = sanitizeLimit(limit as string, PAGINATION.MAX_LIMITS.EMAIL_SYNC, 10);
 
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
@@ -405,7 +413,7 @@ export const getSyncLogs = async (req: Request, res: Response) => {
     const logs = await prisma.emailSyncLog.findMany({
       where: { emailConnectionId: connection.id },
       orderBy: { startedAt: 'desc' },
-      take: Number(limit)
+      take: limitNum
     });
 
     return res.json({

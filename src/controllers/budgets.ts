@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
+import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
 // Tipos para las peticiones
@@ -28,10 +29,11 @@ interface UpdateBudgetRequest {
 export const getBudgets = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { page = '1', limit = '10', is_active, category_id } = req.query;
+    const { page, limit, is_active, category_id } = req.query;
 
-    const pageNum = parseInt(page as string);
-    const limitNum = parseInt(limit as string);
+    // Sanitizar paginación con límite máximo de 50
+    const pageNum = sanitizePage(page as string);
+    const limitNum = sanitizeLimit(limit as string, PAGINATION.MAX_LIMITS.BUDGETS);
     const skip = (pageNum - 1) * limitNum;
 
     // Construir filtros
