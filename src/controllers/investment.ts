@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { getReferencePrices, forceUpdatePrices, initializeDefaultPrices } from '../services/referencePriceService';
 
 import { logger } from '../utils/logger';
 // Tipos para el simulador de inversión
@@ -292,10 +293,10 @@ const goalConfigurations = {
       { value: 100, label: "100% (al contado)", description: "Sin financiamiento" }
     ],
     suggestions: [
-      { amount: 800000, description: "Apartamento zona popular" },
-      { amount: 1500000, description: "Apartamento clase media" },
-      { amount: 3000000, description: "Casa en Santiago" },
-      { amount: 5000000, description: "Casa zona residencial" }
+      { amount: 3500000, description: "Apartamento económico (Sto. Dgo. Norte)" },
+      { amount: 5500000, description: "Apartamento clase media (Sto. Dgo. Este)" },
+      { amount: 7000000, description: "Casa en Santiago" },
+      { amount: 10000000, description: "Apartamento Distrito Nacional" }
     ]
   },
   vehicle: {
@@ -308,10 +309,10 @@ const goalConfigurations = {
       { value: 100, label: "100% al contado", description: "Sin intereses" }
     ],
     suggestions: [
-      { amount: 400000, description: "Carro usado en buen estado" },
-      { amount: 800000, description: "Carro nuevo económico" },
-      { amount: 1200000, description: "SUV nuevo" },
-      { amount: 2000000, description: "Vehículo premium" }
+      { amount: 480000, description: "Carro usado en buen estado" },
+      { amount: 960000, description: "Carro nuevo económico" },
+      { amount: 1440000, description: "SUV nuevo" },
+      { amount: 2400000, description: "Vehículo premium" }
     ]
   },
   business: {
@@ -323,10 +324,10 @@ const goalConfigurations = {
       { value: 100, label: "100% del capital", description: "Capital completo propio" }
     ],
     suggestions: [
-      { amount: 200000, description: "Negocio pequeño (colmado, cafetería)" },
-      { amount: 500000, description: "Negocio mediano (restaurante)" },
-      { amount: 1000000, description: "Negocio grande (distribuidora)" },
-      { amount: 2000000, description: "Franquicia reconocida" }
+      { amount: 240000, description: "Negocio pequeño (colmado, cafetería)" },
+      { amount: 600000, description: "Negocio mediano (restaurante)" },
+      { amount: 1200000, description: "Negocio grande (distribuidora)" },
+      { amount: 2400000, description: "Franquicia reconocida" }
     ]
   }
 };
@@ -452,15 +453,40 @@ export const calculateGoal = async (req: Request, res: Response) => {
   }
 };
 
-// Endpoint para obtener configuraciones de tipos de metas
+// Endpoint para obtener configuraciones de tipos de metas (DINÁMICO)
 export const getGoalTypes = async (req: Request, res: Response) => {
   try {
-    return res.json(goalConfigurations);
+    // Obtener precios dinámicos del servicio (cache + AI)
+    const dynamicPrices = await getReferencePrices();
+    return res.json(dynamicPrices);
   } catch (error) {
     logger.error('Error getting goal types:', error);
-    return res.status(500).json({ 
-      error: 'Error interno del servidor' 
+    // Fallback a configuraciones hardcodeadas
+    return res.json(goalConfigurations);
+  }
+};
+
+// Endpoint para forzar actualización de precios (admin)
+export const refreshPrices = async (req: Request, res: Response) => {
+  try {
+    logger.log('[Investment] Force refresh prices requested');
+    const result = await forceUpdatePrices();
+    return res.json(result);
+  } catch (error) {
+    logger.error('Error refreshing prices:', error);
+    return res.status(500).json({
+      error: 'Error actualizando precios'
     });
+  }
+};
+
+// Inicializar precios por defecto al arrancar
+export const initPrices = async () => {
+  try {
+    await initializeDefaultPrices();
+    logger.log('[Investment] Reference prices initialized');
+  } catch (error) {
+    logger.error('Error initializing prices:', error);
   }
 };
 

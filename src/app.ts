@@ -9,6 +9,7 @@ import { AntExpenseScheduler } from './services/antExpenseScheduler';
 import { TrialScheduler } from './services/trialScheduler';
 import { ReferralScheduler } from './services/referralScheduler';
 import { validateReferralConfig } from './config/referralConfig';
+import { initPrices } from './controllers/investment';
 
 // Force deployment trigger - Email Sync Integration
 
@@ -153,6 +154,9 @@ async function startServer() {
 
     // Iniciar scheduler de expiración de referidos
     ReferralScheduler.startScheduler();
+
+    // Inicializar precios de referencia para calculadoras
+    await initPrices();
 
     // Iniciar servidor
     app.listen(PORT, () => {

@@ -10,7 +10,8 @@ import {
   calculateSkipVsSave,
   getCommonExpenses,
   calculateInflation,
-  getCurrentPrices
+  getCurrentPrices,
+  refreshPrices
 } from '../controllers/investment';
 
 const router: Router = Router();
@@ -53,5 +54,12 @@ router.post('/calculate-inflation', calculateInflation);
 
 // GET /api/investment/current-prices - Obtener precios actuales de referencia
 router.get('/current-prices', getCurrentPrices);
+
+// =============================================
+// ADMINISTRACIÓN DE PRECIOS DE REFERENCIA
+// =============================================
+
+// POST /api/investment/refresh-prices - Forzar actualización de precios con AI
+router.post('/refresh-prices', refreshPrices);
 
 export default router;

@@ -829,3 +829,38 @@ enum RewardStatus {
   EXPIRED
   CANCELLED
 }
+
+// =============================================
+// MODELO DE PRECIOS DE REFERENCIA (CACHE + AI)
+// =============================================
+
+// Cache de precios de referencia para calculadoras
+model ReferencePrice {
+  id          String   @id @default(cuid())
+  category    String   // 'housing', 'vehicle', 'business'
+  key         String   // 'apartment_economic', 'car_used', etc.
+  description String   // 'Apartamento económico (Sto. Dgo. Norte)'
+  amount      Int      // 3500000
+  source      String?  // 'AI Search - SuperCasas, Corotos'
+  country     String   @default("DO") // País de referencia
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@unique([category, key, country])
+  @@index([category])
+  @@index([country])
+  @@map("reference_prices")
+}
+
+// Configuración del sistema de precios
+model ReferencePriceConfig {
+  id              String   @id @default(cuid())
+  country         String   @unique // 'DO', 'MX', etc.
+  cacheDays       Int      @default(90) // Días de validez del cache (3 meses)
+  lastFullUpdate  DateTime?
+  isUpdating      Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  @@map("reference_price_configs")
+}
