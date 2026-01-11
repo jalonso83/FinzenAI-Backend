@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import Anthropic from '@anthropic-ai/sdk';
+import { openai } from '../openaiClient';
 import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient();
@@ -123,10 +123,6 @@ async function isCacheStale(): Promise<boolean> {
  * Usa AI para buscar precios actualizados
  */
 async function fetchPricesWithAI(): Promise<Record<string, { amount: number; description: string; source: string }>> {
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
-
   const prompt = `Eres un experto en el mercado de República Dominicana. Necesito precios actualizados en PESOS DOMINICANOS (RD$) para las siguientes categorías. Responde SOLO con un JSON válido, sin explicaciones adicionales.
 
 CATEGORÍAS A BUSCAR:
@@ -163,19 +159,19 @@ IMPORTANTE:
 - La fuente puede ser "Mercado RD 2025" o similar`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }]
     });
 
-    const content = response.content[0];
-    if (content.type !== 'text') {
-      throw new Error('Respuesta inesperada de AI');
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      throw new Error('Respuesta vacía de AI');
     }
 
     // Extraer JSON de la respuesta
-    const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('No se encontró JSON en la respuesta');
     }
