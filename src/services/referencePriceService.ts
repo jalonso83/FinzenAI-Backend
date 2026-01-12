@@ -1,8 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { openai } from '../openaiClient';
 import { logger } from '../utils/logger';
-
-const prisma = new PrismaClient();
 
 // Configuración por defecto
 const DEFAULT_CACHE_DAYS = 90; // 3 meses

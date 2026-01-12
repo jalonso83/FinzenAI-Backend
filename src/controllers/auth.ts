@@ -90,7 +90,44 @@ async function startUserTrial(
     return await TrialScheduler.startTrialForUser(userId, deviceInfo);
   } catch (trialError) {
     logger.error('❌ Error iniciando trial:', trialError);
-    return { success: false, trialStarted: false };
+
+    // IMPORTANTE: Si falla el trial, crear suscripción TRIALING manualmente
+    // El usuario debe obtener su trial aunque haya un error
+    try {
+      const now = new Date();
+      const trialEndsAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 días
+
+      await prisma.subscription.upsert({
+        where: { userId },
+        update: {
+          status: 'TRIALING',
+          plan: 'PREMIUM',
+          trialStartedAt: now,
+          trialEndsAt: trialEndsAt,
+          trialNotificationsSent: []
+        },
+        create: {
+          userId,
+          status: 'TRIALING',
+          plan: 'PREMIUM',
+          trialStartedAt: now,
+          trialEndsAt: trialEndsAt,
+          trialNotificationsSent: []
+        }
+      });
+
+      // Marcar email como usado para trial
+      await prisma.user.update({
+        where: { id: userId },
+        data: { hasUsedTrial: true }
+      });
+
+      logger.log(`[Auth] ✅ Trial creado manualmente como fallback para ${userId}`);
+      return { success: true, trialStarted: true, reason: 'FALLBACK_TRIAL_CREATED' };
+    } catch (fallbackError) {
+      logger.error('❌ Error creando trial fallback:', fallbackError);
+      return { success: false, trialStarted: false, reason: 'TRIAL_CREATION_FAILED' };
+    }
   }
 }
 
