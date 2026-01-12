@@ -67,7 +67,12 @@ export const createCheckout = async (req: Request, res: Response) => {
 export const startTrial = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user!.id;
-    const { plan } = req.body as { plan: 'PREMIUM' | 'PRO' };
+    const { plan, deviceId, platform, deviceName } = req.body as {
+      plan: 'PREMIUM' | 'PRO';
+      deviceId?: string;
+      platform?: 'ios' | 'android';
+      deviceName?: string;
+    };
 
     // Validar plan
     if (!plan || !['PREMIUM', 'PRO'].includes(plan)) {
@@ -89,6 +94,21 @@ export const startTrial = async (req: Request, res: Response) => {
         message: 'Ya has usado tu período de prueba gratuito',
         canUseTrial: false
       });
+    }
+
+    // Verificar si el dispositivo ya usó un trial (si se proporciona deviceId)
+    if (deviceId) {
+      const existingDeviceTrial = await prisma.trialDeviceRegistry.findUnique({
+        where: { deviceId }
+      });
+
+      if (existingDeviceTrial) {
+        logger.warn(`⚠️ Dispositivo ${deviceId} ya usó trial con usuario ${existingDeviceTrial.usedByUserId}`);
+        return res.status(400).json({
+          message: 'Este dispositivo ya ha utilizado un período de prueba',
+          canUseTrial: false
+        });
+      }
     }
 
     // Verificar que no tenga ya una suscripción activa pagada
@@ -125,6 +145,20 @@ export const startTrial = async (req: Request, res: Response) => {
       where: { id: userId },
       data: { hasUsedTrial: true }
     });
+
+    // Registrar el dispositivo en trial_device_registry (si se proporciona deviceId)
+    if (deviceId) {
+      await prisma.trialDeviceRegistry.create({
+        data: {
+          deviceId,
+          platform: platform || null,
+          deviceName: deviceName || null,
+          usedByUserId: userId,
+          usedByEmail: user.email
+        }
+      });
+      logger.log(`📱 Dispositivo registrado: ${deviceId} (${platform || 'unknown'})`);
+    }
 
     logger.log(`✅ Trial iniciado para usuario ${userId} - Plan: ${plan} - Termina: ${trialEndsAt.toISOString()}`);
 
