@@ -2,6 +2,7 @@ import express, { Router } from 'express';
 import { authenticateToken as auth } from '../middlewares/auth';
 import {
   createCheckout,
+  startTrial,
   getSubscription,
   getPlans,
   cancelSubscription,
@@ -22,8 +23,15 @@ const router: Router = express.Router();
 router.get('/plans', getPlans);
 
 /**
+ * @route   POST /api/subscriptions/start-trial
+ * @desc    Iniciar período de prueba de 7 días (sin tarjeta)
+ * @access  Private
+ */
+router.post('/start-trial', auth, startTrial);
+
+/**
  * @route   POST /api/subscriptions/checkout
- * @desc    Crear sesión de checkout para upgrade
+ * @desc    Crear sesión de checkout para upgrade (después del trial)
  * @access  Private
  */
 router.post('/checkout', auth, createCheckout);

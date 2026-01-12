@@ -241,8 +241,13 @@ export const register = async (req: Request, res: Response) => {
     // 4. Procesos secundarios (no bloquean el registro)
     await sendVerificationEmailSafe(user.email, user.id, name);
 
-    const trialResult = await startUserTrial(user.id, {
-      deviceId, platform: devicePlatform, deviceName
+    // Crear suscripción FREE por defecto (el trial se inicia cuando selecciona un plan)
+    await prisma.subscription.create({
+      data: {
+        userId: user.id,
+        status: 'ACTIVE',
+        plan: 'FREE'
+      }
     });
 
     const referralResult = (referralCode && REFERRAL_CONFIG.ENABLED)
@@ -253,7 +258,6 @@ export const register = async (req: Request, res: Response) => {
     return res.status(201).json({
       message: 'Usuario registrado exitosamente. Por favor revisa tu email para verificar tu cuenta.',
       user: { id: user.id, email: user.email, verified: user.verified },
-      trial: { started: trialResult.trialStarted, reason: trialResult.reason },
       referral: { applied: referralResult.applied, discount: referralResult.discount, reason: referralResult.reason }
     });
   } catch (error) {

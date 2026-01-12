@@ -42,12 +42,20 @@ export class SubscriptionService {
       // Verificar si necesitamos resetear el contador de Zenio (nuevo mes)
       const zenioUsage = await this.getZenioUsage(userId, subscription);
 
+      // Obtener información del usuario para saber si puede usar trial
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { hasUsedTrial: true },
+      });
+      const canUseTrial = !user?.hasUsedTrial;
+
       return {
         ...subscription,
         limits,
         features,
         planDetails: PLANS[plan],
         zenioUsage,
+        canUseTrial,
       };
     } catch (error) {
       logger.error('Error obteniendo suscripción:', error);

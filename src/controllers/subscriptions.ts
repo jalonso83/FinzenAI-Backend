@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { prisma } from '../lib/prisma';
 import { stripeService } from '../services/stripeService';
 import { subscriptionService } from '../services/subscriptionService';
 import { PLANS, PlanType, BillingPeriod, getPriceId, getPlanFromPriceId, stripe } from '../config/stripe';
@@ -54,6 +55,93 @@ export const createCheckout = async (req: Request, res: Response) => {
     logger.error('Error creando checkout:', error);
     res.status(500).json({
       message: 'Error al crear sesión de pago',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Iniciar período de prueba de 7 días (sin tarjeta)
+ * El usuario selecciona un plan y obtiene trial gratis
+ */
+export const startTrial = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user!.id;
+    const { plan } = req.body as { plan: 'PREMIUM' | 'PRO' };
+
+    // Validar plan
+    if (!plan || !['PREMIUM', 'PRO'].includes(plan)) {
+      return res.status(400).json({ message: 'Plan inválido. Debe ser PREMIUM o PRO' });
+    }
+
+    // Verificar si el usuario ya usó el trial
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { hasUsedTrial: true, email: true, name: true }
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+
+    if (user.hasUsedTrial) {
+      return res.status(400).json({
+        message: 'Ya has usado tu período de prueba gratuito',
+        canUseTrial: false
+      });
+    }
+
+    // Verificar que no tenga ya una suscripción activa pagada
+    const currentSubscription = await subscriptionService.getUserSubscription(userId);
+    if (currentSubscription.status === 'ACTIVE' && currentSubscription.plan !== 'FREE') {
+      return res.status(400).json({ message: 'Ya tienes una suscripción activa' });
+    }
+
+    // Iniciar trial de 7 días
+    const now = new Date();
+    const trialEndsAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 días
+
+    await prisma.subscription.upsert({
+      where: { userId },
+      update: {
+        status: 'TRIALING',
+        plan: plan,
+        trialStartedAt: now,
+        trialEndsAt: trialEndsAt,
+        trialNotificationsSent: []
+      },
+      create: {
+        userId,
+        status: 'TRIALING',
+        plan: plan,
+        trialStartedAt: now,
+        trialEndsAt: trialEndsAt,
+        trialNotificationsSent: []
+      }
+    });
+
+    // Marcar que el usuario ya usó su trial
+    await prisma.user.update({
+      where: { id: userId },
+      data: { hasUsedTrial: true }
+    });
+
+    logger.log(`✅ Trial iniciado para usuario ${userId} - Plan: ${plan} - Termina: ${trialEndsAt.toISOString()}`);
+
+    res.json({
+      success: true,
+      message: '¡Tu período de prueba de 7 días ha comenzado!',
+      trial: {
+        plan,
+        startedAt: now,
+        endsAt: trialEndsAt,
+        daysRemaining: 7
+      }
+    });
+  } catch (error: any) {
+    logger.error('Error iniciando trial:', error);
+    res.status(500).json({
+      message: 'Error al iniciar período de prueba',
       error: error.message
     });
   }
