@@ -227,6 +227,8 @@ export const getPlans = async (req: Request, res: Response) => {
 
 /**
  * Cancelar suscripción (al final del período)
+ * - Si está en TRIALING: vuelve a FREE inmediatamente (sin Stripe)
+ * - Si tiene suscripción pagada: cancela en Stripe al final del período
  */
 export const cancelSubscription = async (req: Request, res: Response) => {
   try {
@@ -234,12 +236,33 @@ export const cancelSubscription = async (req: Request, res: Response) => {
 
     const subscription = await subscriptionService.getUserSubscription(userId);
 
-    if (!subscription.stripeSubscriptionId) {
-      return res.status(404).json({ message: 'No hay suscripción activa para cancelar' });
-    }
-
     if (subscription.plan === 'FREE') {
       return res.status(400).json({ message: 'No puedes cancelar el plan gratuito' });
+    }
+
+    // Si está en TRIALING, volver a FREE inmediatamente (no hay Stripe)
+    if (subscription.status === 'TRIALING') {
+      await prisma.subscription.update({
+        where: { userId },
+        data: {
+          plan: 'FREE',
+          status: 'ACTIVE',
+          trialEndsAt: null,
+          trialStartedAt: null,
+        }
+      });
+
+      logger.log(`✅ Trial cancelado, usuario ${userId} volvió a FREE`);
+
+      return res.json({
+        message: 'Período de prueba cancelado. Has vuelto al plan gratuito.',
+        plan: 'FREE',
+      });
+    }
+
+    // Suscripción pagada - cancelar en Stripe
+    if (!subscription.stripeSubscriptionId) {
+      return res.status(404).json({ message: 'No hay suscripción activa para cancelar' });
     }
 
     // Cancelar en Stripe
@@ -331,6 +354,8 @@ export const createCustomerPortal = async (req: Request, res: Response) => {
 
 /**
  * Cambiar plan de suscripción
+ * - Si está en TRIALING: solo cambia el plan en BD (sin tocar Stripe)
+ * - Si tiene suscripción pagada: cambia en Stripe con prorrateo
  */
 export const changePlan = async (req: Request, res: Response) => {
   try {
@@ -352,12 +377,30 @@ export const changePlan = async (req: Request, res: Response) => {
 
     const subscription = await subscriptionService.getUserSubscription(userId);
 
-    if (!subscription.stripeSubscriptionId) {
-      return res.status(404).json({ message: 'No tienes una suscripción activa' });
-    }
-
     if (subscription.plan === newPlan) {
       return res.status(400).json({ message: 'Ya tienes este plan' });
+    }
+
+    // Si está en TRIALING, solo cambiar el plan en la BD (sin Stripe)
+    if (subscription.status === 'TRIALING') {
+      await prisma.subscription.update({
+        where: { userId },
+        data: { plan: newPlan }
+      });
+
+      logger.log(`✅ Plan cambiado en trial: ${subscription.plan} -> ${newPlan} para usuario ${userId}`);
+
+      return res.json({
+        message: `Plan cambiado a ${newPlan} exitosamente. Tu período de prueba continúa.`,
+        newPlan,
+        isTrialing: true,
+        trialEndsAt: subscription.trialEndsAt,
+      });
+    }
+
+    // Suscripción pagada - requiere Stripe
+    if (!subscription.stripeSubscriptionId) {
+      return res.status(404).json({ message: 'No tienes una suscripción activa' });
     }
 
     // Obtener el price ID correcto según plan y período
