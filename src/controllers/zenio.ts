@@ -2683,8 +2683,8 @@ export const chatWithZenio = async (req: Request, res: Response) => {
         const planLimits = PLANS[subscription.plan as keyof typeof PLANS]?.limits;
         const limit = planLimits?.zenioQueries ?? 15;
 
-        // Solo incrementar si NO es autoGreeting (el saludo no cuenta como consulta)
-        if (!autoGreeting) {
+        // Solo incrementar si NO es autoGreeting y NO es onboarding (no cuentan como consulta)
+        if (!autoGreeting && !isOnboarding) {
           const updatedSubscription = await prisma.subscription.update({
             where: { userId },
             data: {
@@ -2699,13 +2699,14 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           };
           logger.log(`[Zenio] Consulta contada. Uso: ${updatedSubscription.zenioQueriesUsed}/${limit === -1 ? '∞' : limit}`);
         } else {
-          // Es autoGreeting - no incrementar, solo retornar el uso actual
+          // Es autoGreeting o isOnboarding - no incrementar, solo retornar el uso actual
           zenioUsage = {
             used: subscription.zenioQueriesUsed || 0,
             limit: limit,
             remaining: limit === -1 ? -1 : Math.max(0, limit - (subscription.zenioQueriesUsed || 0)),
           };
-          logger.log(`[Zenio] Saludo automático - NO cuenta como consulta. Uso actual: ${subscription.zenioQueriesUsed || 0}/${limit === -1 ? '∞' : limit}`);
+          const reason = isOnboarding ? 'Onboarding' : 'Saludo automático';
+          logger.log(`[Zenio] ${reason} - NO cuenta como consulta. Uso actual: ${subscription.zenioQueriesUsed || 0}/${limit === -1 ? '∞' : limit}`);
         }
       }
     } catch (usageError) {
