@@ -2,6 +2,7 @@ import * as cron from 'node-cron';
 import { NotificationType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { NotificationService } from './notificationService';
+import { EmailSyncService } from './emailSyncService';
 
 import { logger } from '../utils/logger';
 // Tipos de notificación de trial y sus días correspondientes
@@ -252,6 +253,16 @@ export class TrialScheduler {
     try {
       // Enviar notificación de trial terminado
       await NotificationService.notifyTrialEnded(userId);
+
+      // Eliminar conexiones de email (email sync es exclusivo PRO)
+      try {
+        const deletedConnections = await EmailSyncService.deleteAllUserEmailConnections(userId);
+        if (deletedConnections > 0) {
+          logger.log(`[TrialScheduler] Eliminadas ${deletedConnections} conexiones de email al terminar trial`);
+        }
+      } catch (emailError) {
+        logger.warn(`[TrialScheduler] Error eliminando conexiones de email:`, emailError);
+      }
 
       // Obtener notificaciones previas
       const subscription = await prisma.subscription.findUnique({

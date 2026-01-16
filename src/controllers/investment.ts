@@ -498,6 +498,8 @@ interface SkipVsSaveRequest {
   frequency: 'daily' | 'weekly' | 'monthly'; // Frecuencia del gasto
   timeframe: number; // Meses de comparación
   investmentReturn?: number; // Tasa de retorno anual opcional
+  expenseName?: string; // Nombre del gasto seleccionado (opcional)
+  expenseIcon?: string; // Icono del gasto (opcional)
 }
 
 interface SkipVsSaveResult {
@@ -631,11 +633,13 @@ function calculateSkipVsAve(
 // Endpoint principal para Skip vs Save Challenge
 export const calculateSkipVsSave = async (req: Request, res: Response) => {
   try {
-    const { 
-      dailyExpense, 
-      frequency, 
-      timeframe, 
-      investmentReturn = 8 
+    const {
+      dailyExpense,
+      frequency,
+      timeframe,
+      investmentReturn = 8,
+      expenseName,
+      expenseIcon
     }: SkipVsSaveRequest = req.body;
 
     // Validaciones
@@ -663,18 +667,27 @@ export const calculateSkipVsSave = async (req: Request, res: Response) => {
     // Generar equivalencias
     const finalAmount = investmentReturn > 0 ? calculations.totalInvested : calculations.totalSaved;
     const equivalencies = generateEquivalencies(finalAmount);
-    
-    // Encontrar el gasto más similar para el challenge
-    const similarExpense = skipVsSaveExpenses.find(exp => 
-      Math.abs(exp.amount - dailyExpense) < 100 && exp.frequency === frequency
-    ) || skipVsSaveExpenses[0];
 
     // Traducir frecuencia
     const frequencyText = {
       daily: 'diario',
-      weekly: 'semanal', 
+      weekly: 'semanal',
       monthly: 'mensual'
     }[frequency];
+
+    // Usar nombre e icono proporcionados, o generar uno genérico
+    let challengeTitle: string;
+    let challengeIcon: string;
+
+    if (expenseName) {
+      // Se proporcionó nombre del gasto (gasto predefinido seleccionado)
+      challengeTitle = `Reto: Evita ${expenseName}`;
+      challengeIcon = expenseIcon || '💰';
+    } else {
+      // Gasto personalizado - usar mensaje genérico
+      challengeTitle = `Reto: Evita este gasto ${frequencyText}`;
+      challengeIcon = '💸';
+    }
 
     const result: SkipVsSaveResult = {
       dailyAmount: dailyExpense,
@@ -688,9 +701,9 @@ export const calculateSkipVsSave = async (req: Request, res: Response) => {
       equivalencies,
       monthlyBreakdown: calculations.monthlyBreakdown,
       challenge: {
-        title: `Reto: Evita ${similarExpense.name}`,
+        title: challengeTitle,
         description: `Si evitas gastar RD$${dailyExpense} ${frequencyText} durante ${timeframe} meses...`,
-        icon: similarExpense.icon
+        icon: challengeIcon
       }
     };
 

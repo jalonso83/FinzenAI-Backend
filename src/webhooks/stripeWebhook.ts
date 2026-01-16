@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { stripe, STRIPE_WEBHOOK_SECRET, PLANS } from '../config/stripe';
 import { subscriptionService } from '../services/subscriptionService';
+import { EmailSyncService } from '../services/emailSyncService';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
 import { getPlanFromPriceId } from '../config/stripe';
 import { ReferralService } from '../services/referralService';
@@ -122,6 +123,27 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
     return;
   }
 
+  // Obtener plan actual antes de actualizar
+  const currentSubscription = await subscriptionService.getUserSubscription(userId);
+  const currentPlan = currentSubscription?.plan;
+
+  // Determinar nuevo plan
+  const priceId = subscription.items.data[0].price.id;
+  const planInfo = getPlanFromPriceId(priceId);
+  const newPlan = planInfo?.plan || 'FREE';
+
+  // Si el usuario baja de PRO a otro plan, eliminar conexiones de email
+  if (currentPlan === 'PRO' && newPlan !== 'PRO') {
+    try {
+      const deletedConnections = await EmailSyncService.deleteAllUserEmailConnections(userId);
+      if (deletedConnections > 0) {
+        logger.log(`[Webhook] Eliminadas ${deletedConnections} conexiones de email al bajar de PRO a ${newPlan}`);
+      }
+    } catch (emailError) {
+      logger.warn(`[Webhook] Error eliminando conexiones de email:`, emailError);
+    }
+  }
+
   await updateSubscriptionFromStripe(userId, subscription);
 }
 
@@ -135,6 +157,16 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
   if (!userId) {
     logger.error('❌ No userId in subscription metadata');
     return;
+  }
+
+  // Eliminar conexiones de email (email sync es exclusivo PRO)
+  try {
+    const deletedConnections = await EmailSyncService.deleteAllUserEmailConnections(userId);
+    if (deletedConnections > 0) {
+      logger.log(`[Webhook] Eliminadas ${deletedConnections} conexiones de email al cancelar suscripción`);
+    }
+  } catch (emailError) {
+    logger.warn(`[Webhook] Error eliminando conexiones de email:`, emailError);
   }
 
   // Downgrade a FREE

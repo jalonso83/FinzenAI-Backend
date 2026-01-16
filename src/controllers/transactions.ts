@@ -298,7 +298,8 @@ async function calculateConsecutiveDays(userId: string): Promise<number> {
 
 // Función utilitaria para recalcular el gasto de los presupuestos afectados
 // Optimizado: reduce de 2N queries a 2 queries (1 findMany + 1 transacción batch)
-async function recalculateBudgetSpent(userId: string, categoryId: string, date: Date) {
+// Exportada para uso en otros controladores (ej: Zenio)
+export async function recalculateBudgetSpent(userId: string, categoryId: string, date: Date) {
   // Buscar presupuestos activos de la categoría y usuario cuyo período incluya la fecha
   const budgets = await prisma.budget.findMany({
     where: {

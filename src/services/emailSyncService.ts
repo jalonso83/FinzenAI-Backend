@@ -237,17 +237,31 @@ export class EmailSyncService {
     });
 
     try {
-      // Obtener conexion con filtros
+      // Obtener conexion con filtros y suscripción del usuario
       const connection = await prisma.emailConnection.findUnique({
         where: { id: connectionId },
         include: {
           bankFilters: { where: { isActive: true } },
-          user: true
+          user: {
+            include: {
+              subscription: true
+            }
+          }
         }
       });
 
       if (!connection || !connection.isActive) {
         throw new Error('Email connection not found or inactive');
+      }
+
+      // Verificar que el usuario tenga plan PRO (email sync es exclusivo PRO)
+      const subscription = connection.user?.subscription;
+      const isPro = subscription?.plan === 'PRO' &&
+                    (subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING');
+
+      if (!isPro) {
+        logger.log(`[EmailSync] Usuario ${connection.userId} no tiene PRO, saltando sincronización`);
+        throw new Error('Email sync requires PRO subscription');
       }
 
       // Actualizar estado
@@ -539,13 +553,18 @@ export class EmailSyncService {
       ].filter(Boolean).join(' - ');
 
       // Crear transaccion (siempre en RD$)
+      // Extraer solo la fecha (YYYY-MM-DD) y usar mediodía UTC para evitar
+      // problemas de zona horaria donde medianoche UTC se convierte al día anterior
+      const datePart = parsed.date.split('T')[0];
+      const safeDate = new Date(datePart + 'T12:00:00Z');
+
       const transaction = await prisma.transaction.create({
         data: {
           userId,
           amount: finalAmount,
           type: 'EXPENSE',
           description,
-          date: new Date(parsed.date),
+          date: safeDate,
           category_id: categoryId
         }
       });
@@ -662,6 +681,43 @@ export class EmailSyncService {
   }
 
   /**
+   * Elimina TODAS las conexiones de email de un usuario
+   * Se usa cuando el usuario pierde acceso a PRO (email sync es exclusivo PRO)
+   */
+  static async deleteAllUserEmailConnections(userId: string): Promise<number> {
+    const connections = await prisma.emailConnection.findMany({
+      where: { userId }
+    });
+
+    if (connections.length === 0) {
+      return 0;
+    }
+
+    // Revocar acceso para cada conexión
+    for (const connection of connections) {
+      try {
+        if (connection.provider === 'GMAIL') {
+          await GmailService.revokeAccess(connection.accessToken);
+        } else if (connection.provider === 'OUTLOOK') {
+          await OutlookService.revokeAccess(connection.accessToken);
+        }
+      } catch (revokeError) {
+        // Continuar aunque falle el revoke (el token puede ya estar inválido)
+        logger.warn(`[EmailSync] Error revocando acceso para ${connection.email}:`, revokeError);
+      }
+    }
+
+    // Eliminar todas las conexiones del usuario
+    const result = await prisma.emailConnection.deleteMany({
+      where: { userId }
+    });
+
+    logger.log(`[EmailSync] Eliminadas ${result.count} conexiones de email para usuario ${userId} (ya no tiene PRO)`);
+
+    return result.count;
+  }
+
+  /**
    * Sincroniza todas las conexiones activas de un usuario
    */
   static async syncAllUserConnections(userId: string): Promise<{ results: SyncResult[]; totalTransactions: number }> {
@@ -769,6 +825,7 @@ export class EmailSyncService {
 
   /**
    * Obtiene las conexiones activas para sincronizar
+   * SOLO usuarios con plan PRO activo (email sync es función exclusiva PRO)
    */
   static async getActiveConnectionsForSync(): Promise<EmailConnection[]> {
     const now = new Date();
@@ -776,6 +833,15 @@ export class EmailSyncService {
     return prisma.emailConnection.findMany({
       where: {
         isActive: true,
+        // Solo sincronizar usuarios con plan PRO activo
+        user: {
+          subscription: {
+            plan: 'PRO',
+            status: {
+              in: ['ACTIVE', 'TRIALING'] // PRO activo o en trial PRO
+            }
+          }
+        },
         OR: [
           { lastSyncAt: null },
           {

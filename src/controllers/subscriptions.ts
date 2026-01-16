@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { stripeService } from '../services/stripeService';
 import { subscriptionService } from '../services/subscriptionService';
+import { EmailSyncService } from '../services/emailSyncService';
 import { PLANS, PlanType, BillingPeriod, getPriceId, getPlanFromPriceId, stripe } from '../config/stripe';
 import { sanitizeLimit, PAGINATION } from '../config/pagination';
 
@@ -242,6 +243,13 @@ export const cancelSubscription = async (req: Request, res: Response) => {
 
     // Si está en TRIALING, volver a FREE inmediatamente (no hay Stripe)
     if (subscription.status === 'TRIALING') {
+      // Eliminar conexiones de email (email sync es exclusivo PRO)
+      try {
+        await EmailSyncService.deleteAllUserEmailConnections(userId);
+      } catch (emailError) {
+        logger.warn(`[Subscriptions] Error eliminando conexiones de email:`, emailError);
+      }
+
       await prisma.subscription.update({
         where: { userId },
         data: {
@@ -383,6 +391,16 @@ export const changePlan = async (req: Request, res: Response) => {
 
     // Si está en TRIALING, solo cambiar el plan en la BD (sin Stripe)
     if (subscription.status === 'TRIALING') {
+      // Si el usuario baja de PRO a PREMIUM (PLUS), eliminar conexiones de email
+      if (subscription.plan === 'PRO' && newPlan === 'PREMIUM') {
+        try {
+          await EmailSyncService.deleteAllUserEmailConnections(userId);
+          logger.log(`[Subscriptions] Conexiones de email eliminadas al bajar de PRO a PLUS`);
+        } catch (emailError) {
+          logger.warn(`[Subscriptions] Error eliminando conexiones de email:`, emailError);
+        }
+      }
+
       await prisma.subscription.update({
         where: { userId },
         data: { plan: newPlan }

@@ -173,6 +173,11 @@ El monto siempre debe ser un numero positivo.
 La fecha debe estar en formato ISO 8601.
 La moneda debe ser el codigo (RD$, USD, EUR, DOP).
 
+IMPORTANTE - FORMATO DE FECHAS EN BANCOS DOMINICANOS:
+Los bancos de República Dominicana usan formato DD/MM/YY (día/mes/año), NO MM/DD/YY.
+Por ejemplo: "02/01/26" significa 2 de enero de 2026, NO 1 de febrero de 2026.
+Asegúrate de interpretar las fechas correctamente antes de convertirlas a ISO 8601.
+
 CATEGORIZACIÓN INTELIGENTE:
 Analiza el nombre del comercio para determinar la categoría correcta. Presta atención a prefijos y palabras clave:
 - "SM", "SUPER", "SUPERMERCADO", "MARKET", "MERCADO", "COLMADO" → Supermercado/Alimentación

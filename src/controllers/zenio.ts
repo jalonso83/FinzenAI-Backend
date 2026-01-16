@@ -6,6 +6,8 @@ import { ENV } from '../config/env';
 import fs from 'fs';
 import FormData from 'form-data';
 import { merchantMappingService } from '../services/merchantMappingService';
+import { NotificationService } from '../services/notificationService';
+import { recalculateBudgetSpent } from './transactions';
 import { logger } from '../utils/logger';
 
 const API_KEY = ENV.OPENAI_API_KEY;
@@ -1213,6 +1215,16 @@ async function insertTransaction(transactionData: any, userId: string, categorie
       updatedAt: true
     }
   });
+
+  // Recalcular presupuesto y verificar alertas si es gasto
+  if (type === 'EXPENSE') {
+    try {
+      await recalculateBudgetSpent(userId, categoryValidation.categoryId!, date);
+      await NotificationService.checkBudgetAlerts(userId, categoryValidation.categoryId!, amount, date);
+    } catch (error) {
+      logger.error('[Zenio insertTransaction] Error recalculando presupuesto:', error);
+    }
+  }
 
   const categoryRecord = await prisma.category.findUnique({
     where: { id: categoryValidation.categoryId! }
@@ -2891,6 +2903,16 @@ export const createTransactionFromZenio = async (req: Request, res: Response) =>
         updatedAt: true
       }
     });
+
+    // Recalcular presupuesto y verificar alertas si es gasto
+    if (type === 'EXPENSE') {
+      try {
+        await recalculateBudgetSpent(userId, categoryRecord.id, date);
+        await NotificationService.checkBudgetAlerts(userId, categoryRecord.id, amount, date);
+      } catch (error) {
+        logger.error('[Zenio createTransactionFromZenio] Error recalculando presupuesto:', error);
+      }
+    }
 
     // Disparar eventos de gamificación inteligentes
     try {
