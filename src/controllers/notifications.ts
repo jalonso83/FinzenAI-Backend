@@ -434,7 +434,7 @@ export const sendTestNotification = async (req: AuthRequest, res: Response) => {
 /**
  * Endpoint de prueba para generar y enviar un tip financiero con IA
  * POST /api/notifications/test-tip
- * NOTA: Este endpoint es solo para desarrollo/testing
+ * NOTA: Este endpoint es solo para desarrollo/testing - NO verifica PRO ni preferencias
  */
 export const sendTestTip = async (req: AuthRequest, res: Response) => {
   try {
@@ -457,11 +457,17 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Enviar la notificación
-    const notificationResult = await NotificationService.notifyTip(
+    // Enviar la notificación DIRECTAMENTE sin verificar preferencias (es una prueba)
+    const notificationResult = await NotificationService.sendDirectNotification(
       userId,
-      testResult.tip.title,
-      testResult.tip.content
+      {
+        title: `💡 ${testResult.tip.title}`,
+        body: testResult.tip.content,
+        data: {
+          type: 'TIP',
+          screen: 'Dashboard'
+        }
+      }
     );
 
     return res.status(200).json({
@@ -471,10 +477,6 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
         successCount: notificationResult.successCount,
         failureCount: notificationResult.failureCount,
         errors: notificationResult.errors
-      },
-      debug: {
-        context: testResult.context,
-        prompt: testResult.prompt
       }
     });
 

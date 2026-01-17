@@ -206,6 +206,56 @@ export class NotificationService {
   }
 
   /**
+   * Envía una notificación DIRECTAMENTE sin verificar preferencias ni horarios
+   * SOLO PARA TESTING/DESARROLLO
+   */
+  static async sendDirectNotification(
+    userId: string,
+    payload: NotificationPayload
+  ): Promise<SendNotificationResult> {
+    try {
+      if (!firebaseInitialized) {
+        logger.warn('[NotificationService] Firebase not initialized');
+        return { success: false, successCount: 0, failureCount: 1, errors: ['Firebase not initialized'] };
+      }
+
+      // Obtener dispositivos activos del usuario
+      const devices = await prisma.userDevice.findMany({
+        where: {
+          userId,
+          isActive: true
+        }
+      });
+
+      if (devices.length === 0) {
+        logger.warn(`[NotificationService] No active devices for user ${userId}`);
+        return { success: false, successCount: 0, failureCount: 0, errors: ['No hay dispositivos registrados'] };
+      }
+
+      logger.log(`[NotificationService] Enviando notificación directa a ${devices.length} dispositivo(s)...`);
+
+      const tokens = devices.map(d => d.fcmToken);
+      const result = await this.sendMulticast(tokens, payload);
+
+      // Limpiar tokens inválidos
+      if (result.failedTokens && result.failedTokens.length > 0) {
+        await this.cleanupInvalidTokens(result.failedTokens);
+      }
+
+      return {
+        success: result.successCount > 0,
+        successCount: result.successCount,
+        failureCount: result.failureCount,
+        errors: result.errors
+      };
+
+    } catch (error: any) {
+      logger.error('[NotificationService] Error sending direct notification:', error);
+      return { success: false, successCount: 0, failureCount: 1, errors: [error.message] };
+    }
+  }
+
+  /**
    * Envía notificación multicast a múltiples tokens
    */
   private static async sendMulticast(
