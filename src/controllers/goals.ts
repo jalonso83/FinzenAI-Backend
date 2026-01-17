@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { subscriptionService } from '../services/subscriptionService';
+import { NotificationService } from '../services/notificationService';
 
 import { logger } from '../utils/logger';
 // Obtener todas las metas del usuario
@@ -376,13 +377,15 @@ export const addContribution = async (req: Request, res: Response): Promise<void
       return;
     }
 
+    const isNowCompleted = newCurrentAmount >= existingGoal.targetAmount;
+
     const updatedGoal = await prisma.goal.update({
       where: { id },
       data: {
         currentAmount: newCurrentAmount,
         contributionsCount: existingGoal.contributionsCount + 1,
         lastContributionDate: new Date(),
-        isCompleted: newCurrentAmount >= existingGoal.targetAmount
+        isCompleted: isNowCompleted
       },
       include: {
         category: {
@@ -395,6 +398,13 @@ export const addContribution = async (req: Request, res: Response): Promise<void
         }
       }
     });
+
+    // Enviar notificación si la meta se completó
+    if (isNowCompleted && !existingGoal.isCompleted) {
+      NotificationService.notifyGoalAchieved(userId, existingGoal.name)
+        .then(() => logger.log(`[Goals] Notificación de meta completada enviada: ${existingGoal.name}`))
+        .catch((err) => logger.error('[Goals] Error enviando notificación de meta completada:', err));
+    }
 
     res.json(updatedGoal);
   } catch (error) {

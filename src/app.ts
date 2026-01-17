@@ -7,6 +7,7 @@ import { EmailSyncScheduler } from './services/emailSyncScheduler';
 import { ReminderScheduler } from './services/reminderScheduler';
 import { AntExpenseScheduler } from './services/antExpenseScheduler';
 import { GoalReminderScheduler } from './services/goalReminderScheduler';
+import { TipScheduler } from './services/tipScheduler';
 import { TrialScheduler } from './services/trialScheduler';
 import { ReferralScheduler } from './services/referralScheduler';
 import { validateReferralConfig } from './config/referralConfig';
@@ -153,6 +154,9 @@ async function startServer() {
     // Iniciar scheduler de recordatorios de metas
     GoalReminderScheduler.startScheduler();
 
+    // Iniciar scheduler de tips financieros (IA)
+    TipScheduler.startScheduler();
+
     // Iniciar scheduler de notificaciones de trial
     TrialScheduler.startScheduler();
 
@@ -181,6 +185,8 @@ process.on('SIGINT', async () => {
   EmailSyncScheduler.stopScheduler();
   ReminderScheduler.stopScheduler();
   AntExpenseScheduler.stopScheduler();
+  GoalReminderScheduler.stopScheduler();
+  TipScheduler.stopScheduler();
   TrialScheduler.stopScheduler();
   ReferralScheduler.stopScheduler();
   await prisma.$disconnect();
@@ -193,6 +199,8 @@ process.on('SIGTERM', async () => {
   EmailSyncScheduler.stopScheduler();
   ReminderScheduler.stopScheduler();
   AntExpenseScheduler.stopScheduler();
+  GoalReminderScheduler.stopScheduler();
+  TipScheduler.stopScheduler();
   TrialScheduler.stopScheduler();
   ReferralScheduler.stopScheduler();
   await prisma.$disconnect();

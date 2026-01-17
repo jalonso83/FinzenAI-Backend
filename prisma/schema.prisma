@@ -67,6 +67,9 @@ model User {
   referralsReceived         Referral?         @relation("ReferralsReceived")
   referralRewards           ReferralReward[]
 
+  // Tips Financieros
+  tipHistory                UserTipHistory[]
+
   @@map("users")
 }
 
@@ -630,6 +633,23 @@ enum NotificationStatus {
   SENT
   FAILED
   READ
+}
+
+// Historial de tips financieros enviados (para evitar repetición)
+model UserTipHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  tipHash   String   // Hash del contenido para detectar duplicados
+  title     String
+  content   String   @db.Text
+  category  String?  // spending, savings, goals, budget, seasonal, etc.
+  sentAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_tip_history")
+  @@index([userId, sentAt])
+  @@index([userId, tipHash])
 }
 
 // =============================================
