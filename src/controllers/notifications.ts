@@ -434,7 +434,6 @@ export const sendTestNotification = async (req: AuthRequest, res: Response) => {
 /**
  * Endpoint de prueba para generar y enviar un tip financiero con IA
  * POST /api/notifications/test-tip
- * NOTA: Este endpoint es solo para desarrollo/testing - NO verifica PRO ni preferencias
  */
 export const sendTestTip = async (req: AuthRequest, res: Response) => {
   try {
@@ -445,19 +444,17 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
 
     logger.log(`[NotificationsController] 🧪 Generando tip de prueba para usuario ${userId}...`);
 
-    // Usar el TipEngineService para generar el contexto y tip
+    // Generar tip con IA
     const testResult = await TipEngineService.testForUser(userId);
 
     if (!testResult.tip) {
       return res.status(500).json({
         success: false,
-        error: 'No se pudo generar el tip',
-        context: testResult.context,
-        prompt: testResult.prompt
+        error: 'No se pudo generar el tip'
       });
     }
 
-    // Enviar la notificación DIRECTAMENTE sin verificar preferencias (es una prueba)
+    // Enviar notificación DIRECTAMENTE (sin verificar preferencias)
     const notificationResult = await NotificationService.sendDirectNotification(
       userId,
       {
@@ -483,8 +480,8 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     logger.error('[NotificationsController] Error sending test tip:', error);
     return res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
+      success: false,
+      error: error.message
     });
   }
 };
