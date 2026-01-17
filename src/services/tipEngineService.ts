@@ -10,7 +10,7 @@ import { logger } from '../utils/logger';
 const TIP_COOLDOWN_HOURS = 72; // No enviar otro tip si recibió uno en las últimas 72 horas
 const MAX_TIPS_PER_WEEK = 2;
 
-interface UserFinancialContext {
+export interface UserFinancialContext {
   userId: string;
   userName: string;
   currency: string;
@@ -36,7 +36,7 @@ interface UserFinancialContext {
   isStartOfMonth: boolean;
 }
 
-interface GeneratedTip {
+export interface GeneratedTip {
   title: string;
   content: string;
   category: string;
