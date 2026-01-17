@@ -438,21 +438,31 @@ export const sendTestNotification = async (req: AuthRequest, res: Response) => {
 export const sendTestTip = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    logger.log(`[TEST-TIP] ========== INICIO ==========`);
+    logger.log(`[TEST-TIP] userId: ${userId}`);
+
     if (!userId) {
+      logger.log(`[TEST-TIP] ERROR: No userId`);
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    logger.log(`[NotificationsController] 🧪 Generando tip de prueba para usuario ${userId}...`);
+    logger.log(`[TEST-TIP] Paso 1: Generando tip con IA...`);
 
     // Generar tip con IA
     const testResult = await TipEngineService.testForUser(userId);
 
+    logger.log(`[TEST-TIP] Paso 2: Resultado de TipEngine:`);
+    logger.log(`[TEST-TIP] - tip: ${testResult.tip ? JSON.stringify(testResult.tip) : 'NULL'}`);
+
     if (!testResult.tip) {
+      logger.log(`[TEST-TIP] ERROR: No se generó el tip`);
       return res.status(500).json({
         success: false,
         error: 'No se pudo generar el tip'
       });
     }
+
+    logger.log(`[TEST-TIP] Paso 3: Enviando notificación directa...`);
 
     // Enviar notificación DIRECTAMENTE (sin verificar preferencias)
     const notificationResult = await NotificationService.sendDirectNotification(
@@ -467,6 +477,13 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
       }
     );
 
+    logger.log(`[TEST-TIP] Paso 4: Resultado de notificación:`);
+    logger.log(`[TEST-TIP] - success: ${notificationResult.success}`);
+    logger.log(`[TEST-TIP] - successCount: ${notificationResult.successCount}`);
+    logger.log(`[TEST-TIP] - failureCount: ${notificationResult.failureCount}`);
+    logger.log(`[TEST-TIP] - errors: ${JSON.stringify(notificationResult.errors)}`);
+    logger.log(`[TEST-TIP] ========== FIN ==========`);
+
     return res.status(200).json({
       success: notificationResult.success,
       tip: testResult.tip,
@@ -478,7 +495,8 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    logger.error('[NotificationsController] Error sending test tip:', error);
+    logger.error(`[TEST-TIP] EXCEPCION: ${error.message}`);
+    logger.error(`[TEST-TIP] Stack: ${error.stack}`);
     return res.status(500).json({
       success: false,
       error: error.message
