@@ -24,7 +24,9 @@ interface UpdatePreferencesRequest {
   goalRemindersEnabled?: boolean;
   weeklyReportEnabled?: boolean;
   tipsEnabled?: boolean;
+  antExpenseAlertsEnabled?: boolean;
   budgetAlertThreshold?: number;
+  goalReminderFrequency?: number;
   quietHoursStart?: number | null;
   quietHoursEnd?: number | null;
 }
@@ -138,7 +140,9 @@ export const getPreferences = async (req: AuthRequest, res: Response) => {
         goalRemindersEnabled: true,
         weeklyReportEnabled: true,
         tipsEnabled: true,
+        antExpenseAlertsEnabled: true,
         budgetAlertThreshold: 80,
+        goalReminderFrequency: 7,
         quietHoursStart: null,
         quietHoursEnd: null
       });
@@ -150,7 +154,9 @@ export const getPreferences = async (req: AuthRequest, res: Response) => {
       goalRemindersEnabled: preferences.goalRemindersEnabled,
       weeklyReportEnabled: preferences.weeklyReportEnabled,
       tipsEnabled: preferences.tipsEnabled,
+      antExpenseAlertsEnabled: preferences.antExpenseAlertsEnabled,
       budgetAlertThreshold: preferences.budgetAlertThreshold,
+      goalReminderFrequency: preferences.goalReminderFrequency,
       quietHoursStart: preferences.quietHoursStart,
       quietHoursEnd: preferences.quietHoursEnd
     });
@@ -206,6 +212,17 @@ export const updatePreferences = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // Validar goalReminderFrequency si se proporciona
+    if (updates.goalReminderFrequency !== undefined) {
+      const validFrequencies = [0, 3, 7, 14, 30];
+      if (!validFrequencies.includes(updates.goalReminderFrequency)) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'goalReminderFrequency debe ser 0, 3, 7, 14 o 30'
+        });
+      }
+    }
+
     const preferences = await NotificationService.updatePreferences(userId, updates);
 
     return res.status(200).json({
@@ -217,7 +234,9 @@ export const updatePreferences = async (req: AuthRequest, res: Response) => {
         goalRemindersEnabled: preferences.goalRemindersEnabled,
         weeklyReportEnabled: preferences.weeklyReportEnabled,
         tipsEnabled: preferences.tipsEnabled,
+        antExpenseAlertsEnabled: preferences.antExpenseAlertsEnabled,
         budgetAlertThreshold: preferences.budgetAlertThreshold,
+        goalReminderFrequency: preferences.goalReminderFrequency,
         quietHoursStart: preferences.quietHoursStart,
         quietHoursEnd: preferences.quietHoursEnd
       }

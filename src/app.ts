@@ -6,6 +6,7 @@ import { BudgetScheduler } from './services/budgetScheduler';
 import { EmailSyncScheduler } from './services/emailSyncScheduler';
 import { ReminderScheduler } from './services/reminderScheduler';
 import { AntExpenseScheduler } from './services/antExpenseScheduler';
+import { GoalReminderScheduler } from './services/goalReminderScheduler';
 import { TrialScheduler } from './services/trialScheduler';
 import { ReferralScheduler } from './services/referralScheduler';
 import { validateReferralConfig } from './config/referralConfig';
@@ -148,6 +149,9 @@ async function startServer() {
 
     // Iniciar scheduler de alertas de gastos hormiga
     AntExpenseScheduler.startScheduler();
+
+    // Iniciar scheduler de recordatorios de metas
+    GoalReminderScheduler.startScheduler();
 
     // Iniciar scheduler de notificaciones de trial
     TrialScheduler.startScheduler();

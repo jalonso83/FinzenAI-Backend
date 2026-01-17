@@ -566,6 +566,9 @@ model NotificationPreferences {
   // Umbral de alerta de gastos hormiga (porcentaje del gasto total)
   antExpenseAlertThreshold Int   @default(20)
 
+  // Frecuencia de recordatorio de metas (días sin contribuir: 0=nunca, 3, 7, 14, 30)
+  goalReminderFrequency    Int   @default(7)
+
   // Horario de notificaciones (para evitar molestias)
   quietHoursStart       Int?     // Hora en formato 24h (ej: 22 = 10pm)
   quietHoursEnd         Int?     // Hora en formato 24h (ej: 8 = 8am)

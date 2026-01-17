@@ -681,6 +681,7 @@ export class NotificationService {
       antExpenseAlertsEnabled?: boolean;
       antExpenseAlertThreshold?: number;
       trialNotificationsEnabled?: boolean;
+      goalReminderFrequency?: number;
     }
   ) {
     return prisma.notificationPreferences.upsert({
