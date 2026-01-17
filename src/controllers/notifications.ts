@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { DevicePlatform } from '@prisma/client';
 import NotificationService from '../services/notificationService';
+import { TipEngineService } from '../services/tipEngineService';
 import { sanitizeLimit, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
@@ -423,6 +424,62 @@ export const sendTestNotification = async (req: AuthRequest, res: Response) => {
 
   } catch (error: any) {
     logger.error('[NotificationsController] Error sending test:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: error.message
+    });
+  }
+};
+
+/**
+ * Endpoint de prueba para generar y enviar un tip financiero con IA
+ * POST /api/notifications/test-tip
+ * NOTA: Este endpoint es solo para desarrollo/testing
+ */
+export const sendTestTip = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    logger.log(`[NotificationsController] 🧪 Generando tip de prueba para usuario ${userId}...`);
+
+    // Usar el TipEngineService para generar el contexto y tip
+    const testResult = await TipEngineService.testForUser(userId);
+
+    if (!testResult.tip) {
+      return res.status(500).json({
+        success: false,
+        error: 'No se pudo generar el tip',
+        context: testResult.context,
+        prompt: testResult.prompt
+      });
+    }
+
+    // Enviar la notificación
+    const notificationResult = await NotificationService.notifyTip(
+      userId,
+      testResult.tip.title,
+      testResult.tip.content
+    );
+
+    return res.status(200).json({
+      success: notificationResult.success,
+      tip: testResult.tip,
+      notification: {
+        successCount: notificationResult.successCount,
+        failureCount: notificationResult.failureCount,
+        errors: notificationResult.errors
+      },
+      debug: {
+        context: testResult.context,
+        prompt: testResult.prompt
+      }
+    });
+
+  } catch (error: any) {
+    logger.error('[NotificationsController] Error sending test tip:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message

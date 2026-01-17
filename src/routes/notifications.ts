@@ -8,7 +8,8 @@ import {
   markAsRead,
   deleteNotification,
   deleteAllNotifications,
-  sendTestNotification
+  sendTestNotification,
+  sendTestTip
 } from '../controllers/notifications';
 import { authenticateToken } from '../middlewares/auth';
 
@@ -35,5 +36,6 @@ router.delete('/:id', deleteNotification);
 
 // Prueba (solo desarrollo)
 router.post('/test', sendTestNotification);
+router.post('/test-tip', sendTestTip);
 
 export default router;
