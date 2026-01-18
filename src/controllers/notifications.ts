@@ -3,6 +3,8 @@ import { DevicePlatform } from '@prisma/client';
 import NotificationService from '../services/notificationService';
 import { TipEngineService } from '../services/tipEngineService';
 import { sanitizeLimit, PAGINATION } from '../config/pagination';
+import { prisma } from '../lib/prisma';
+import crypto from 'crypto';
 
 import { logger } from '../utils/logger';
 interface AuthRequest extends Request {
@@ -482,6 +484,26 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
     console.log(`[TEST-TIP] - successCount: ${notificationResult.successCount}`);
     console.log(`[TEST-TIP] - failureCount: ${notificationResult.failureCount}`);
     console.log(`[TEST-TIP] - errors: ${JSON.stringify(notificationResult.errors)}`);
+
+    // Paso 5: Guardar en historial de tips (userTipHistory)
+    if (notificationResult.success) {
+      const tipHash = crypto.createHash('md5')
+        .update(testResult.tip.content.toLowerCase().replace(/\d+/g, 'X').replace(/\s+/g, ' ').trim())
+        .digest('hex')
+        .substring(0, 16);
+
+      await prisma.userTipHistory.create({
+        data: {
+          userId,
+          tipHash,
+          title: testResult.tip.title,
+          content: testResult.tip.content,
+          category: testResult.tip.category
+        }
+      });
+      console.log(`[TEST-TIP] Paso 5: Guardado en userTipHistory`);
+    }
+
     console.log(`[TEST-TIP] ========== FIN ==========`);
 
     return res.status(200).json({

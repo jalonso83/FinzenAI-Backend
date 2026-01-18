@@ -237,6 +237,9 @@ export class NotificationService {
       const tokens = devices.map(d => d.fcmToken);
       const result = await this.sendMulticast(tokens, payload);
 
+      // Guardar en historial para que aparezca en la campanita
+      await this.logNotification(userId, 'TIP', payload, result.successCount > 0 ? 'SENT' : 'FAILED');
+
       // Limpiar tokens inválidos
       if (result.failedTokens && result.failedTokens.length > 0) {
         await this.cleanupInvalidTokens(result.failedTokens);
