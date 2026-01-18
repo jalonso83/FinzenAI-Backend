@@ -88,11 +88,8 @@ export class WeeklyReportScheduler {
   private static async getProUsers(): Promise<string[]> {
     const subscriptions = await prisma.subscription.findMany({
       where: {
-        status: { in: ['active', 'trialing'] },
-        OR: [
-          { stripeProductId: { contains: 'pro' } },
-          { stripeProductId: { contains: 'PRO' } }
-        ]
+        plan: 'PRO',
+        status: { in: ['ACTIVE', 'TRIALING'] }
       },
       select: { userId: true }
     });

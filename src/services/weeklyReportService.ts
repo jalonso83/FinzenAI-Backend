@@ -132,14 +132,14 @@ export class WeeklyReportService {
           totalExpenses: new Decimal(reportData.totalExpenses),
           savingsRate: reportData.savingsRate,
           financialScore: reportData.financialScore,
-          topCategories: reportData.topCategories,
-          budgetsStatus: reportData.budgetsStatus,
-          goalsProgress: reportData.goalsProgress,
-          antExpenses: reportData.antExpenses,
-          predictions: reportData.predictions,
+          topCategories: JSON.parse(JSON.stringify(reportData.topCategories)),
+          budgetsStatus: JSON.parse(JSON.stringify(reportData.budgetsStatus)),
+          goalsProgress: JSON.parse(JSON.stringify(reportData.goalsProgress)),
+          antExpenses: JSON.parse(JSON.stringify(reportData.antExpenses)),
+          predictions: JSON.parse(JSON.stringify(reportData.predictions)),
           aiAnalysis: aiResult.analysis,
-          recommendations: aiResult.recommendations,
-          vsLastWeek: reportData.vsLastWeek
+          recommendations: JSON.parse(JSON.stringify(aiResult.recommendations)),
+          vsLastWeek: reportData.vsLastWeek ? JSON.parse(JSON.stringify(reportData.vsLastWeek)) : null
         }
       });
 
@@ -272,7 +272,7 @@ export class WeeklyReportService {
       percentage: Number(g.targetAmount) > 0
         ? Math.round((Number(g.currentAmount) / Number(g.targetAmount)) * 100)
         : 0,
-      deadline: g.deadline ? g.deadline.toISOString().split('T')[0] : null
+      deadline: g.targetDate ? g.targetDate.toISOString().split('T')[0] : null
     }));
 
     // Gastos hormiga (transacciones <= 500)
