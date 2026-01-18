@@ -280,7 +280,10 @@ export class NotificationService {
             channelId: 'finzenai_notifications',
             priority: 'high',
             defaultSound: true,
-            defaultVibrateTimings: true
+            defaultVibrateTimings: true,
+            visibility: 'public',
+            notificationCount: 1,
+            sticky: true
           }
         },
         apns: {

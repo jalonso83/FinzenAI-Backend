@@ -10,6 +10,8 @@ import { GoalReminderScheduler } from './services/goalReminderScheduler';
 import { TipScheduler } from './services/tipScheduler';
 import { TrialScheduler } from './services/trialScheduler';
 import { ReferralScheduler } from './services/referralScheduler';
+import { BudgetReminderScheduler } from './services/budgetReminderScheduler';
+import { WeeklyReportScheduler } from './services/weeklyReportScheduler';
 import { validateReferralConfig } from './config/referralConfig';
 import { initPrices } from './controllers/investment';
 
@@ -31,6 +33,7 @@ import emailSyncRoutes from './routes/emailSync';
 import notificationRoutes from './routes/notifications';
 import reminderRoutes from './routes/reminders';
 import referralRoutes from './routes/referrals';
+import weeklyReportRoutes from './routes/weeklyReports';
 import webRoutes from './routes/web';
 
 // Importar webhooks
@@ -96,6 +99,7 @@ app.use('/api/email-sync', emailSyncRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reminders', reminderRoutes);
 app.use('/api/referrals', referralRoutes);
+app.use('/api/weekly-reports', weeklyReportRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
@@ -154,6 +158,9 @@ async function startServer() {
     // Iniciar scheduler de recordatorios de metas
     GoalReminderScheduler.startScheduler();
 
+    // Iniciar scheduler de recordatorios de presupuesto (Nivel 2)
+    BudgetReminderScheduler.startScheduler();
+
     // Iniciar scheduler de tips financieros (IA)
     TipScheduler.startScheduler();
 
@@ -162,6 +169,9 @@ async function startServer() {
 
     // Iniciar scheduler de expiración de referidos
     ReferralScheduler.startScheduler();
+
+    // Iniciar scheduler de reportes semanales PRO
+    WeeklyReportScheduler.startScheduler();
 
     // Inicializar precios de referencia para calculadoras
     await initPrices();
@@ -186,9 +196,11 @@ process.on('SIGINT', async () => {
   ReminderScheduler.stopScheduler();
   AntExpenseScheduler.stopScheduler();
   GoalReminderScheduler.stopScheduler();
+  BudgetReminderScheduler.stopScheduler();
   TipScheduler.stopScheduler();
   TrialScheduler.stopScheduler();
   ReferralScheduler.stopScheduler();
+  WeeklyReportScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
@@ -200,9 +212,11 @@ process.on('SIGTERM', async () => {
   ReminderScheduler.stopScheduler();
   AntExpenseScheduler.stopScheduler();
   GoalReminderScheduler.stopScheduler();
+  BudgetReminderScheduler.stopScheduler();
   TipScheduler.stopScheduler();
   TrialScheduler.stopScheduler();
   ReferralScheduler.stopScheduler();
+  WeeklyReportScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
