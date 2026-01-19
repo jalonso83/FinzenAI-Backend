@@ -90,15 +90,30 @@ export class WeeklyReportService {
         return { success: false, reason: 'Usuario no es PRO' };
       }
 
-      // 2. Obtener usuario
+      // 2. Obtener usuario y sus preferencias
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { name: true, currency: true }
+        select: {
+          name: true,
+          currency: true,
+          notificationPreferences: {
+            select: {
+              antExpenseAmountThreshold: true,
+              antExpenseMinFrequency: true
+            }
+          }
+        }
       });
 
       if (!user) {
         return { success: false, reason: 'Usuario no encontrado' };
       }
+
+      // Configuración de gastos hormiga (usar preferencias del usuario o defaults)
+      const antConfig = {
+        threshold: user.notificationPreferences?.antExpenseAmountThreshold ?? DEFAULT_ANT_EXPENSE_CONFIG.antThreshold,
+        minFrequency: user.notificationPreferences?.antExpenseMinFrequency ?? DEFAULT_ANT_EXPENSE_CONFIG.minFrequency
+      };
 
       // 3. Calcular fechas de la quincena anterior
       const { weekStart, weekEnd } = this.getLastWeekDates();
@@ -122,7 +137,7 @@ export class WeeklyReportService {
       }
 
       // 5. Recopilar datos financieros
-      const reportData = await this.gatherWeeklyData(userId, weekStart, weekEnd, user.currency);
+      const reportData = await this.gatherWeeklyData(userId, weekStart, weekEnd, user.currency, antConfig);
 
       // 6. Generar análisis con IA
       const aiResult = await this.generateAIAnalysis(reportData, user.name, user.currency);
@@ -214,7 +229,8 @@ export class WeeklyReportService {
     userId: string,
     weekStart: Date,
     weekEnd: Date,
-    currency: string
+    currency: string,
+    antConfig: { threshold: number; minFrequency: number }
   ): Promise<BiweeklyReportData> {
     // Transacciones de la quincena
     const transactions = await prisma.transaction.findMany({
@@ -305,24 +321,38 @@ export class WeeklyReportService {
       deadline: g.targetDate ? g.targetDate.toISOString().split('T')[0] : null
     }));
 
-    // Gastos hormiga (usa el umbral por defecto de la configuración)
-    const antThreshold = DEFAULT_ANT_EXPENSE_CONFIG.antThreshold;
-    const antExpensesList = transactions
+    // Gastos hormiga: monto pequeño Y que se repita según configuración del usuario
+    const antThreshold = antConfig.threshold;
+    const minFrequency = antConfig.minFrequency;
+
+    // Primero filtrar por monto pequeño
+    const smallExpenses = transactions
       .filter(t => t.type === 'EXPENSE' && Number(t.amount) <= antThreshold);
 
-    const antTotal = antExpensesList.reduce((sum, t) => sum + Number(t.amount), 0);
-    const antPercentage = totalExpenses > 0 ? Math.round((antTotal / totalExpenses) * 100) : 0;
-
-    // Top items de gastos hormiga
-    const antByCategory = new Map<string, { amount: number; count: number }>();
-    antExpensesList.forEach(t => {
+    // Agrupar por categoría para contar frecuencia
+    const categoryFrequency = new Map<string, { amount: number; count: number; transactions: typeof smallExpenses }>();
+    smallExpenses.forEach(t => {
       const catName = t.category?.name || 'Otros';
-      const current = antByCategory.get(catName) || { amount: 0, count: 0 };
-      antByCategory.set(catName, {
+      const current = categoryFrequency.get(catName) || { amount: 0, count: 0, transactions: [] };
+      categoryFrequency.set(catName, {
         amount: current.amount + Number(t.amount),
-        count: current.count + 1
+        count: current.count + 1,
+        transactions: [...current.transactions, t]
       });
     });
+
+    // Solo incluir categorías con al menos MIN_FREQUENCY repeticiones
+    const antByCategory = new Map<string, { amount: number; count: number }>();
+    let antTotal = 0;
+
+    categoryFrequency.forEach((data, category) => {
+      if (data.count >= minFrequency) {
+        antByCategory.set(category, { amount: data.amount, count: data.count });
+        antTotal += data.amount;
+      }
+    });
+
+    const antPercentage = totalExpenses > 0 ? Math.round((antTotal / totalExpenses) * 100) : 0;
 
     const antExpenses: AntExpenseData = {
       total: Math.round(antTotal * 100) / 100,

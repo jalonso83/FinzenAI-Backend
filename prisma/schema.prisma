@@ -572,6 +572,10 @@ model NotificationPreferences {
   // Umbral de alerta de gastos hormiga (porcentaje del gasto total)
   antExpenseAlertThreshold Int   @default(20)
 
+  // Configuración de detección de gastos hormiga (PRO)
+  antExpenseAmountThreshold Int  @default(500)  // Monto máximo para considerar gasto hormiga
+  antExpenseMinFrequency    Int  @default(3)    // Frecuencia mínima de repeticiones
+
   // Frecuencia de recordatorio de metas (días sin contribuir: 0=nunca, 3, 7, 14, 30)
   goalReminderFrequency    Int   @default(7)
 
