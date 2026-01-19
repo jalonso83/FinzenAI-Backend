@@ -6,44 +6,62 @@ import { subscriptionService } from './subscriptionService';
 import { logger } from '../utils/logger';
 
 /**
- * Scheduler para reportes semanales PRO
+ * Scheduler para reportes QUINCENALES PRO
  *
  * Ejecuta dos jobs:
- * 1. Domingo 11:00 PM UTC - Genera reportes semanales para usuarios PRO
- * 2. Lunes 8:00 AM UTC - Envía notificaciones de reportes listos
+ * 1. Días 1 y 16 a las 6:00 AM UTC - Genera reportes quincenales para usuarios PRO
+ * 2. Días 2 y 17 a las 8:00 AM UTC - Envía notificaciones de reportes listos
+ *
+ * Lógica quincenal:
+ * - Día 1: Se genera reporte de la segunda quincena del mes anterior (16-fin)
+ * - Día 16: Se genera reporte de la primera quincena del mes actual (1-15)
  */
 export class WeeklyReportScheduler {
   private static isRunning: boolean = false;
-  private static generationTask: cron.ScheduledTask | null = null;
-  private static notificationTask: cron.ScheduledTask | null = null;
+  private static generationTask1: cron.ScheduledTask | null = null;
+  private static generationTask16: cron.ScheduledTask | null = null;
+  private static notificationTask2: cron.ScheduledTask | null = null;
+  private static notificationTask17: cron.ScheduledTask | null = null;
 
   /**
-   * Inicia los schedulers de reportes semanales
+   * Inicia los schedulers de reportes quincenales
    */
   static startScheduler(): void {
     if (this.isRunning) {
-      logger.log('[WeeklyReportScheduler] Scheduler ya está ejecutándose');
+      logger.log('[BiweeklyReportScheduler] Scheduler ya está ejecutándose');
       return;
     }
 
-    logger.log('[WeeklyReportScheduler] 📊 Iniciando schedulers de reportes semanales...');
+    logger.log('[BiweeklyReportScheduler] 📊 Iniciando schedulers de reportes quincenales...');
 
-    // Job 1: Generar reportes - Domingo 11:00 PM UTC
-    this.generationTask = cron.schedule('0 23 * * 0', async () => {
-      logger.log('[WeeklyReportScheduler] 🔄 Ejecutando generación de reportes semanales...');
+    // Job 1a: Generar reportes - Día 1 del mes a las 6:00 AM UTC
+    this.generationTask1 = cron.schedule('0 6 1 * *', async () => {
+      logger.log('[BiweeklyReportScheduler] 🔄 Ejecutando generación de reportes (quincena 16-fin mes anterior)...');
       await this.runReportGeneration();
     });
-    logger.log('[WeeklyReportScheduler] 📅 Generación programada: Domingos 11:00 PM UTC');
 
-    // Job 2: Enviar notificaciones - Lunes 8:00 AM UTC
-    this.notificationTask = cron.schedule('0 8 * * 1', async () => {
-      logger.log('[WeeklyReportScheduler] 🔔 Ejecutando envío de notificaciones...');
+    // Job 1b: Generar reportes - Día 16 del mes a las 6:00 AM UTC
+    this.generationTask16 = cron.schedule('0 6 16 * *', async () => {
+      logger.log('[BiweeklyReportScheduler] 🔄 Ejecutando generación de reportes (quincena 1-15)...');
+      await this.runReportGeneration();
+    });
+    logger.log('[BiweeklyReportScheduler] 📅 Generación programada: Días 1 y 16 a las 6:00 AM UTC');
+
+    // Job 2a: Enviar notificaciones - Día 2 del mes a las 8:00 AM UTC
+    this.notificationTask2 = cron.schedule('0 8 2 * *', async () => {
+      logger.log('[BiweeklyReportScheduler] 🔔 Ejecutando envío de notificaciones...');
       await this.runNotificationJob();
     });
-    logger.log('[WeeklyReportScheduler] 📅 Notificaciones programadas: Lunes 8:00 AM UTC');
+
+    // Job 2b: Enviar notificaciones - Día 17 del mes a las 8:00 AM UTC
+    this.notificationTask17 = cron.schedule('0 8 17 * *', async () => {
+      logger.log('[BiweeklyReportScheduler] 🔔 Ejecutando envío de notificaciones...');
+      await this.runNotificationJob();
+    });
+    logger.log('[BiweeklyReportScheduler] 📅 Notificaciones programadas: Días 2 y 17 a las 8:00 AM UTC');
 
     this.isRunning = true;
-    logger.log('[WeeklyReportScheduler] ✅ Schedulers iniciados correctamente');
+    logger.log('[BiweeklyReportScheduler] ✅ Schedulers iniciados correctamente');
 
     // En desarrollo, ejecutar verificación inicial después de 30 segundos
     if (process.env.NODE_ENV === 'development') {
@@ -64,22 +82,32 @@ export class WeeklyReportScheduler {
    */
   static stopScheduler(): void {
     if (!this.isRunning) {
-      logger.log('[WeeklyReportScheduler] Scheduler no está ejecutándose');
+      logger.log('[BiweeklyReportScheduler] Scheduler no está ejecutándose');
       return;
     }
 
-    if (this.generationTask) {
-      this.generationTask.stop();
-      this.generationTask = null;
+    if (this.generationTask1) {
+      this.generationTask1.stop();
+      this.generationTask1 = null;
     }
 
-    if (this.notificationTask) {
-      this.notificationTask.stop();
-      this.notificationTask = null;
+    if (this.generationTask16) {
+      this.generationTask16.stop();
+      this.generationTask16 = null;
+    }
+
+    if (this.notificationTask2) {
+      this.notificationTask2.stop();
+      this.notificationTask2 = null;
+    }
+
+    if (this.notificationTask17) {
+      this.notificationTask17.stop();
+      this.notificationTask17 = null;
     }
 
     this.isRunning = false;
-    logger.log('[WeeklyReportScheduler] ⏹️ Schedulers detenidos');
+    logger.log('[BiweeklyReportScheduler] ⏹️ Schedulers detenidos');
   }
 
   /**
@@ -195,13 +223,13 @@ export class WeeklyReportScheduler {
 
           // Enviar notificación
           const score = report.financialScore;
-          const emoji = score >= 80 ? '🌟' : score >= 60 ? '📊' : '💡';
+          const emoji = score >= 70 ? '🌟' : score >= 50 ? '📊' : '💡';
 
           await NotificationService.sendToUser(report.userId, 'WEEKLY_REPORT', {
-            title: `${emoji} Tu Reporte Semanal está listo`,
-            body: `Score: ${score}/100. Revísalo en Menú > Reportes Semanales para ver tu análisis personalizado.`,
+            title: `${emoji} Tu Reporte Quincenal está listo`,
+            body: `Score: ${score}/100. Revísalo en Menú > Reportes para ver tu análisis y proyección a fin de mes.`,
             data: {
-              type: 'WEEKLY_REPORT',
+              type: 'BIWEEKLY_REPORT',
               reportId: report.id,
               screen: 'WeeklyReports'
             }
@@ -281,8 +309,8 @@ export class WeeklyReportScheduler {
   } {
     return {
       isRunning: this.isRunning,
-      nextGeneration: this.isRunning ? 'Domingos 11:00 PM UTC' : 'Detenido',
-      nextNotification: this.isRunning ? 'Lunes 8:00 AM UTC' : 'Detenido'
+      nextGeneration: this.isRunning ? 'Días 1 y 16 a las 6:00 AM UTC' : 'Detenido',
+      nextNotification: this.isRunning ? 'Días 2 y 17 a las 8:00 AM UTC' : 'Detenido'
     };
   }
 }

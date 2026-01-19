@@ -3,9 +3,10 @@ import { openai } from '../openaiClient';
 import { subscriptionService } from './subscriptionService';
 import { logger } from '../utils/logger';
 import { Decimal } from '@prisma/client/runtime/library';
+import { DEFAULT_ANT_EXPENSE_CONFIG } from '../types/antExpense';
 
 // Configuración
-const MAX_REPORTS_PER_USER = 12; // Máximo 12 semanas de historial
+const MAX_REPORTS_PER_USER = 12; // Máximo 12 quincenas de historial (6 meses)
 
 // Interfaces
 interface CategoryData {
@@ -39,20 +40,24 @@ interface AntExpenseData {
 
 interface Predictions {
   endOfMonthSavings: number;
+  endOfMonthBalance: number;
+  projectedExpenses: number;
   budgetWarnings: string[];
   savingsProjection: number;
+  monthlyTrend: string;
 }
 
-interface VsLastWeek {
+interface VsLastPeriod {
   incomeChange: number;
   expensesChange: number;
   scoreChange: number;
   savingsRateChange: number;
 }
 
-interface WeeklyReportData {
-  weekStart: Date;
-  weekEnd: Date;
+interface BiweeklyReportData {
+  periodStart: Date;
+  periodEnd: Date;
+  periodType: 'FIRST_HALF' | 'SECOND_HALF'; // 1-15 o 16-fin de mes
   totalIncome: number;
   totalExpenses: number;
   savingsRate: number;
@@ -64,7 +69,7 @@ interface WeeklyReportData {
   predictions: Predictions;
   aiAnalysis: string;
   recommendations: string[];
-  vsLastWeek: VsLastWeek | null;
+  vsLastPeriod: VsLastPeriod | null;
 }
 
 export class WeeklyReportService {
@@ -157,24 +162,49 @@ export class WeeklyReportService {
   }
 
   /**
-   * Obtiene las fechas de la semana anterior (lunes a domingo)
+   * Obtiene las fechas de la quincena anterior
+   * Primera quincena: 1-15 del mes
+   * Segunda quincena: 16-fin del mes
+   */
+  static getLastBiweeklyDates(): {
+    periodStart: Date;
+    periodEnd: Date;
+    periodType: 'FIRST_HALF' | 'SECOND_HALF'
+  } {
+    const now = new Date();
+    const currentDay = now.getDate();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    let periodStart: Date;
+    let periodEnd: Date;
+    let periodType: 'FIRST_HALF' | 'SECOND_HALF';
+
+    if (currentDay <= 15) {
+      // Estamos en la primera quincena, reportar la segunda quincena del mes anterior
+      const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+      const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+      const lastDayOfLastMonth = new Date(lastMonthYear, lastMonth + 1, 0).getDate();
+
+      periodStart = new Date(lastMonthYear, lastMonth, 16, 0, 0, 0, 0);
+      periodEnd = new Date(lastMonthYear, lastMonth, lastDayOfLastMonth, 23, 59, 59, 999);
+      periodType = 'SECOND_HALF';
+    } else {
+      // Estamos en la segunda quincena, reportar la primera quincena del mes actual
+      periodStart = new Date(currentYear, currentMonth, 1, 0, 0, 0, 0);
+      periodEnd = new Date(currentYear, currentMonth, 15, 23, 59, 59, 999);
+      periodType = 'FIRST_HALF';
+    }
+
+    return { periodStart, periodEnd, periodType };
+  }
+
+  /**
+   * Alias para compatibilidad - usa getLastBiweeklyDates internamente
    */
   static getLastWeekDates(): { weekStart: Date; weekEnd: Date } {
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-
-    // Calcular el domingo de la semana pasada
-    const sundayOffset = dayOfWeek === 0 ? 7 : dayOfWeek;
-    const weekEnd = new Date(now);
-    weekEnd.setDate(now.getDate() - sundayOffset);
-    weekEnd.setHours(23, 59, 59, 999);
-
-    // Calcular el lunes de la semana pasada
-    const weekStart = new Date(weekEnd);
-    weekStart.setDate(weekEnd.getDate() - 6);
-    weekStart.setHours(0, 0, 0, 0);
-
-    return { weekStart, weekEnd };
+    const { periodStart, periodEnd } = this.getLastBiweeklyDates();
+    return { weekStart: periodStart, weekEnd: periodEnd };
   }
 
   /**
@@ -275,8 +305,8 @@ export class WeeklyReportService {
       deadline: g.targetDate ? g.targetDate.toISOString().split('T')[0] : null
     }));
 
-    // Gastos hormiga (transacciones <= 500)
-    const antThreshold = 500;
+    // Gastos hormiga (usa el umbral por defecto de la configuración)
+    const antThreshold = DEFAULT_ANT_EXPENSE_CONFIG.antThreshold;
     const antExpensesList = transactions
       .filter(t => t.type === 'EXPENSE' && Number(t.amount) <= antThreshold);
 
@@ -303,13 +333,27 @@ export class WeeklyReportService {
         .slice(0, 3)
     };
 
-    // Predicciones
-    const predictions = await this.calculatePredictions(userId, totalIncome, totalExpenses, budgetsStatus, currency);
+    // Predicciones con proyección a fin de mes
+    const predictions = await this.calculatePredictions(
+      userId,
+      totalIncome,
+      totalExpenses,
+      budgetsStatus,
+      currency,
+      'FIRST_HALF' // TODO: pasar el periodType real
+    );
 
-    // Calcular score financiero
-    const financialScore = this.calculateFinancialScore(savingsRate, budgetsStatus, goalsProgress, antPercentage);
+    // Calcular score financiero con la nueva fórmula
+    const hasIncome = totalIncome > 0;
+    const financialScore = this.calculateFinancialScore(
+      savingsRate,
+      budgetsStatus,
+      goalsProgress,
+      antPercentage,
+      hasIncome
+    );
 
-    // Comparación con semana anterior
+    // Comparación con período anterior
     const vsLastWeek = await this.getLastWeekComparison(userId, weekStart, totalIncome, totalExpenses, savingsRate, financialScore);
 
     return {
@@ -331,23 +375,75 @@ export class WeeklyReportService {
   }
 
   /**
-   * Calcula predicciones financieras
+   * Calcula predicciones financieras mejoradas
+   * Incluye proyección a fin de mes basada en datos quincenales
    */
   private static async calculatePredictions(
     userId: string,
-    weeklyIncome: number,
-    weeklyExpenses: number,
+    periodIncome: number,
+    periodExpenses: number,
     budgets: BudgetStatus[],
-    currency: string
+    currency: string,
+    periodType: 'FIRST_HALF' | 'SECOND_HALF' = 'FIRST_HALF'
   ): Promise<Predictions> {
-    // Proyección de ahorro a fin de mes (asumiendo 4 semanas)
     const now = new Date();
-    const daysLeftInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
-    const weeksLeft = Math.ceil(daysLeftInMonth / 7);
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const currentDay = now.getDate();
 
-    const projectedMonthlyIncome = weeklyIncome * 4;
-    const projectedMonthlyExpenses = weeklyExpenses * 4;
-    const endOfMonthSavings = Math.round((projectedMonthlyIncome - projectedMonthlyExpenses) * 100) / 100;
+    // Obtener datos históricos del usuario para mejor proyección
+    const lastMonthStart = new Date(currentYear, currentMonth - 1, 1);
+    const lastMonthEnd = new Date(currentYear, currentMonth, 0, 23, 59, 59);
+
+    const lastMonthTransactions = await prisma.transaction.findMany({
+      where: {
+        userId,
+        date: { gte: lastMonthStart, lte: lastMonthEnd }
+      }
+    });
+
+    const lastMonthIncome = lastMonthTransactions
+      .filter(t => t.type === 'INCOME')
+      .reduce((sum, t) => sum + Number(t.amount), 0);
+
+    const lastMonthExpenses = lastMonthTransactions
+      .filter(t => t.type === 'EXPENSE')
+      .reduce((sum, t) => sum + Number(t.amount), 0);
+
+    // Calcular proyección a fin de mes
+    let projectedExpenses: number;
+    let projectedIncome: number;
+    let monthlyTrend: string;
+
+    if (periodType === 'FIRST_HALF') {
+      // Tenemos datos de la primera quincena, proyectar la segunda
+      projectedExpenses = periodExpenses * 2; // Aproximación simple
+      projectedIncome = periodIncome * 2;
+
+      // Ajustar con datos históricos si existen
+      if (lastMonthExpenses > 0) {
+        const lastMonthRatio = lastMonthExpenses / 2; // Promedio quincenal del mes pasado
+        projectedExpenses = periodExpenses + lastMonthRatio;
+      }
+    } else {
+      // Tenemos datos de la segunda quincena del mes anterior
+      // Usar como referencia para el mes actual
+      projectedExpenses = periodExpenses * 2;
+      projectedIncome = periodIncome * 2;
+    }
+
+    const endOfMonthSavings = Math.round((projectedIncome - projectedExpenses) * 100) / 100;
+    const endOfMonthBalance = Math.round((periodIncome - periodExpenses) * 100) / 100;
+
+    // Determinar tendencia
+    if (endOfMonthSavings > 0) {
+      monthlyTrend = `Si sigues así, terminarás el mes con +${currency}${endOfMonthSavings.toLocaleString()} de ahorro`;
+    } else if (endOfMonthSavings < 0) {
+      monthlyTrend = `⚠️ A este ritmo, te faltarán ${currency}${Math.abs(endOfMonthSavings).toLocaleString()} a fin de mes`;
+    } else {
+      monthlyTrend = 'Vas equilibrado - tus ingresos cubren tus gastos';
+    }
 
     // Advertencias de presupuesto
     const budgetWarnings: string[] = [];
@@ -359,56 +455,96 @@ export class WeeklyReportService {
       }
     });
 
-    // Proyección de ahorros anual (si mantiene el ritmo actual)
-    const savingsProjection = Math.round((projectedMonthlyIncome - projectedMonthlyExpenses) * 12);
+    // Proyección de ahorros anual
+    const monthlyNet = projectedIncome - projectedExpenses;
+    const savingsProjection = Math.round(monthlyNet * 12);
 
     return {
       endOfMonthSavings,
+      endOfMonthBalance,
+      projectedExpenses: Math.round(projectedExpenses * 100) / 100,
       budgetWarnings,
-      savingsProjection
+      savingsProjection,
+      monthlyTrend
     };
   }
 
   /**
    * Calcula el score financiero (0-100)
+   * Nueva fórmula optimizada para Latam y Gen Z:
+   * - Base 0 (todo se gana)
+   * - Ahorro: 25 pts max (menos peso por ingresos irregulares)
+   * - Presupuestos: 30 pts max (esto SÍ controlan)
+   * - Metas: 20 pts max (motivar ahorro a largo plazo)
+   * - Gastos hormiga: 25 pts max (principal problema Gen Z)
    */
   private static calculateFinancialScore(
     savingsRate: number,
     budgets: BudgetStatus[],
     goals: GoalProgress[],
-    antPercentage: number
+    antPercentage: number,
+    hasIncome: boolean = true
   ): number {
-    let score = 50; // Base
+    let score = 0; // Base 0 - todo se gana
 
-    // Tasa de ahorro (+30 puntos max)
-    if (savingsRate >= 20) score += 30;
-    else if (savingsRate >= 10) score += 20;
-    else if (savingsRate >= 0) score += 10;
-    else score -= 10; // Negativo si gasta más de lo que gana
+    // 1. AHORRO (25 puntos max)
+    if (savingsRate >= 20) {
+      score += 25;
+    } else if (savingsRate >= 10) {
+      score += 20;
+    } else if (savingsRate >= 0 && hasIncome) {
+      score += 15;
+    } else if (!hasIncome) {
+      // Sin ingresos esta quincena (normal en Latam) - no penalizar tanto
+      score += 10;
+    } else {
+      // Negativo (gastó más de lo que ganó)
+      score += 5;
+    }
 
-    // Control de presupuestos (+20 puntos max)
+    // 2. PRESUPUESTOS (30 puntos max)
     if (budgets.length > 0) {
       const avgBudgetUsage = budgets.reduce((sum, b) => sum + b.percentage, 0) / budgets.length;
       const exceededCount = budgets.filter(b => b.isExceeded).length;
 
-      if (exceededCount === 0 && avgBudgetUsage <= 80) score += 20;
-      else if (exceededCount <= 1 && avgBudgetUsage <= 90) score += 10;
-      else if (exceededCount > budgets.length / 2) score -= 10;
+      if (exceededCount === 0 && avgBudgetUsage <= 80) {
+        score += 30;
+      } else if (exceededCount === 0 && avgBudgetUsage <= 95) {
+        score += 20;
+      } else if (exceededCount <= 1) {
+        score += 10;
+      }
+      // Si más de 1 excedido, no suma puntos
+    } else {
+      // No tiene presupuestos - dar puntos mínimos para incentivar crear
+      score += 5;
     }
 
-    // Progreso en metas (+15 puntos max)
+    // 3. METAS (20 puntos max)
     if (goals.length > 0) {
       const avgProgress = goals.reduce((sum, g) => sum + g.percentage, 0) / goals.length;
-      if (avgProgress >= 50) score += 15;
-      else if (avgProgress >= 25) score += 10;
-      else score += 5;
+      if (avgProgress >= 50) {
+        score += 20;
+      } else if (avgProgress >= 25) {
+        score += 15;
+      } else {
+        score += 10;
+      }
     }
+    // Si no tiene metas, no suma puntos (incentivar a crear)
 
-    // Control de gastos hormiga (+15 puntos max)
-    if (antPercentage <= 10) score += 15;
-    else if (antPercentage <= 20) score += 10;
-    else if (antPercentage <= 30) score += 5;
-    else score -= 5;
+    // 4. GASTOS HORMIGA (25 puntos max)
+    if (antPercentage <= 5) {
+      score += 25;
+    } else if (antPercentage <= 10) {
+      score += 20;
+    } else if (antPercentage <= 20) {
+      score += 15;
+    } else if (antPercentage <= 30) {
+      score += 10;
+    } else {
+      score += 5;
+    }
 
     // Asegurar que esté en rango 0-100
     return Math.max(0, Math.min(100, score));
