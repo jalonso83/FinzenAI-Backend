@@ -74,7 +74,7 @@ interface BiweeklyReportData {
 
 export class WeeklyReportService {
   /**
-   * Genera el reporte semanal para un usuario PRO
+   * Genera el reporte quincenal para un usuario PRO
    */
   static async generateWeeklyReport(userId: string): Promise<{
     success: boolean;
@@ -100,10 +100,10 @@ export class WeeklyReportService {
         return { success: false, reason: 'Usuario no encontrado' };
       }
 
-      // 3. Calcular fechas de la semana anterior (lunes a domingo)
+      // 3. Calcular fechas de la quincena anterior
       const { weekStart, weekEnd } = this.getLastWeekDates();
 
-      // 4. Verificar si ya existe reporte para esta semana
+      // 4. Verificar si ya existe reporte para esta quincena
       const existingReport = await prisma.weeklyReport.findUnique({
         where: {
           userId_weekStart: {
@@ -144,7 +144,7 @@ export class WeeklyReportService {
           predictions: JSON.parse(JSON.stringify(reportData.predictions)),
           aiAnalysis: aiResult.analysis,
           recommendations: JSON.parse(JSON.stringify(aiResult.recommendations)),
-          vsLastWeek: reportData.vsLastWeek ? JSON.parse(JSON.stringify(reportData.vsLastWeek)) : null
+          vsLastWeek: reportData.vsLastPeriod ? JSON.parse(JSON.stringify(reportData.vsLastPeriod)) : null
         }
       });
 
@@ -208,15 +208,15 @@ export class WeeklyReportService {
   }
 
   /**
-   * Recopila todos los datos financieros de la semana
+   * Recopila todos los datos financieros de la quincena
    */
   private static async gatherWeeklyData(
     userId: string,
     weekStart: Date,
     weekEnd: Date,
     currency: string
-  ): Promise<WeeklyReportData> {
-    // Transacciones de la semana
+  ): Promise<BiweeklyReportData> {
+    // Transacciones de la quincena
     const transactions = await prisma.transaction.findMany({
       where: {
         userId,
@@ -354,11 +354,15 @@ export class WeeklyReportService {
     );
 
     // Comparación con período anterior
-    const vsLastWeek = await this.getLastWeekComparison(userId, weekStart, totalIncome, totalExpenses, savingsRate, financialScore);
+    const vsLastPeriod = await this.getLastWeekComparison(userId, weekStart, totalIncome, totalExpenses, savingsRate, financialScore);
+
+    // Determinar tipo de período (primera o segunda quincena)
+    const periodType: 'FIRST_HALF' | 'SECOND_HALF' = weekStart.getDate() <= 15 ? 'FIRST_HALF' : 'SECOND_HALF';
 
     return {
-      weekStart,
-      weekEnd,
+      periodStart: weekStart,
+      periodEnd: weekEnd,
+      periodType,
       totalIncome: Math.round(totalIncome * 100) / 100,
       totalExpenses: Math.round(totalExpenses * 100) / 100,
       savingsRate,
@@ -370,7 +374,7 @@ export class WeeklyReportService {
       predictions,
       aiAnalysis: '', // Se llenará con IA
       recommendations: [], // Se llenará con IA
-      vsLastWeek
+      vsLastPeriod
     };
   }
 
@@ -551,7 +555,7 @@ export class WeeklyReportService {
   }
 
   /**
-   * Compara con la semana anterior
+   * Compara con la quincena anterior
    */
   private static async getLastWeekComparison(
     userId: string,
@@ -560,8 +564,8 @@ export class WeeklyReportService {
     currentExpenses: number,
     currentSavingsRate: number,
     currentScore: number
-  ): Promise<VsLastWeek | null> {
-    // Buscar reporte de la semana anterior
+  ): Promise<VsLastPeriod | null> {
+    // Buscar reporte de la quincena anterior
     const previousWeekStart = new Date(currentWeekStart);
     previousWeekStart.setDate(previousWeekStart.getDate() - 7);
 
@@ -599,7 +603,7 @@ export class WeeklyReportService {
    * Genera análisis con IA
    */
   private static async generateAIAnalysis(
-    data: WeeklyReportData,
+    data: BiweeklyReportData,
     userName: string,
     currency: string
   ): Promise<{ analysis: string; recommendations: string[] }> {
@@ -611,7 +615,7 @@ export class WeeklyReportService {
         messages: [
           {
             role: 'system',
-            content: `Eres Zenio, el asistente financiero de FinZen AI. Genera un análisis semanal personalizado.
+            content: `Eres Zenio, el asistente financiero de FinZen AI. Genera un análisis quincenal personalizado.
 
 FORMATO DE RESPUESTA (JSON):
 {
@@ -622,7 +626,7 @@ FORMATO DE RESPUESTA (JSON):
 REGLAS:
 - Menciona logros positivos primero
 - Sé específico con montos y porcentajes
-- Las recomendaciones deben ser ACCIONABLES (algo que pueda hacer esta semana)
+- Las recomendaciones deben ser ACCIONABLES (algo que pueda hacer en los próximos días)
 - Máximo 3 recomendaciones
 - Usa emojis con moderación (1-2 por párrafo)`
           },
@@ -659,9 +663,9 @@ REGLAS:
 
       // Análisis por defecto si falla la IA
       return {
-        analysis: `Esta semana tuviste ingresos de ${currency}${data.totalIncome.toLocaleString()} y gastos de ${currency}${data.totalExpenses.toLocaleString()}. Tu tasa de ahorro fue del ${data.savingsRate}%.`,
+        analysis: `Esta quincena tuviste ingresos de ${currency}${data.totalIncome.toLocaleString()} y gastos de ${currency}${data.totalExpenses.toLocaleString()}. Tu tasa de ahorro fue del ${data.savingsRate}%.`,
         recommendations: [
-          'Revisa tus gastos más grandes esta semana',
+          'Revisa tus gastos más grandes esta quincena',
           'Considera establecer un presupuesto si no lo tienes',
           'Intenta ahorrar al menos un 20% de tus ingresos'
         ]
@@ -672,11 +676,11 @@ REGLAS:
   /**
    * Construye el prompt para la IA
    */
-  private static buildAIPrompt(data: WeeklyReportData, userName: string, currency: string): string {
+  private static buildAIPrompt(data: BiweeklyReportData, userName: string, currency: string): string {
     const parts: string[] = [];
 
-    parts.push(`REPORTE SEMANAL DE ${userName.toUpperCase()}`);
-    parts.push(`Período: ${data.weekStart.toLocaleDateString('es-DO')} - ${data.weekEnd.toLocaleDateString('es-DO')}`);
+    parts.push(`REPORTE QUINCENAL DE ${userName.toUpperCase()}`);
+    parts.push(`Período: ${data.periodStart.toLocaleDateString('es-DO')} - ${data.periodEnd.toLocaleDateString('es-DO')}`);
     parts.push('');
 
     // Resumen financiero
@@ -687,12 +691,12 @@ REGLAS:
     parts.push(`- Score financiero: ${data.financialScore}/100`);
     parts.push('');
 
-    // Comparación con semana anterior
-    if (data.vsLastWeek) {
-      parts.push('VS SEMANA ANTERIOR:');
-      parts.push(`- Ingresos: ${data.vsLastWeek.incomeChange >= 0 ? '+' : ''}${data.vsLastWeek.incomeChange}%`);
-      parts.push(`- Gastos: ${data.vsLastWeek.expensesChange >= 0 ? '+' : ''}${data.vsLastWeek.expensesChange}%`);
-      parts.push(`- Score: ${data.vsLastWeek.scoreChange >= 0 ? '+' : ''}${data.vsLastWeek.scoreChange} puntos`);
+    // Comparación con quincena anterior
+    if (data.vsLastPeriod) {
+      parts.push('VS QUINCENA ANTERIOR:');
+      parts.push(`- Ingresos: ${data.vsLastPeriod.incomeChange >= 0 ? '+' : ''}${data.vsLastPeriod.incomeChange}%`);
+      parts.push(`- Gastos: ${data.vsLastPeriod.expensesChange >= 0 ? '+' : ''}${data.vsLastPeriod.expensesChange}%`);
+      parts.push(`- Score: ${data.vsLastPeriod.scoreChange >= 0 ? '+' : ''}${data.vsLastPeriod.scoreChange} puntos`);
       parts.push('');
     }
 
