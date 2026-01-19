@@ -32,6 +32,9 @@ interface UpdatePreferencesRequest {
   goalReminderFrequency?: number;
   quietHoursStart?: number | null;
   quietHoursEnd?: number | null;
+  // Configuración de detección de gastos hormiga (PRO)
+  antExpenseAmountThreshold?: number;
+  antExpenseMinFrequency?: number;
 }
 
 /**
@@ -147,7 +150,9 @@ export const getPreferences = async (req: AuthRequest, res: Response) => {
         budgetAlertThreshold: 80,
         goalReminderFrequency: 7,
         quietHoursStart: null,
-        quietHoursEnd: null
+        quietHoursEnd: null,
+        antExpenseAmountThreshold: 500,
+        antExpenseMinFrequency: 3
       });
     }
 
@@ -161,7 +166,9 @@ export const getPreferences = async (req: AuthRequest, res: Response) => {
       budgetAlertThreshold: preferences.budgetAlertThreshold,
       goalReminderFrequency: preferences.goalReminderFrequency,
       quietHoursStart: preferences.quietHoursStart,
-      quietHoursEnd: preferences.quietHoursEnd
+      quietHoursEnd: preferences.quietHoursEnd,
+      antExpenseAmountThreshold: preferences.antExpenseAmountThreshold ?? 500,
+      antExpenseMinFrequency: preferences.antExpenseMinFrequency ?? 3
     });
 
   } catch (error: any) {
@@ -241,7 +248,9 @@ export const updatePreferences = async (req: AuthRequest, res: Response) => {
         budgetAlertThreshold: preferences.budgetAlertThreshold,
         goalReminderFrequency: preferences.goalReminderFrequency,
         quietHoursStart: preferences.quietHoursStart,
-        quietHoursEnd: preferences.quietHoursEnd
+        quietHoursEnd: preferences.quietHoursEnd,
+        antExpenseAmountThreshold: preferences.antExpenseAmountThreshold ?? 500,
+        antExpenseMinFrequency: preferences.antExpenseMinFrequency ?? 3
       }
     });
 
