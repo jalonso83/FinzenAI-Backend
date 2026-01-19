@@ -590,7 +590,7 @@ export class NotificationService {
   }
 
   /**
-   * Notifica alerta de gastos hormiga (análisis semanal)
+   * Notifica alerta de gastos hormiga (análisis semanal o mensual)
    */
   static async notifyAntExpenseAlert(
     userId: string,
@@ -598,17 +598,24 @@ export class NotificationService {
     percentageOfTotal: number,
     topCategory: string,
     savingsOpportunity: number,
-    currency: string
+    currency: string,
+    period: 'weekly' | 'monthly' = 'weekly'
   ): Promise<SendNotificationResult> {
+    const periodText = period === 'weekly' ? 'Esta semana' : 'Este mes';
+    const title = period === 'weekly'
+      ? '🐜 Resumen Semanal de Gastos Hormiga'
+      : '🐜 Resumen Mensual de Gastos Hormiga';
+
     const payload: NotificationPayload = {
-      title: '🐜 ¡Alerta de Gastos Hormiga!',
-      body: `Tus pequeños gastos suman ${currency}${totalAntExpenses.toLocaleString()} (${percentageOfTotal}% del total). Tu mayor "criminal" es ${topCategory}. ¡Podrías ahorrar ${currency}${savingsOpportunity.toLocaleString()}/mes!`,
+      title,
+      body: `${periodText} tus pequeños gastos suman ${currency}${totalAntExpenses.toLocaleString()} (${percentageOfTotal.toFixed(1)}% del total). Tu mayor "hormiga" es ${topCategory}. ¡Podrías ahorrar ${currency}${savingsOpportunity.toLocaleString()}/mes!`,
       data: {
         type: 'ANT_EXPENSE_ALERT',
         totalAntExpenses: totalAntExpenses.toString(),
         percentageOfTotal: percentageOfTotal.toString(),
         topCategory,
         savingsOpportunity: savingsOpportunity.toString(),
+        period,
         screen: 'AntExpenseDetective'
       }
     };

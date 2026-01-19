@@ -35,6 +35,7 @@ export const PLANS = {
       exportData: false,
       bankIntegration: false,
       antExpenseAnalysis: 'basic' as const, // Solo top 3 gastos hormiga
+      antExpenseAlerts: false, // Sin alertas automáticas de gastos hormiga
       advancedCalculators: false, // Sin acceso a Skip vs Save Challenge
     },
     features: [
@@ -73,7 +74,8 @@ export const PLANS = {
       advancedReports: true,
       exportData: true,
       bankIntegration: false,
-      antExpenseAnalysis: 'full' as const, // Análisis completo con alertas y recomendaciones
+      antExpenseAnalysis: 'full' as const, // Análisis completo con recomendaciones
+      antExpenseAlerts: false, // Sin alertas automáticas (solo PRO)
       advancedCalculators: true, // Acceso a Skip vs Save Challenge
     },
     features: [
@@ -116,12 +118,14 @@ export const PLANS = {
       advancedReports: true,
       exportData: true,
       bankIntegration: true, // Exclusivo PRO: Email Sync
-      antExpenseAnalysis: 'full' as const, // Análisis completo con alertas y recomendaciones
+      antExpenseAnalysis: 'full' as const, // Análisis completo con recomendaciones
+      antExpenseAlerts: true, // Exclusivo PRO: Alertas automáticas semanales y mensuales
       advancedCalculators: true, // Acceso a Skip vs Save Challenge
     },
     features: [
       'Todo lo de Plus',
       'Detección automática de gastos desde tu correo',
+      'Alertas automáticas de gastos hormiga',
       'Proyecciones de inversión',
       'Acceso anticipado a nuevas features',
     ],

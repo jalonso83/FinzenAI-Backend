@@ -10,9 +10,13 @@ export class AntExpenseScheduler {
   private static isRunning: boolean = false;
   private static cronTask: cron.ScheduledTask | null = null;
 
+  private static weeklyCronTask: cron.ScheduledTask | null = null;
+  private static monthlyCronTask: cron.ScheduledTask | null = null;
+
   /**
    * Inicia el scheduler de alertas de gastos hormiga
-   * Se ejecuta todos los lunes a las 10 AM UTC para analizar gastos de la semana
+   * - Semanal: Lunes 10 AM UTC (últimos 7 días)
+   * - Mensual: Día 1 a las 10 AM UTC (últimos 30 días)
    */
   static startScheduler(): void {
     if (this.isRunning) {
@@ -21,22 +25,31 @@ export class AntExpenseScheduler {
     }
 
     logger.log('[AntExpenseScheduler] 🐜 Iniciando scheduler de alertas de gastos hormiga...');
-    logger.log('[AntExpenseScheduler] 📅 Se ejecutará todos los lunes a las 10:00 AM UTC');
+    logger.log('[AntExpenseScheduler] 📅 Semanal: Lunes 10:00 AM UTC');
+    logger.log('[AntExpenseScheduler] 📅 Mensual: Día 1 a las 10:00 AM UTC');
 
-    // Ejecutar todos los lunes a las 10 AM UTC
-    // Formato cron: minuto hora día-del-mes mes día-de-la-semana
-    // 0 10 * * 1 = A las 10:00 AM, cualquier día del mes, cualquier mes, solo los lunes (1)
-    this.cronTask = cron.schedule('0 10 * * 1', async () => {
-      logger.log('[AntExpenseScheduler] 🔄 Ejecutando análisis de gastos hormiga...');
-
+    // SEMANAL: Todos los lunes a las 10 AM UTC (últimos 7 días)
+    this.weeklyCronTask = cron.schedule('0 10 * * 1', async () => {
+      logger.log('[AntExpenseScheduler] 🔄 Ejecutando análisis SEMANAL de gastos hormiga...');
       try {
-        await this.analyzeAllEligibleUsers();
+        await this.analyzeAllEligibleUsers('weekly');
       } catch (error) {
-        logger.error('[AntExpenseScheduler] ❌ Error en ejecución del scheduler:', error);
+        logger.error('[AntExpenseScheduler] ❌ Error en análisis semanal:', error);
+      }
+    });
+
+    // MENSUAL: Día 1 de cada mes a las 10 AM UTC (últimos 30 días)
+    this.monthlyCronTask = cron.schedule('0 10 1 * *', async () => {
+      logger.log('[AntExpenseScheduler] 🔄 Ejecutando análisis MENSUAL de gastos hormiga...');
+      try {
+        await this.analyzeAllEligibleUsers('monthly');
+      } catch (error) {
+        logger.error('[AntExpenseScheduler] ❌ Error en análisis mensual:', error);
       }
     });
 
     this.isRunning = true;
+    this.cronTask = this.weeklyCronTask; // Mantener compatibilidad
     logger.log('[AntExpenseScheduler] ✅ Scheduler iniciado correctamente');
 
     // Opcional: Ejecutar una vez al inicio para testing/desarrollo
@@ -44,11 +57,11 @@ export class AntExpenseScheduler {
       logger.log('[AntExpenseScheduler] 🧪 Ejecutando análisis inicial (desarrollo)...');
       setTimeout(async () => {
         try {
-          await this.analyzeAllEligibleUsers();
+          await this.analyzeAllEligibleUsers('weekly');
         } catch (error) {
           logger.error('[AntExpenseScheduler] ❌ Error en análisis inicial:', error);
         }
-      }, 10000); // Esperar 10 segundos después del inicio
+      }, 10000);
     }
   }
 
@@ -56,12 +69,19 @@ export class AntExpenseScheduler {
    * Detiene el scheduler (útil para testing o shutdown)
    */
   static stopScheduler(): void {
-    if (!this.isRunning || !this.cronTask) {
+    if (!this.isRunning) {
       logger.log('[AntExpenseScheduler] Scheduler no está ejecutándose');
       return;
     }
 
-    this.cronTask.stop();
+    if (this.weeklyCronTask) {
+      this.weeklyCronTask.stop();
+      this.weeklyCronTask = null;
+    }
+    if (this.monthlyCronTask) {
+      this.monthlyCronTask.stop();
+      this.monthlyCronTask = null;
+    }
     this.cronTask = null;
     this.isRunning = false;
     logger.log('[AntExpenseScheduler] ⏹️ Scheduler detenido');
@@ -69,22 +89,24 @@ export class AntExpenseScheduler {
 
   /**
    * Analiza gastos hormiga para todos los usuarios elegibles
-   * Solo usuarios PLUS/PRO con alertas habilitadas
+   * Solo usuarios PRO con alertas habilitadas
+   * @param period 'weekly' (7 días) o 'monthly' (30 días)
    */
-  static async analyzeAllEligibleUsers(): Promise<void> {
-    logger.log('[AntExpenseScheduler] 🔍 Buscando usuarios elegibles para alertas...');
+  static async analyzeAllEligibleUsers(period: 'weekly' | 'monthly' = 'weekly'): Promise<void> {
+    const daysToAnalyze = period === 'weekly' ? 7 : 30;
+    const periodLabel = period === 'weekly' ? 'SEMANAL' : 'MENSUAL';
+
+    logger.log(`[AntExpenseScheduler] 🔍 Análisis ${periodLabel}: Buscando usuarios PRO elegibles...`);
 
     try {
       // Obtener todos los usuarios con dispositivos activos y alertas habilitadas
       const eligibleUsers = await prisma.user.findMany({
         where: {
-          // Tiene al menos un dispositivo activo
           devices: {
             some: {
               isActive: true
             }
           },
-          // Tiene preferencias de notificación con alertas de gastos hormiga habilitadas
           notificationPreferences: {
             antExpenseAlertsEnabled: true
           }
@@ -94,30 +116,35 @@ export class AntExpenseScheduler {
         }
       });
 
-      logger.log(`[AntExpenseScheduler] 👥 ${eligibleUsers.length} usuarios elegibles encontrados`);
+      logger.log(`[AntExpenseScheduler] 👥 ${eligibleUsers.length} usuarios con alertas habilitadas`);
 
       let notificationsSent = 0;
       let usersSkipped = 0;
-      let usersFree = 0;
+      let usersNotPro = 0;
 
       for (const user of eligibleUsers) {
         try {
-          // Verificar que el usuario tenga plan PLUS o PRO
+          // Verificar que el usuario tenga plan PRO (único con alertas automáticas)
           const subscription = await subscriptionService.getUserSubscription(user.id);
-          const planLimits = subscription.limits as { antExpenseAnalysis?: string };
-          const hasFullAnalysis = planLimits.antExpenseAnalysis === 'full';
+          const planLimits = subscription.limits as { antExpenseAlerts?: boolean };
 
-          if (!hasFullAnalysis) {
-            // Usuario FREE - no enviar alertas proactivas
-            usersFree++;
+          if (!planLimits.antExpenseAlerts) {
+            // Usuario FREE o PLUS - no enviar alertas proactivas
+            usersNotPro++;
             continue;
           }
 
-          // Obtener el umbral personalizado del usuario (default 20%)
-          const alertThreshold = user.notificationPreferences?.antExpenseAlertThreshold ?? 20;
+          // Obtener configuración personalizada del usuario
+          const userAmountThreshold = user.notificationPreferences?.antExpenseAmountThreshold ?? 500;
+          const userMinFrequency = user.notificationPreferences?.antExpenseMinFrequency ?? 3;
+          const alertPercentageThreshold = user.notificationPreferences?.antExpenseAlertThreshold ?? 20;
 
-          // Analizar gastos hormiga del usuario
-          const result = await antExpenseService.calculateAntExpenseStats(user.id);
+          // Analizar gastos hormiga con la configuración del usuario
+          const result = await antExpenseService.calculateAntExpenseStats(user.id, {
+            antThreshold: userAmountThreshold,
+            minFrequency: userMinFrequency,
+            monthsToAnalyze: period === 'weekly' ? 1 : 1, // Usamos días, no meses
+          }, daysToAnalyze);
 
           if (!result.canAnalyze || !result.calculations) {
             usersSkipped++;
@@ -127,7 +154,7 @@ export class AntExpenseScheduler {
           const { calculations } = result;
 
           // Solo notificar si el porcentaje supera el umbral del usuario
-          if (calculations.percentageOfTotal >= alertThreshold) {
+          if (calculations.percentageOfTotal >= alertPercentageThreshold) {
             const topCategory = calculations.topCriminals[0]?.category || 'Varios';
 
             await NotificationService.notifyAntExpenseAlert(
@@ -136,11 +163,12 @@ export class AntExpenseScheduler {
               calculations.percentageOfTotal,
               topCategory,
               calculations.savingsOpportunityPerMonth,
-              user.currency || 'RD$'
+              user.currency || 'RD$',
+              period // Pasar el período para personalizar el mensaje
             );
 
             notificationsSent++;
-            logger.log(`[AntExpenseScheduler] 📨 Alerta enviada a ${user.email} (${calculations.percentageOfTotal}% > ${alertThreshold}%)`);
+            logger.log(`[AntExpenseScheduler] 📨 Alerta ${periodLabel} enviada a ${user.email} (${calculations.percentageOfTotal.toFixed(1)}% > ${alertPercentageThreshold}%)`);
           } else {
             usersSkipped++;
           }
@@ -150,25 +178,26 @@ export class AntExpenseScheduler {
         }
       }
 
-      logger.log(`[AntExpenseScheduler] ✅ Análisis completado:`);
+      logger.log(`[AntExpenseScheduler] ✅ Análisis ${periodLabel} completado:`);
       logger.log(`   - Notificaciones enviadas: ${notificationsSent}`);
       logger.log(`   - Usuarios sin alertas (bajo umbral o sin datos): ${usersSkipped}`);
-      logger.log(`   - Usuarios FREE (sin acceso): ${usersFree}`);
+      logger.log(`   - Usuarios sin plan PRO: ${usersNotPro}`);
 
     } catch (error) {
-      logger.error('[AntExpenseScheduler] ❌ Error analizando usuarios:', error);
+      logger.error(`[AntExpenseScheduler] ❌ Error en análisis ${periodLabel}:`, error);
       throw error;
     }
   }
 
   /**
    * Ejecuta manualmente el análisis (útil para testing)
+   * @param period 'weekly' o 'monthly'
    */
-  static async runManual(): Promise<void> {
-    logger.log('[AntExpenseScheduler] 🔧 Ejecutando análisis manual...');
+  static async runManual(period: 'weekly' | 'monthly' = 'weekly'): Promise<void> {
+    logger.log(`[AntExpenseScheduler] 🔧 Ejecutando análisis manual (${period})...`);
 
     try {
-      await this.analyzeAllEligibleUsers();
+      await this.analyzeAllEligibleUsers(period);
       logger.log('[AntExpenseScheduler] ✅ Análisis manual completado');
     } catch (error) {
       logger.error('[AntExpenseScheduler] ❌ Error en análisis manual:', error);
@@ -178,23 +207,25 @@ export class AntExpenseScheduler {
 
   /**
    * Analiza gastos hormiga para un usuario específico (útil para testing)
+   * @param period 'weekly' (7 días) o 'monthly' (30 días)
    */
-  static async analyzeUser(userId: string): Promise<{
+  static async analyzeUser(userId: string, period: 'weekly' | 'monthly' = 'weekly'): Promise<{
     sent: boolean;
     reason: string;
     data?: any;
   }> {
-    logger.log(`[AntExpenseScheduler] 🔍 Analizando usuario ${userId}...`);
+    const daysToAnalyze = period === 'weekly' ? 7 : 30;
+    logger.log(`[AntExpenseScheduler] 🔍 Analizando usuario ${userId} (${period}, ${daysToAnalyze} días)...`);
 
     try {
-      // Verificar plan
+      // Verificar plan - Solo PRO tiene alertas automáticas
       const subscription = await subscriptionService.getUserSubscription(userId);
-      const planLimits = subscription.limits as { antExpenseAnalysis?: string };
+      const planLimits = subscription.limits as { antExpenseAlerts?: boolean };
 
-      if (planLimits.antExpenseAnalysis !== 'full') {
+      if (!planLimits.antExpenseAlerts) {
         return {
           sent: false,
-          reason: 'Usuario con plan FREE - alertas proactivas no disponibles'
+          reason: 'Usuario sin plan PRO - alertas automáticas no disponibles'
         };
       }
 
@@ -210,8 +241,17 @@ export class AntExpenseScheduler {
         };
       }
 
-      // Analizar
-      const result = await antExpenseService.calculateAntExpenseStats(userId);
+      // Obtener configuración personalizada del usuario
+      const userAmountThreshold = preferences.antExpenseAmountThreshold ?? 500;
+      const userMinFrequency = preferences.antExpenseMinFrequency ?? 3;
+      const alertPercentageThreshold = preferences.antExpenseAlertThreshold ?? 20;
+
+      // Analizar con configuración del usuario
+      const result = await antExpenseService.calculateAntExpenseStats(userId, {
+        antThreshold: userAmountThreshold,
+        minFrequency: userMinFrequency,
+        monthsToAnalyze: 1,
+      }, daysToAnalyze);
 
       if (!result.canAnalyze || !result.calculations) {
         return {
@@ -221,16 +261,16 @@ export class AntExpenseScheduler {
       }
 
       const { calculations } = result;
-      const alertThreshold = preferences.antExpenseAlertThreshold ?? 20;
 
-      if (calculations.percentageOfTotal < alertThreshold) {
+      if (calculations.percentageOfTotal < alertPercentageThreshold) {
         return {
           sent: false,
-          reason: `Porcentaje (${calculations.percentageOfTotal}%) está por debajo del umbral (${alertThreshold}%)`,
+          reason: `Porcentaje (${calculations.percentageOfTotal.toFixed(1)}%) está por debajo del umbral (${alertPercentageThreshold}%)`,
           data: {
             percentage: calculations.percentageOfTotal,
-            threshold: alertThreshold,
-            totalAntExpenses: calculations.totalAntExpenses
+            threshold: alertPercentageThreshold,
+            totalAntExpenses: calculations.totalAntExpenses,
+            config: { userAmountThreshold, userMinFrequency }
           }
         };
       }
@@ -249,18 +289,22 @@ export class AntExpenseScheduler {
         calculations.percentageOfTotal,
         topCategory,
         calculations.savingsOpportunityPerMonth,
-        user?.currency || 'RD$'
+        user?.currency || 'RD$',
+        period
       );
 
       return {
         sent: true,
-        reason: 'Alerta enviada exitosamente',
+        reason: `Alerta ${period} enviada exitosamente`,
         data: {
+          period,
+          daysAnalyzed: daysToAnalyze,
           percentage: calculations.percentageOfTotal,
-          threshold: alertThreshold,
+          threshold: alertPercentageThreshold,
           totalAntExpenses: calculations.totalAntExpenses,
           topCategory,
-          savingsOpportunity: calculations.savingsOpportunityPerMonth
+          savingsOpportunity: calculations.savingsOpportunityPerMonth,
+          config: { userAmountThreshold, userMinFrequency }
         }
       };
 
@@ -276,10 +320,13 @@ export class AntExpenseScheduler {
   /**
    * Obtiene el estado del scheduler
    */
-  static getStatus(): { isRunning: boolean; nextExecution: string } {
+  static getStatus(): { isRunning: boolean; schedules: { weekly: string; monthly: string } } {
     return {
       isRunning: this.isRunning,
-      nextExecution: this.isRunning ? 'Todos los lunes a las 10:00 AM UTC' : 'Detenido'
+      schedules: {
+        weekly: this.isRunning ? 'Lunes 10:00 AM UTC (últimos 7 días)' : 'Detenido',
+        monthly: this.isRunning ? 'Día 1 a las 10:00 AM UTC (últimos 30 días)' : 'Detenido'
+      }
     };
   }
 }

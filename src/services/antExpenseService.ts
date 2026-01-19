@@ -167,10 +167,13 @@ export class AntExpenseService {
 
   /**
    * Obtiene las transacciones del período especificado
+   * @param monthsToAnalyze Número de meses a analizar
+   * @param daysToAnalyze Si se especifica, usa días en lugar de meses
    */
   async getTransactionsInPeriod(
     userId: string,
-    monthsToAnalyze: number
+    monthsToAnalyze: number,
+    daysToAnalyze?: number
   ): Promise<{
     allExpenses: any[];
     periodStart: Date;
@@ -178,7 +181,13 @@ export class AntExpenseService {
   }> {
     const periodEnd = new Date();
     const periodStart = new Date();
-    periodStart.setMonth(periodStart.getMonth() - monthsToAnalyze);
+
+    // Usar días si se especifica, sino usar meses
+    if (daysToAnalyze !== undefined && daysToAnalyze > 0) {
+      periodStart.setDate(periodStart.getDate() - daysToAnalyze);
+    } else {
+      periodStart.setMonth(periodStart.getMonth() - monthsToAnalyze);
+    }
     periodStart.setHours(0, 0, 0, 0);
 
     const transactions = await prisma.transaction.findMany({
@@ -410,7 +419,8 @@ export class AntExpenseService {
    */
   async calculateAntExpenseStats(
     userId: string,
-    userConfig?: Partial<AntExpenseConfig>
+    userConfig?: Partial<AntExpenseConfig>,
+    daysToAnalyze?: number // Si se especifica, usa días en lugar de meses
   ): Promise<{
     calculations: AntExpenseCalculations | null;
     warnings: AnalysisWarning[];
@@ -421,7 +431,10 @@ export class AntExpenseService {
 
     // 1. Validar configuración
     const config = this.validateAndNormalizeConfig(userConfig);
-    logger.log(`[AntExpenseService] Configuración: ${JSON.stringify(config)}`);
+
+    // Si se especifican días, calcular la fecha de inicio directamente
+    const useDays = daysToAnalyze !== undefined && daysToAnalyze > 0;
+    logger.log(`[AntExpenseService] Configuración: ${JSON.stringify(config)}, días: ${daysToAnalyze || 'N/A'}`);
 
     // 2. Obtener información del historial del usuario
     const userHistory = await this.getUserHistoryInfo(userId);
@@ -445,17 +458,21 @@ export class AntExpenseService {
     // 5. Obtener transacciones del período
     const { allExpenses, periodStart, periodEnd } = await this.getTransactionsInPeriod(
       userId,
-      config.monthsToAnalyze
+      config.monthsToAnalyze,
+      daysToAnalyze // Pasar días si se especificaron
     );
     logger.log(`[AntExpenseService] Transacciones obtenidas: ${allExpenses.length}`);
 
     // Si no hay transacciones en el período
     if (allExpenses.length === 0) {
+      const periodText = useDays
+        ? `los últimos ${daysToAnalyze} día(s)`
+        : `los últimos ${config.monthsToAnalyze} mes(es)`;
       return {
         calculations: null,
         warnings,
         canAnalyze: false,
-        cannotAnalyzeReason: `No tienes gastos registrados en los últimos ${config.monthsToAnalyze} mes(es). Tus transacciones pueden ser más antiguas o solo tienes ingresos registrados.`,
+        cannotAnalyzeReason: `No tienes gastos registrados en ${periodText}. Tus transacciones pueden ser más antiguas o solo tienes ingresos registrados.`,
       };
     }
 
