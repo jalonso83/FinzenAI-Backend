@@ -155,16 +155,35 @@ export class AntExpenseScheduler {
 
           // Solo notificar si el porcentaje supera el umbral del usuario
           if (calculations.percentageOfTotal >= alertPercentageThreshold) {
-            const topCategory = calculations.topCriminals[0]?.category || 'Varios';
+            // Verificar si hay patrón hormiga real (categoría con 3+ transacciones)
+            const hasPattern = calculations.topCriminals.length > 0;
+
+            let topCategory: string;
+            let categoryPercentage: number;
+
+            if (hasPattern) {
+              // Hay patrón real - usar topCriminals
+              topCategory = calculations.topCriminals[0].category;
+              categoryPercentage = calculations.percentageOfTotal;
+            } else {
+              // No hay patrón - usar la categoría con más gasto pequeño
+              const topCategoryStat = calculations.allCategoryStats?.[0];
+              topCategory = topCategoryStat?.category || 'varios';
+              // Porcentaje que representa esta categoría del total de gastos de la semana
+              categoryPercentage = calculations.totalAllExpenses > 0
+                ? Math.round((topCategoryStat?.total || 0) / calculations.totalAllExpenses * 100)
+                : 0;
+            }
 
             await NotificationService.notifyAntExpenseAlert(
               user.id,
               calculations.totalAntExpenses,
-              calculations.percentageOfTotal,
+              categoryPercentage,
               topCategory,
               calculations.savingsOpportunityPerMonth,
               user.currency || 'RD$',
-              period // Pasar el período para personalizar el mensaje
+              period,
+              hasPattern
             );
 
             notificationsSent++;
@@ -281,16 +300,35 @@ export class AntExpenseScheduler {
         select: { currency: true }
       });
 
-      const topCategory = calculations.topCriminals[0]?.category || 'Varios';
+      // Verificar si hay patrón hormiga real (categoría con 3+ transacciones)
+      const hasPattern = calculations.topCriminals.length > 0;
+
+      let topCategory: string;
+      let categoryPercentage: number;
+
+      if (hasPattern) {
+        // Hay patrón real - usar topCriminals
+        topCategory = calculations.topCriminals[0].category;
+        categoryPercentage = calculations.percentageOfTotal;
+      } else {
+        // No hay patrón - usar la categoría con más gasto pequeño
+        const topCategoryStat = calculations.allCategoryStats?.[0];
+        topCategory = topCategoryStat?.category || 'varios';
+        // Porcentaje que representa esta categoría del total de gastos de la semana
+        categoryPercentage = calculations.totalAllExpenses > 0
+          ? Math.round((topCategoryStat?.total || 0) / calculations.totalAllExpenses * 100)
+          : 0;
+      }
 
       await NotificationService.notifyAntExpenseAlert(
         userId,
         calculations.totalAntExpenses,
-        calculations.percentageOfTotal,
+        categoryPercentage,
         topCategory,
         calculations.savingsOpportunityPerMonth,
         user?.currency || 'RD$',
-        period
+        period,
+        hasPattern
       );
 
       return {
@@ -299,10 +337,20 @@ export class AntExpenseScheduler {
         data: {
           period,
           daysAnalyzed: daysToAnalyze,
-          percentage: calculations.percentageOfTotal,
+          hasPattern,
+          percentageOfTotal: calculations.percentageOfTotal,
           threshold: alertPercentageThreshold,
           totalAntExpenses: calculations.totalAntExpenses,
           topCategory,
+          categoryPercentage,
+          topCriminalsCount: calculations.topCriminals.length,
+          allCategoriesCount: calculations.allCategoryStats?.length || 0,
+          allCategories: calculations.allCategoryStats?.map(c => ({
+            category: c.category,
+            total: c.total,
+            count: c.count,
+            percentageOfAntTotal: c.percentageOfAntTotal
+          })) || [],
           savingsOpportunity: calculations.savingsOpportunityPerMonth,
           config: { userAmountThreshold, userMinFrequency }
         }

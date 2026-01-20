@@ -214,8 +214,11 @@ export interface AntExpenseCalculations {
   /** Porcentaje que representan los gastos hormiga del total */
   percentageOfTotal: number;
 
-  /** Top categorías "criminales" ordenadas por total */
+  /** Top categorías "criminales" ordenadas por total (filtradas por frecuencia) */
   topCriminals: CategoryStats[];
+
+  /** Todas las categorías ordenadas por total (sin filtro de frecuencia) */
+  allCategoryStats?: CategoryStats[];
 
   /** Tendencia mensual */
   monthlyTrend: MonthlyData[];

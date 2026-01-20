@@ -591,6 +591,7 @@ export class NotificationService {
 
   /**
    * Notifica alerta de gastos hormiga (análisis semanal o mensual)
+   * @param hasPattern - true si hay patrón hormiga real (categoría con 3+ transacciones)
    */
   static async notifyAntExpenseAlert(
     userId: string,
@@ -599,16 +600,31 @@ export class NotificationService {
     topCategory: string,
     savingsOpportunity: number,
     currency: string,
-    period: 'weekly' | 'monthly' = 'weekly'
+    period: 'weekly' | 'monthly' = 'weekly',
+    hasPattern: boolean = true
   ): Promise<SendNotificationResult> {
-    const periodText = period === 'weekly' ? 'Esta semana' : 'Este mes';
-    const title = period === 'weekly'
-      ? '🐜 Resumen Semanal de Gastos Hormiga'
-      : '🐜 Resumen Mensual de Gastos Hormiga';
+    const periodLabel = period === 'weekly' ? 'esta semana' : 'este mes';
+
+    let title: string;
+    let body: string;
+
+    if (hasPattern) {
+      // Hay patrón hormiga real
+      title = period === 'weekly'
+        ? '🐜 Gastos Hormiga Semanal'
+        : '🐜 Gastos Hormiga Mensual';
+      body = `${currency}${totalAntExpenses.toLocaleString()} (${percentageOfTotal.toFixed(0)}%) en ${topCategory} y más. Usa el Detective de Gastos Hormiga para más detalles.`;
+    } else {
+      // No hay patrón hormiga, pero informamos del mayor gasto
+      title = period === 'weekly'
+        ? '🐜 Resumen Semanal'
+        : '🐜 Resumen Mensual';
+      body = `No detectamos gastos hormiga ${periodLabel} según tus parámetros. Tu mayor gasto pequeño: ${topCategory} (${percentageOfTotal.toFixed(0)}% del total).`;
+    }
 
     const payload: NotificationPayload = {
       title,
-      body: `${periodText} tus pequeños gastos suman ${currency}${totalAntExpenses.toLocaleString()} (${percentageOfTotal.toFixed(1)}% del total). Tu mayor "hormiga" es ${topCategory}. ¡Podrías ahorrar ${currency}${savingsOpportunity.toLocaleString()}/mes!`,
+      body,
       data: {
         type: 'ANT_EXPENSE_ALERT',
         totalAntExpenses: totalAntExpenses.toString(),
@@ -616,7 +632,7 @@ export class NotificationService {
         topCategory,
         savingsOpportunity: savingsOpportunity.toString(),
         period,
-        screen: 'AntExpenseDetective'
+        hasPattern: hasPattern.toString()
       }
     };
 

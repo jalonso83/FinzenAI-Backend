@@ -556,6 +556,7 @@ export class AntExpenseService {
         ? Math.round((totalAntExpenses / totalAllExpenses) * 100)
         : 0,
       topCriminals,
+      allCategoryStats: categoryStats, // Incluir todas las categorías sin filtro de frecuencia
       monthlyTrend,
       byDayOfWeek,
       mostExpensiveDay,
