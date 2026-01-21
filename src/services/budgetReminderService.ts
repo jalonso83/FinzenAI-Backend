@@ -3,6 +3,7 @@ import { NotificationService } from './notificationService';
 import { subscriptionService } from './subscriptionService';
 import { PLANS } from '../config/stripe';
 import { logger } from '../utils/logger';
+import { isTargetLocalTime, isInQuietHours } from '../utils/timezone';
 
 /**
  * Servicio de recordatorios diarios de presupuesto
@@ -10,16 +11,24 @@ import { logger } from '../utils/logger';
  * NIVEL 2 de alertas: Revisa todos los presupuestos y envía recordatorios
  * si están por encima del umbral configurado en las preferencias del usuario.
  *
+ * TIMEZONE-AWARE: Solo procesa usuarios cuya hora local coincida con la hora objetivo.
+ *
  * Este es diferente al NIVEL 1 (checkBudgetAlerts) que se dispara
  * inmediatamente cuando una transacción cruza el umbral del presupuesto.
  */
 export class BudgetReminderService {
 
   /**
-   * Ejecuta el job diario de recordatorios de presupuesto
-   * Debe ejecutarse una vez al día (ej: 9am)
+   * Ejecuta el job de recordatorios de presupuesto
+   * Solo procesa usuarios cuya hora local sea la hora objetivo
+   *
+   * @param targetHour - Hora objetivo (0-23) en hora local del usuario. -1 para ignorar filtro (desarrollo)
+   * @param targetMinute - Minuto objetivo (0-59), default 0
    */
-  static async runDailyReminders(): Promise<{
+  static async runDailyReminders(
+    targetHour: number = 9,
+    targetMinute: number = 30
+  ): Promise<{
     usersProcessed: number;
     remindersSent: number;
     errors: string[];
@@ -30,10 +39,13 @@ export class BudgetReminderService {
       errors: [] as string[]
     };
 
+    const skipTimeFilter = targetHour === -1;
+
     try {
-      logger.log('[BudgetReminder] Iniciando job de recordatorios diarios...');
+      logger.log(`[BudgetReminder] Iniciando job de recordatorios ${skipTimeFilter ? '(sin filtro de hora - desarrollo)' : `para usuarios en ${targetHour}:${targetMinute.toString().padStart(2, '0')} hora local`}...`);
 
       // Obtener todos los usuarios con dispositivos activos y alertas habilitadas
+      // Incluimos el país para determinar su zona horaria
       const usersWithPreferences = await prisma.notificationPreferences.findMany({
         where: {
           budgetAlertsEnabled: true,
@@ -49,7 +61,8 @@ export class BudgetReminderService {
           user: {
             select: {
               id: true,
-              currency: true
+              currency: true,
+              country: true  // Necesario para determinar timezone
             }
           }
         }
@@ -60,6 +73,14 @@ export class BudgetReminderService {
       for (const prefs of usersWithPreferences) {
         try {
           const userId = prefs.userId;
+          const userCountry = prefs.user?.country;
+
+          // Verificar si es la hora correcta en la zona horaria del usuario
+          // (saltar si skipTimeFilter es true - modo desarrollo)
+          if (!skipTimeFilter && !isTargetLocalTime(userCountry, targetHour, targetMinute)) {
+            continue; // No es la hora correcta para este usuario
+          }
+
           results.usersProcessed++;
 
           // Verificar que el usuario tenga acceso a alertas de presupuesto (PLUS o PRO)
@@ -71,8 +92,8 @@ export class BudgetReminderService {
             continue; // Usuario FREE, saltar
           }
 
-          // Verificar horario silencioso
-          if (this.isInQuietHours(prefs)) {
+          // Verificar horario silencioso (ahora usa timezone del usuario)
+          if (isInQuietHours(userCountry, prefs.quietHoursStart, prefs.quietHoursEnd)) {
             continue;
           }
 
@@ -154,25 +175,8 @@ export class BudgetReminderService {
     return results;
   }
 
-  /**
-   * Verifica si el usuario está en horario silencioso
-   */
-  private static isInQuietHours(preferences: any): boolean {
-    if (!preferences.quietHoursStart || !preferences.quietHoursEnd) {
-      return false;
-    }
-
-    const now = new Date();
-    const currentHour = now.getHours();
-    const start = preferences.quietHoursStart;
-    const end = preferences.quietHoursEnd;
-
-    // Maneja el caso cuando el período cruza la medianoche
-    if (start > end) {
-      return currentHour >= start || currentHour < end;
-    }
-    return currentHour >= start && currentHour < end;
-  }
+  // Nota: isInQuietHours ahora se importa de utils/timezone.ts
+  // y considera la zona horaria del usuario basada en su país
 }
 
 export default BudgetReminderService;

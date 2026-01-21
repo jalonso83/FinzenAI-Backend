@@ -4,8 +4,17 @@ import { NotificationService } from './notificationService';
 import { antExpenseService } from './antExpenseService';
 import { subscriptionService } from './subscriptionService';
 import { PLANS } from '../config/stripe';
-
 import { logger } from '../utils/logger';
+import { isTargetLocalTime, isInQuietHours, getTimezoneByCountry } from '../utils/timezone';
+
+/**
+ * Scheduler para alertas de gastos hormiga
+ *
+ * TIMEZONE-AWARE: Los usuarios reciben alertas a las 10:00 AM
+ * de su hora local, los lunes (semanal) y día 1 (mensual).
+ *
+ * Ejecuta cada hora para capturar usuarios en diferentes zonas horarias.
+ */
 export class AntExpenseScheduler {
   private static isRunning: boolean = false;
   private static cronTask: cron.ScheduledTask | null = null;
@@ -13,10 +22,17 @@ export class AntExpenseScheduler {
   private static weeklyCronTask: cron.ScheduledTask | null = null;
   private static monthlyCronTask: cron.ScheduledTask | null = null;
 
+  // Hora objetivo para enviar alertas (10:00 AM hora local del usuario)
+  private static readonly TARGET_HOUR = 10;
+  private static readonly TARGET_MINUTE = 0;
+
   /**
    * Inicia el scheduler de alertas de gastos hormiga
-   * - Semanal: Lunes 10 AM UTC (últimos 7 días)
-   * - Mensual: Día 1 a las 10 AM UTC (últimos 30 días)
+   * TIMEZONE-AWARE:
+   * - Semanal: Lunes 10 AM hora local del usuario (últimos 7 días)
+   * - Mensual: Día 1 a las 10 AM hora local del usuario (últimos 30 días)
+   *
+   * Ambos jobs se ejecutan cada hora para capturar usuarios en diferentes zonas horarias.
    */
   static startScheduler(): void {
     if (this.isRunning) {
@@ -25,24 +41,24 @@ export class AntExpenseScheduler {
     }
 
     logger.log('[AntExpenseScheduler] 🐜 Iniciando scheduler de alertas de gastos hormiga...');
-    logger.log('[AntExpenseScheduler] 📅 Semanal: Lunes 10:00 AM UTC');
-    logger.log('[AntExpenseScheduler] 📅 Mensual: Día 1 a las 10:00 AM UTC');
+    logger.log('[AntExpenseScheduler] 📅 Semanal: Cada hora - Lunes 10:00 AM hora local del usuario');
+    logger.log('[AntExpenseScheduler] 📅 Mensual: Cada hora - Día 1 a las 10:00 AM hora local del usuario');
 
-    // SEMANAL: Todos los lunes a las 10 AM UTC (últimos 7 días)
-    this.weeklyCronTask = cron.schedule('0 10 * * 1', async () => {
-      logger.log('[AntExpenseScheduler] 🔄 Ejecutando análisis SEMANAL de gastos hormiga...');
+    // SEMANAL: Cada hora, filtra usuarios cuyo lunes local sea a las 10 AM
+    this.weeklyCronTask = cron.schedule('0 * * * *', async () => {
+      logger.log('[AntExpenseScheduler] 🔄 Ejecutando análisis SEMANAL de gastos hormiga (timezone-aware)...');
       try {
-        await this.analyzeAllEligibleUsers('weekly');
+        await this.analyzeAllEligibleUsers('weekly', this.TARGET_HOUR, this.TARGET_MINUTE);
       } catch (error) {
         logger.error('[AntExpenseScheduler] ❌ Error en análisis semanal:', error);
       }
     });
 
-    // MENSUAL: Día 1 de cada mes a las 10 AM UTC (últimos 30 días)
-    this.monthlyCronTask = cron.schedule('0 10 1 * *', async () => {
-      logger.log('[AntExpenseScheduler] 🔄 Ejecutando análisis MENSUAL de gastos hormiga...');
+    // MENSUAL: Cada hora, filtra usuarios cuyo día 1 local sea a las 10 AM
+    this.monthlyCronTask = cron.schedule('0 * * * *', async () => {
+      logger.log('[AntExpenseScheduler] 🔄 Ejecutando análisis MENSUAL de gastos hormiga (timezone-aware)...');
       try {
-        await this.analyzeAllEligibleUsers('monthly');
+        await this.analyzeAllEligibleUsers('monthly', this.TARGET_HOUR, this.TARGET_MINUTE);
       } catch (error) {
         logger.error('[AntExpenseScheduler] ❌ Error en análisis mensual:', error);
       }
@@ -52,12 +68,12 @@ export class AntExpenseScheduler {
     this.cronTask = this.weeklyCronTask; // Mantener compatibilidad
     logger.log('[AntExpenseScheduler] ✅ Scheduler iniciado correctamente');
 
-    // Opcional: Ejecutar una vez al inicio para testing/desarrollo
+    // En desarrollo, ejecutar análisis inicial sin filtros de tiempo
     if (process.env.NODE_ENV === 'development') {
-      logger.log('[AntExpenseScheduler] 🧪 Ejecutando análisis inicial (desarrollo)...');
+      logger.log('[AntExpenseScheduler] 🧪 Ejecutando análisis inicial (desarrollo - sin filtros)...');
       setTimeout(async () => {
         try {
-          await this.analyzeAllEligibleUsers('weekly');
+          await this.analyzeAllEligibleUsers('weekly', -1, 0); // Sin filtro de hora
         } catch (error) {
           logger.error('[AntExpenseScheduler] ❌ Error en análisis inicial:', error);
         }
@@ -88,18 +104,66 @@ export class AntExpenseScheduler {
   }
 
   /**
+   * Obtiene el día de la semana local para un país
+   * @returns 0=Domingo, 1=Lunes, ..., 6=Sábado
+   */
+  private static getLocalDayOfWeek(country: string | null | undefined): number {
+    const timezone = getTimezoneByCountry(country);
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        weekday: 'short',
+      });
+      const dayStr = formatter.format(new Date());
+      const dayMap: Record<string, number> = {
+        'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6
+      };
+      return dayMap[dayStr] ?? new Date().getDay();
+    } catch {
+      return new Date().getDay();
+    }
+  }
+
+  /**
+   * Obtiene el día del mes local para un país
+   * @returns 1-31
+   */
+  private static getLocalDayOfMonth(country: string | null | undefined): number {
+    const timezone = getTimezoneByCountry(country);
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        day: 'numeric',
+      });
+      return parseInt(formatter.format(new Date()), 10);
+    } catch {
+      return new Date().getDate();
+    }
+  }
+
+  /**
    * Analiza gastos hormiga para todos los usuarios elegibles
    * Solo usuarios PRO con alertas habilitadas
+   * TIMEZONE-AWARE: Filtra por día y hora local del usuario
+   *
    * @param period 'weekly' (7 días) o 'monthly' (30 días)
+   * @param targetHour Hora objetivo (0-23) en hora local del usuario. -1 para ignorar filtro
+   * @param targetMinute Minuto objetivo (0-59)
    */
-  static async analyzeAllEligibleUsers(period: 'weekly' | 'monthly' = 'weekly'): Promise<void> {
+  static async analyzeAllEligibleUsers(
+    period: 'weekly' | 'monthly' = 'weekly',
+    targetHour: number = 10,
+    targetMinute: number = 0
+  ): Promise<void> {
     const daysToAnalyze = period === 'weekly' ? 7 : 30;
     const periodLabel = period === 'weekly' ? 'SEMANAL' : 'MENSUAL';
+    const skipTimeFilter = targetHour === -1;
 
-    logger.log(`[AntExpenseScheduler] 🔍 Análisis ${periodLabel}: Buscando usuarios PRO elegibles...`);
+    logger.log(`[AntExpenseScheduler] 🔍 Análisis ${periodLabel}: Buscando usuarios PRO elegibles ${skipTimeFilter ? '(sin filtro de hora)' : `en ${targetHour}:${targetMinute.toString().padStart(2, '0')} hora local`}...`);
 
     try {
       // Obtener todos los usuarios con dispositivos activos y alertas habilitadas
+      // Incluir country para filtrar por timezone
       const eligibleUsers = await prisma.user.findMany({
         where: {
           devices: {
@@ -121,9 +185,40 @@ export class AntExpenseScheduler {
       let notificationsSent = 0;
       let usersSkipped = 0;
       let usersNotPro = 0;
+      let usersInTargetTime = 0;
 
       for (const user of eligibleUsers) {
         try {
+          // Filtrar por día de la semana/mes según el período
+          if (!skipTimeFilter) {
+            if (period === 'weekly') {
+              // Para semanal: verificar que sea Lunes en la zona horaria del usuario
+              const localDayOfWeek = this.getLocalDayOfWeek(user.country);
+              if (localDayOfWeek !== 1) { // 1 = Lunes
+                continue;
+              }
+            } else {
+              // Para mensual: verificar que sea día 1 en la zona horaria del usuario
+              const localDayOfMonth = this.getLocalDayOfMonth(user.country);
+              if (localDayOfMonth !== 1) {
+                continue;
+              }
+            }
+
+            // Verificar si es la hora correcta en la zona horaria del usuario
+            if (!isTargetLocalTime(user.country, targetHour, targetMinute)) {
+              continue;
+            }
+          }
+
+          usersInTargetTime++;
+
+          // Verificar horario silencioso (timezone-aware)
+          const prefs = user.notificationPreferences;
+          if (prefs && isInQuietHours(user.country, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+            continue;
+          }
+
           // Verificar que el usuario tenga plan PRO (único con alertas automáticas)
           const subscription = await subscriptionService.getUserSubscription(user.id);
           const planLimits = subscription.limits as { antExpenseAlerts?: boolean };
@@ -198,6 +293,7 @@ export class AntExpenseScheduler {
       }
 
       logger.log(`[AntExpenseScheduler] ✅ Análisis ${periodLabel} completado:`);
+      logger.log(`   - Usuarios en día/hora objetivo: ${usersInTargetTime}`);
       logger.log(`   - Notificaciones enviadas: ${notificationsSent}`);
       logger.log(`   - Usuarios sin alertas (bajo umbral o sin datos): ${usersSkipped}`);
       logger.log(`   - Usuarios sin plan PRO: ${usersNotPro}`);
@@ -209,14 +305,15 @@ export class AntExpenseScheduler {
   }
 
   /**
-   * Ejecuta manualmente el análisis (útil para testing)
+   * Ejecuta manualmente el análisis (útil para testing - sin filtros de tiempo)
    * @param period 'weekly' o 'monthly'
    */
   static async runManual(period: 'weekly' | 'monthly' = 'weekly'): Promise<void> {
-    logger.log(`[AntExpenseScheduler] 🔧 Ejecutando análisis manual (${period})...`);
+    logger.log(`[AntExpenseScheduler] 🔧 Ejecutando análisis manual (${period} - sin filtros de tiempo)...`);
 
     try {
-      await this.analyzeAllEligibleUsers(period);
+      // -1 = sin filtro de hora/día
+      await this.analyzeAllEligibleUsers(period, -1, 0);
       logger.log('[AntExpenseScheduler] ✅ Análisis manual completado');
     } catch (error) {
       logger.error('[AntExpenseScheduler] ❌ Error en análisis manual:', error);
@@ -368,13 +465,18 @@ export class AntExpenseScheduler {
   /**
    * Obtiene el estado del scheduler
    */
-  static getStatus(): { isRunning: boolean; schedules: { weekly: string; monthly: string } } {
+  static getStatus(): {
+    isRunning: boolean;
+    schedules: { weekly: string; monthly: string };
+    schedule: string;
+  } {
     return {
       isRunning: this.isRunning,
       schedules: {
-        weekly: this.isRunning ? 'Lunes 10:00 AM UTC (últimos 7 días)' : 'Detenido',
-        monthly: this.isRunning ? 'Día 1 a las 10:00 AM UTC (últimos 30 días)' : 'Detenido'
-      }
+        weekly: this.isRunning ? 'Cada hora - Lunes 10:00 AM hora local del usuario (últimos 7 días)' : 'Detenido',
+        monthly: this.isRunning ? 'Cada hora - Día 1 a las 10:00 AM hora local del usuario (últimos 30 días)' : 'Detenido'
+      },
+      schedule: 'Timezone-aware: 10:00 AM hora local del usuario'
     };
   }
 }

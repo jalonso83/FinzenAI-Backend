@@ -4,13 +4,16 @@ import { WeeklyReportService } from './weeklyReportService';
 import { NotificationService } from './notificationService';
 import { subscriptionService } from './subscriptionService';
 import { logger } from '../utils/logger';
+import { isTargetLocalTime, isInQuietHours } from '../utils/timezone';
 
 /**
  * Scheduler para reportes QUINCENALES PRO
  *
- * Ejecuta dos jobs:
- * 1. Días 1 y 16 a las 6:00 AM UTC - Genera reportes quincenales para usuarios PRO
- * 2. Días 2 y 17 a las 8:00 AM UTC - Envía notificaciones de reportes listos
+ * TIMEZONE-AWARE para notificaciones:
+ *
+ * Ejecuta dos tipos de jobs:
+ * 1. GENERACIÓN (UTC fijo): Días 1 y 16 a las 6:00 AM UTC - Genera reportes
+ * 2. NOTIFICACIONES (timezone-aware): Cada hora, envía a usuarios en 8:00 AM local
  *
  * Lógica quincenal:
  * - Día 1: Se genera reporte de la segunda quincena del mes anterior (16-fin)
@@ -20,8 +23,11 @@ export class WeeklyReportScheduler {
   private static isRunning: boolean = false;
   private static generationTask1: cron.ScheduledTask | null = null;
   private static generationTask16: cron.ScheduledTask | null = null;
-  private static notificationTask2: cron.ScheduledTask | null = null;
-  private static notificationTask17: cron.ScheduledTask | null = null;
+  private static notificationTask: cron.ScheduledTask | null = null;
+
+  // Hora objetivo para enviar notificaciones (8:00 AM hora local del usuario)
+  private static readonly NOTIFICATION_TARGET_HOUR = 8;
+  private static readonly NOTIFICATION_TARGET_MINUTE = 0;
 
   /**
    * Inicia los schedulers de reportes quincenales
@@ -47,18 +53,13 @@ export class WeeklyReportScheduler {
     });
     logger.log('[BiweeklyReportScheduler] 📅 Generación programada: Días 1 y 16 a las 6:00 AM UTC');
 
-    // Job 2a: Enviar notificaciones - Día 2 del mes a las 8:00 AM UTC
-    this.notificationTask2 = cron.schedule('0 8 2 * *', async () => {
-      logger.log('[BiweeklyReportScheduler] 🔔 Ejecutando envío de notificaciones...');
-      await this.runNotificationJob();
+    // Job 2: Notificaciones timezone-aware - Cada hora, filtra por hora local del usuario
+    // Solo envía a usuarios que tienen reportes pendientes y están en 8:00 AM local
+    this.notificationTask = cron.schedule('0 * * * *', async () => {
+      logger.log('[BiweeklyReportScheduler] 🔔 Ejecutando envío de notificaciones (timezone-aware)...');
+      await this.runNotificationJob(this.NOTIFICATION_TARGET_HOUR, this.NOTIFICATION_TARGET_MINUTE);
     });
-
-    // Job 2b: Enviar notificaciones - Día 17 del mes a las 8:00 AM UTC
-    this.notificationTask17 = cron.schedule('0 8 17 * *', async () => {
-      logger.log('[BiweeklyReportScheduler] 🔔 Ejecutando envío de notificaciones...');
-      await this.runNotificationJob();
-    });
-    logger.log('[BiweeklyReportScheduler] 📅 Notificaciones programadas: Días 2 y 17 a las 8:00 AM UTC');
+    logger.log('[BiweeklyReportScheduler] 📅 Notificaciones: Cada hora - 8:00 AM hora local del usuario');
 
     this.isRunning = true;
     logger.log('[BiweeklyReportScheduler] ✅ Schedulers iniciados correctamente');
@@ -96,14 +97,9 @@ export class WeeklyReportScheduler {
       this.generationTask16 = null;
     }
 
-    if (this.notificationTask2) {
-      this.notificationTask2.stop();
-      this.notificationTask2 = null;
-    }
-
-    if (this.notificationTask17) {
-      this.notificationTask17.stop();
-      this.notificationTask17 = null;
+    if (this.notificationTask) {
+      this.notificationTask.stop();
+      this.notificationTask = null;
     }
 
     this.isRunning = false;
@@ -174,19 +170,32 @@ export class WeeklyReportScheduler {
   }
 
   /**
-   * Job de envío de notificaciones
+   * Job de envío de notificaciones (timezone-aware)
+   * Solo envía a usuarios cuya hora local coincida con la hora objetivo
+   *
+   * @param targetHour - Hora objetivo (0-23) en hora local del usuario. -1 para ignorar filtro
+   * @param targetMinute - Minuto objetivo (0-59)
    */
-  static async runNotificationJob(): Promise<{
+  static async runNotificationJob(
+    targetHour: number = 8,
+    targetMinute: number = 0
+  ): Promise<{
     usersNotified: number;
+    usersInTargetTime: number;
     errors: string[];
   }> {
     const results = {
       usersNotified: 0,
+      usersInTargetTime: 0,
       errors: [] as string[]
     };
 
+    const skipTimeFilter = targetHour === -1;
+
     try {
-      // Buscar reportes generados esta semana que aún no han sido notificados
+      logger.log(`[WeeklyReportScheduler] Buscando reportes pendientes de notificación ${skipTimeFilter ? '(sin filtro de hora)' : `para usuarios en ${targetHour}:${targetMinute.toString().padStart(2, '0')} hora local`}...`);
+
+      // Buscar reportes generados esta quincena que aún no han sido notificados
       const { weekStart } = WeeklyReportService.getLastWeekDates();
 
       const reportsToNotify = await prisma.weeklyReport.findMany({
@@ -199,6 +208,7 @@ export class WeeklyReportScheduler {
             select: {
               id: true,
               name: true,
+              country: true, // Necesario para timezone
               notificationPreferences: {
                 select: {
                   tipsEnabled: true,
@@ -211,13 +221,22 @@ export class WeeklyReportScheduler {
         }
       });
 
-      logger.log(`[WeeklyReportScheduler] Enviando notificaciones a ${reportsToNotify.length} usuarios`);
+      logger.log(`[WeeklyReportScheduler] ${reportsToNotify.length} reportes pendientes de notificación`);
 
       for (const report of reportsToNotify) {
         try {
-          // Verificar horario silencioso
+          const userCountry = report.user.country;
+
+          // Verificar si es la hora correcta en la zona horaria del usuario
+          if (!skipTimeFilter && !isTargetLocalTime(userCountry, targetHour, targetMinute)) {
+            continue; // No es la hora correcta para este usuario
+          }
+
+          results.usersInTargetTime++;
+
+          // Verificar horario silencioso (timezone-aware)
           const prefs = report.user.notificationPreferences;
-          if (prefs && this.isInQuietHours(prefs)) {
+          if (prefs && isInQuietHours(userCountry, prefs.quietHoursStart, prefs.quietHoursEnd)) {
             continue;
           }
 
@@ -247,7 +266,9 @@ export class WeeklyReportScheduler {
         }
       }
 
-      logger.log(`[WeeklyReportScheduler] ✅ Notificaciones completadas: ${results.usersNotified}`);
+      logger.log(`[WeeklyReportScheduler] ✅ Notificaciones completadas:`);
+      logger.log(`   - Usuarios en hora objetivo: ${results.usersInTargetTime}`);
+      logger.log(`   - Notificaciones enviadas: ${results.usersNotified}`);
 
     } catch (error: any) {
       results.errors.push(`Error general: ${error.message}`);
@@ -258,35 +279,17 @@ export class WeeklyReportScheduler {
   }
 
   /**
-   * Verifica si está en horario silencioso
-   */
-  private static isInQuietHours(preferences: any): boolean {
-    if (!preferences.quietHoursStart || !preferences.quietHoursEnd) {
-      return false;
-    }
-
-    const now = new Date();
-    const currentHour = now.getHours();
-    const start = preferences.quietHoursStart;
-    const end = preferences.quietHoursEnd;
-
-    if (start > end) {
-      return currentHour >= start || currentHour < end;
-    }
-    return currentHour >= start && currentHour < end;
-  }
-
-  /**
-   * Ejecución manual para testing
+   * Ejecución manual para testing (sin filtro de hora)
    */
   static async runManual(): Promise<{
     generation: { usersProcessed: number; reportsGenerated: number; errors: string[] };
-    notifications: { usersNotified: number; errors: string[] };
+    notifications: { usersNotified: number; usersInTargetTime: number; errors: string[] };
   }> {
-    logger.log('[WeeklyReportScheduler] 🔧 Ejecutando jobs manualmente...');
+    logger.log('[WeeklyReportScheduler] 🔧 Ejecutando jobs manualmente (sin filtro de hora)...');
 
     const generation = await this.runReportGeneration();
-    const notifications = await this.runNotificationJob();
+    // En modo manual, no filtramos por hora (-1)
+    const notifications = await this.runNotificationJob(-1, 0);
 
     return { generation, notifications };
   }
@@ -306,11 +309,13 @@ export class WeeklyReportScheduler {
     isRunning: boolean;
     nextGeneration: string;
     nextNotification: string;
+    schedule: string;
   } {
     return {
       isRunning: this.isRunning,
       nextGeneration: this.isRunning ? 'Días 1 y 16 a las 6:00 AM UTC' : 'Detenido',
-      nextNotification: this.isRunning ? 'Días 2 y 17 a las 8:00 AM UTC' : 'Detenido'
+      nextNotification: this.isRunning ? 'Cada hora - 8:00 AM hora local del usuario' : 'Detenido',
+      schedule: 'Timezone-aware: Notificaciones a las 8:00 AM hora local del usuario'
     };
   }
 }

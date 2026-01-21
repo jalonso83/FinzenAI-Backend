@@ -1,79 +1,6 @@
 import { prisma } from '../lib/prisma';
-
 import { logger } from '../utils/logger';
-// Mapeo de países a zonas horarias (usando la misma lógica que el proyecto móvil)
-const COUNTRY_TO_TIMEZONE: Record<string, string> = {
-  // Países latinoamericanos
-  'República Dominicana': 'America/Santo_Domingo',
-  'México': 'America/Mexico_City',
-  'Colombia': 'America/Bogota',
-  'Panamá': 'America/Panama',
-  'Guatemala': 'America/Guatemala',
-  'Honduras': 'America/Tegucigalpa',
-  'Nicaragua': 'America/Managua',
-  'Costa Rica': 'America/Costa_Rica',
-  'El Salvador': 'America/El_Salvador',
-  'Cuba': 'America/Havana',
-  'Puerto Rico': 'America/Puerto_Rico',
-  'Estados Unidos': 'America/New_York',
-  'España': 'Europe/Madrid',
-  'Argentina': 'America/Argentina/Buenos_Aires',
-  'Chile': 'America/Santiago',
-  'Uruguay': 'America/Montevideo',
-  'Paraguay': 'America/Asuncion',
-  'Bolivia': 'America/La_Paz',
-  'Perú': 'America/Lima',
-  'Ecuador': 'America/Guayaquil',
-  'Venezuela': 'America/Caracas',
-  'Brasil': 'America/Sao_Paulo'
-};
-
-// Reutilizar la función existente del controlador zenio
-function obtenerOffsetDeTimezone(timezone: string): number {
-  const timezoneOffsets: { [key: string]: number } = {
-    'America/Santo_Domingo': -4,
-    'America/Caracas': -4,
-    'America/New_York': -5,
-    'America/Chicago': -6,
-    'America/Denver': -7,
-    'America/Los_Angeles': -8,
-    'America/Anchorage': -9,
-    'Pacific/Honolulu': -10,
-    'Europe/London': 0,
-    'Europe/Paris': 1,
-    'Europe/Berlin': 1,
-    'Europe/Madrid': 1,
-    'Europe/Rome': 1,
-    'Europe/Moscow': 3,
-    'Asia/Dubai': 4,
-    'Asia/Tokyo': 9,
-    'Asia/Shanghai': 8,
-    'Asia/Seoul': 9,
-    'Australia/Sydney': 10,
-    'Pacific/Auckland': 12,
-    'America/Mexico_City': -6,
-    'America/Bogota': -5,
-    'America/Panama': -5,
-    'America/Guatemala': -6,
-    'America/Tegucigalpa': -6,
-    'America/Managua': -6,
-    'America/Costa_Rica': -6,
-    'America/El_Salvador': -6,
-    'America/Havana': -5,
-    'America/Puerto_Rico': -4,
-    'America/Argentina/Buenos_Aires': -3,
-    'America/Santiago': -4,
-    'America/Montevideo': -3,
-    'America/Asuncion': -3,
-    'America/La_Paz': -4,
-    'America/Lima': -5,
-    'America/Guayaquil': -5,
-    'America/Sao_Paulo': -3,
-    'UTC': 0
-  };
-  
-  return timezoneOffsets[timezone] || 0;
-}
+import { getTimezoneByCountry, getTimezoneOffset } from '../utils/timezone';
 
 export class BudgetRenewalService {
   /**
@@ -136,8 +63,8 @@ export class BudgetRenewalService {
   private static async renewSingleBudget(expiredBudget: any): Promise<void> {
     const { user, period } = expiredBudget;
     
-    // Obtener zona horaria del usuario usando su país
-    const userTimezone = COUNTRY_TO_TIMEZONE[user.country] || 'UTC';
+    // Obtener zona horaria del usuario usando su país (usando utilidad compartida)
+    const userTimezone = getTimezoneByCountry(user.country);
     
     // Calcular las nuevas fechas del período
     const newDates = this.calculateNextPeriod(
@@ -184,7 +111,7 @@ export class BudgetRenewalService {
     timezone: string
   ): { start: Date; end: Date } {
     
-    const offset = obtenerOffsetDeTimezone(timezone);
+    const offset = getTimezoneOffset(timezone);
     
     // Calcular el día siguiente al vencimiento en la zona horaria del usuario
     const nextDay = new Date(lastEndDate);

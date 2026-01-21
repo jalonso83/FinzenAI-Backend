@@ -1,37 +1,21 @@
-import admin from 'firebase-admin';
 import { NotificationType, NotificationStatus, DevicePlatform } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { subscriptionService } from './subscriptionService';
 import { PLANS } from '../config/stripe';
 
 import { logger } from '../utils/logger';
-// Inicializar Firebase Admin SDK
-let firebaseInitialized = false;
 
-const initializeFirebase = () => {
-  if (firebaseInitialized) return;
+// Expo Push API configuration
+const EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push/send';
 
-  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
-
-  if (!serviceAccount) {
-    logger.warn('[NotificationService] FIREBASE_SERVICE_ACCOUNT not configured - push notifications disabled');
-    return;
-  }
-
-  try {
-    const credentials = JSON.parse(serviceAccount);
-    admin.initializeApp({
-      credential: admin.credential.cert(credentials)
-    });
-    firebaseInitialized = true;
-    logger.log('[NotificationService] Firebase Admin initialized successfully');
-  } catch (error) {
-    logger.error('[NotificationService] Failed to initialize Firebase:', error);
-  }
+/**
+ * Verifica si un token es un Expo Push Token válido
+ */
+const isExpoPushToken = (token: string): boolean => {
+  return token.startsWith('ExponentPushToken[') || token.startsWith('ExpoPushToken[');
 };
 
-// Inicializar al cargar el módulo
-initializeFirebase();
+logger.log('[NotificationService] Using Expo Push API for notifications');
 
 export interface NotificationPayload {
   title: string;
@@ -146,10 +130,6 @@ export class NotificationService {
     payload: NotificationPayload
   ): Promise<SendNotificationResult> {
     try {
-      if (!firebaseInitialized) {
-        logger.warn('[NotificationService] Firebase not initialized, skipping notification');
-        return { success: false, successCount: 0, failureCount: 1, errors: ['Firebase not initialized'] };
-      }
 
       // Verificar preferencias del usuario
       const preferences = await prisma.notificationPreferences.findUnique({
@@ -214,10 +194,6 @@ export class NotificationService {
     payload: NotificationPayload
   ): Promise<SendNotificationResult> {
     try {
-      if (!firebaseInitialized) {
-        logger.warn('[NotificationService] Firebase not initialized');
-        return { success: false, successCount: 0, failureCount: 1, errors: ['Firebase not initialized'] };
-      }
 
       // Obtener dispositivos activos del usuario
       const devices = await prisma.userDevice.findMany({
@@ -259,70 +235,95 @@ export class NotificationService {
   }
 
   /**
-   * Envía notificación multicast a múltiples tokens
+   * Envía notificación multicast a múltiples tokens usando Expo Push API
    */
   private static async sendMulticast(
     tokens: string[],
     payload: NotificationPayload
   ): Promise<{ successCount: number; failureCount: number; errors?: string[]; failedTokens?: string[] }> {
     try {
-      const message: admin.messaging.MulticastMessage = {
-        tokens,
-        notification: {
-          title: payload.title,
-          body: payload.body,
-          ...(payload.imageUrl && { imageUrl: payload.imageUrl })
-        },
-        data: payload.data,
-        android: {
-          priority: 'high',
-          notification: {
-            channelId: 'finzenai_notifications',
-            priority: 'high',
-            defaultSound: true,
-            defaultVibrateTimings: true,
-            visibility: 'public',
-            notificationCount: 1,
-            sticky: true
-          }
-        },
-        apns: {
-          payload: {
-            aps: {
-              alert: {
-                title: payload.title,
-                body: payload.body
-              },
-              sound: 'default',
-              badge: 1
-            }
-          }
-        }
-      };
+      // Filtrar solo tokens válidos de Expo
+      const validTokens = tokens.filter(token => isExpoPushToken(token));
+      const invalidTokens = tokens.filter(token => !isExpoPushToken(token));
 
-      const response = await admin.messaging().sendEachForMulticast(message);
+      if (invalidTokens.length > 0) {
+        logger.warn(`[NotificationService] ${invalidTokens.length} tokens no son Expo Push tokens válidos, serán marcados como inválidos`);
+      }
 
+      if (validTokens.length === 0) {
+        logger.warn('[NotificationService] No hay tokens válidos de Expo para enviar');
+        return {
+          successCount: 0,
+          failureCount: tokens.length,
+          errors: ['No valid Expo Push tokens'],
+          failedTokens: tokens
+        };
+      }
+
+      // Crear mensajes para Expo Push API
+      const messages = validTokens.map(token => ({
+        to: token,
+        sound: 'default' as const,
+        title: payload.title,
+        body: payload.body,
+        data: payload.data || {},
+        channelId: 'finzenai_notifications',
+        priority: 'high' as const,
+        badge: 1,
+      }));
+
+      // Enviar a Expo Push API (máximo 100 por request)
+      const chunks: typeof messages[] = [];
+      for (let i = 0; i < messages.length; i += 100) {
+        chunks.push(messages.slice(i, i + 100));
+      }
+
+      let successCount = 0;
+      let failureCount = invalidTokens.length; // Los tokens inválidos ya cuentan como fallas
       const errors: string[] = [];
-      const failedTokens: string[] = [];
+      const failedTokens: string[] = [...invalidTokens];
 
-      response.responses.forEach((resp, idx) => {
-        if (!resp.success && resp.error) {
-          errors.push(resp.error.message);
-          failedTokens.push(tokens[idx]);
+      for (const chunk of chunks) {
+        const response = await fetch(EXPO_PUSH_API_URL, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip, deflate',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(chunk),
+        });
+
+        const result = await response.json();
+
+        if (result.data) {
+          result.data.forEach((ticket: any, idx: number) => {
+            if (ticket.status === 'ok') {
+              successCount++;
+            } else {
+              failureCount++;
+              if (ticket.message) {
+                errors.push(ticket.message);
+              }
+              if (ticket.details?.error === 'DeviceNotRegistered') {
+                failedTokens.push(chunk[idx].to);
+              }
+            }
+          });
         }
-      });
+      }
 
-      logger.log(`[NotificationService] Multicast result: ${response.successCount} success, ${response.failureCount} failures`);
+      logger.log(`[NotificationService] Expo Push result: ${successCount} success, ${failureCount} failures`);
 
       return {
-        successCount: response.successCount,
-        failureCount: response.failureCount,
+        successCount,
+        failureCount,
         errors: errors.length > 0 ? errors : undefined,
         failedTokens: failedTokens.length > 0 ? failedTokens : undefined
       };
 
     } catch (error: any) {
-      logger.error('[NotificationService] Multicast error:', error);
+      logger.error('[NotificationService] Expo Push error:', error);
       return { successCount: 0, failureCount: tokens.length, errors: [error.message] };
     }
   }

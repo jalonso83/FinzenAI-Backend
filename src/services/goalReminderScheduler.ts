@@ -1,16 +1,26 @@
 import * as cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { NotificationService } from './notificationService';
-
 import { logger } from '../utils/logger';
+import { isTargetLocalTime, isInQuietHours } from '../utils/timezone';
 
+/**
+ * Scheduler para recordatorios de metas
+ *
+ * TIMEZONE-AWARE: Los usuarios reciben notificaciones a las 9:00 AM
+ * de su hora local, basado en su país.
+ */
 export class GoalReminderScheduler {
   private static isRunning: boolean = false;
   private static cronTask: cron.ScheduledTask | null = null;
 
+  // Hora objetivo para enviar recordatorios (9:00 AM hora local del usuario)
+  private static readonly TARGET_HOUR = 9;
+  private static readonly TARGET_MINUTE = 0;
+
   /**
    * Inicia el scheduler de recordatorios de metas
-   * Se ejecuta todos los días a las 9 AM UTC
+   * Se ejecuta cada hora para capturar usuarios en 9:00 AM local
    */
   static startScheduler(): void {
     if (this.isRunning) {
@@ -19,16 +29,14 @@ export class GoalReminderScheduler {
     }
 
     logger.log('[GoalReminderScheduler] 🎯 Iniciando scheduler de recordatorios de metas...');
-    logger.log('[GoalReminderScheduler] 📅 Se ejecutará todos los días a las 9:00 AM UTC');
+    logger.log('[GoalReminderScheduler] 📅 Se ejecutará cada hora (minuto 0) - Timezone-aware: 9:00 AM hora local');
 
-    // Ejecutar todos los días a las 9 AM UTC
-    // Formato cron: minuto hora día-del-mes mes día-de-la-semana
-    // 0 9 * * * = A las 9:00 AM, todos los días
-    this.cronTask = cron.schedule('0 9 * * *', async () => {
-      logger.log('[GoalReminderScheduler] 🔄 Ejecutando verificación de recordatorios de metas...');
+    // Ejecutar cada hora en el minuto 0 para capturar 9:00 AM en diferentes zonas horarias
+    this.cronTask = cron.schedule('0 * * * *', async () => {
+      logger.log('[GoalReminderScheduler] 🔄 Ejecutando verificación de recordatorios de metas (timezone-aware)...');
 
       try {
-        await this.checkAllUsersGoals();
+        await this.checkAllUsersGoals(this.TARGET_HOUR, this.TARGET_MINUTE);
       } catch (error) {
         logger.error('[GoalReminderScheduler] ❌ Error en ejecución del scheduler:', error);
       }
@@ -37,12 +45,12 @@ export class GoalReminderScheduler {
     this.isRunning = true;
     logger.log('[GoalReminderScheduler] ✅ Scheduler iniciado correctamente');
 
-    // Opcional: Ejecutar una vez al inicio para testing/desarrollo
+    // Opcional: Ejecutar una vez al inicio para testing/desarrollo (sin filtro de hora)
     if (process.env.NODE_ENV === 'development') {
-      logger.log('[GoalReminderScheduler] 🧪 Ejecutando verificación inicial (desarrollo)...');
+      logger.log('[GoalReminderScheduler] 🧪 Ejecutando verificación inicial (desarrollo - sin filtro de hora)...');
       setTimeout(async () => {
         try {
-          await this.checkAllUsersGoals();
+          await this.checkAllUsersGoals(-1, 0); // -1 = ignorar filtro de hora
         } catch (error) {
           logger.error('[GoalReminderScheduler] ❌ Error en verificación inicial:', error);
         }
@@ -67,15 +75,24 @@ export class GoalReminderScheduler {
 
   /**
    * Verifica las metas de todos los usuarios elegibles
+   * Solo procesa usuarios cuya hora local sea la hora objetivo
+   *
+   * @param targetHour - Hora objetivo (0-23) en hora local del usuario. -1 para ignorar filtro
+   * @param targetMinute - Minuto objetivo (0-59)
    */
-  static async checkAllUsersGoals(): Promise<void> {
-    logger.log('[GoalReminderScheduler] 🔍 Buscando usuarios con recordatorios habilitados...');
+  static async checkAllUsersGoals(
+    targetHour: number = 9,
+    targetMinute: number = 0
+  ): Promise<void> {
+    const skipTimeFilter = targetHour === -1;
+    logger.log(`[GoalReminderScheduler] 🔍 Buscando usuarios con recordatorios habilitados ${skipTimeFilter ? '(sin filtro de hora)' : `en ${targetHour}:${targetMinute.toString().padStart(2, '0')} hora local`}...`);
 
     try {
       // Obtener usuarios con:
       // - Al menos un dispositivo activo
       // - Recordatorios de metas habilitados
       // - Frecuencia de recordatorio > 0 (0 = nunca)
+      // - Incluir país para determinar timezone
       const eligibleUsers = await prisma.user.findMany({
         where: {
           devices: {
@@ -95,13 +112,27 @@ export class GoalReminderScheduler {
         }
       });
 
-      logger.log(`[GoalReminderScheduler] 👥 ${eligibleUsers.length} usuarios elegibles encontrados`);
+      logger.log(`[GoalReminderScheduler] 👥 ${eligibleUsers.length} usuarios con recordatorios habilitados`);
 
       let notificationsSent = 0;
       let goalsChecked = 0;
+      let usersInTargetTime = 0;
 
       for (const user of eligibleUsers) {
         try {
+          // Verificar si es la hora correcta en la zona horaria del usuario
+          if (!skipTimeFilter && !isTargetLocalTime(user.country, targetHour, targetMinute)) {
+            continue; // No es la hora correcta para este usuario
+          }
+
+          usersInTargetTime++;
+
+          // Verificar horario silencioso (usa timezone del usuario)
+          const prefs = user.notificationPreferences;
+          if (prefs && isInQuietHours(user.country, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+            continue;
+          }
+
           const result = await this.checkUserGoals(user.id, user.notificationPreferences!);
           notificationsSent += result.notificationsSent;
           goalsChecked += result.goalsChecked;
@@ -111,6 +142,7 @@ export class GoalReminderScheduler {
       }
 
       logger.log(`[GoalReminderScheduler] ✅ Verificación completada:`);
+      logger.log(`   - Usuarios en hora objetivo: ${usersInTargetTime}`);
       logger.log(`   - Metas verificadas: ${goalsChecked}`);
       logger.log(`   - Notificaciones enviadas: ${notificationsSent}`);
 
@@ -275,7 +307,7 @@ export class GoalReminderScheduler {
   static getStatus(): { isRunning: boolean; nextExecution: string } {
     return {
       isRunning: this.isRunning,
-      nextExecution: this.isRunning ? 'Todos los días a las 9:00 AM UTC' : 'Detenido'
+      nextExecution: this.isRunning ? 'Cada hora (minuto 0) - 9:00 AM hora local del usuario' : 'Detenido'
     };
   }
 }
