@@ -294,10 +294,10 @@ export class NotificationService {
           body: JSON.stringify(chunk),
         });
 
-        const result = await response.json();
+        const result = await response.json() as { data?: Array<{ status: string; message?: string; details?: { error?: string } }> };
 
         if (result.data) {
-          result.data.forEach((ticket: any, idx: number) => {
+          result.data.forEach((ticket, idx) => {
             if (ticket.status === 'ok') {
               successCount++;
             } else {
