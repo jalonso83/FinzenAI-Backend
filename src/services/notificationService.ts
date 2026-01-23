@@ -160,8 +160,17 @@ export class NotificationService {
         return { success: true, successCount: 0, failureCount: 0 };
       }
 
+      // Contar notificaciones no leídas + 1 (la nueva) para el badge
+      const unreadCount = await prisma.notificationLog.count({
+        where: {
+          userId,
+          status: { not: 'READ' }
+        }
+      });
+      const badgeCount = unreadCount + 1; // +1 por la notificación que estamos enviando
+
       const tokens = devices.map(d => d.fcmToken);
-      const result = await this.sendMulticast(tokens, payload);
+      const result = await this.sendMulticast(tokens, payload, badgeCount);
 
       // Registrar la notificación
       await this.logNotification(userId, type, payload, result.successCount > 0 ? 'SENT' : 'FAILED');
@@ -210,8 +219,17 @@ export class NotificationService {
 
       logger.log(`[NotificationService] Enviando notificación directa a ${devices.length} dispositivo(s)...`);
 
+      // Contar notificaciones no leídas + 1 (la nueva) para el badge
+      const unreadCount = await prisma.notificationLog.count({
+        where: {
+          userId,
+          status: { not: 'READ' }
+        }
+      });
+      const badgeCount = unreadCount + 1;
+
       const tokens = devices.map(d => d.fcmToken);
-      const result = await this.sendMulticast(tokens, payload);
+      const result = await this.sendMulticast(tokens, payload, badgeCount);
 
       // Guardar en historial para que aparezca en la campanita
       await this.logNotification(userId, 'TIP', payload, result.successCount > 0 ? 'SENT' : 'FAILED');
@@ -236,10 +254,12 @@ export class NotificationService {
 
   /**
    * Envía notificación multicast a múltiples tokens usando Expo Push API
+   * @param badgeCount - Número de notificaciones no leídas para mostrar en el ícono de la app
    */
   private static async sendMulticast(
     tokens: string[],
-    payload: NotificationPayload
+    payload: NotificationPayload,
+    badgeCount: number = 1
   ): Promise<{ successCount: number; failureCount: number; errors?: string[]; failedTokens?: string[] }> {
     try {
       // Filtrar solo tokens válidos de Expo
@@ -269,7 +289,7 @@ export class NotificationService {
         data: payload.data || {},
         channelId: 'finzenai_notifications',
         priority: 'high' as const,
-        badge: 1,
+        badge: badgeCount,
       }));
 
       // Enviar a Expo Push API (máximo 100 por request)
