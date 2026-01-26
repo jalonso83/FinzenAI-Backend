@@ -80,13 +80,20 @@ export class StripeService {
         cancel_url: cancelUrl,
         metadata: { userId, platform: 'mobile' },
         subscription_data: {
-          trial_period_days: 7, // 7 días de prueba gratis
           metadata: { userId },
         },
         // Optimizaciones para móvil
         billing_address_collection: 'auto',
         phone_number_collection: { enabled: false },
       };
+
+      // Solo ofrecer trial en Stripe si el usuario NO ha usado su trial en la app
+      if (!user.hasUsedTrial) {
+        sessionConfig.subscription_data!.trial_period_days = 7;
+        logger.log(`[StripeService] Usuario ${userId} no ha usado trial, se incluyen 7 días gratis en Stripe`);
+      } else {
+        logger.log(`[StripeService] Usuario ${userId} ya usó su trial en la app, cobro inmediato`);
+      }
 
       // Aplicar descuento de referido si existe
       if (refereeCoupon) {
