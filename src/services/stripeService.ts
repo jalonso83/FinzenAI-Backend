@@ -48,8 +48,8 @@ export class StripeService {
 
       let customerId = user.stripeCustomerId;
 
-      // Crear customer si no existe
-      if (!customerId) {
+      // Crear customer si no existe o si es inválido (string "NULL", "null", vacío)
+      if (!customerId || customerId === 'NULL' || customerId === 'null' || customerId.trim() === '') {
         const customer = await this.createCustomer(
           userId,
           user.email,
