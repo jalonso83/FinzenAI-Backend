@@ -13,14 +13,14 @@ model User {
   lastName            String
   email               String        @unique
   password            String
-  phone               String
-  birthDate           DateTime
+  phone               String?
+  birthDate           DateTime?
   country             String
-  state               String
-  city                String
+  state               String?
+  city                String?
   currency            String
   preferredLanguage   String
-  occupation          String
+  occupation          String?
   company             String?
   verified            Boolean       @default(false)
   createdAt           DateTime      @default(now())

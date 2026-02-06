@@ -20,14 +20,14 @@ interface RegisterRequest {
   lastName: string;
   email: string;
   password: string;
-  phone: string;
-  birthDate: string;
+  phone?: string;
+  birthDate?: string;
   country: string;
-  state: string;
-  city: string;
+  state?: string;
+  city?: string;
   currency: string;
   preferredLanguage: string;
-  occupation: string;
+  occupation?: string;
   company?: string;
   // Información del dispositivo para control de trial (anti-abuso)
   deviceId?: string;
@@ -55,9 +55,9 @@ interface VerifyEmailRequest {
  * Valida los datos de registro
  */
 function validateRegistrationData(data: RegisterRequest): { valid: boolean; error?: string } {
-  const { name, lastName, email, password, phone, birthDate, country, state, city, currency, preferredLanguage, occupation } = data;
+  const { name, lastName, email, password, country, currency, preferredLanguage } = data;
 
-  if (!name || !lastName || !email || !password || !phone || !birthDate || !country || !state || !city || !currency || !preferredLanguage || !occupation) {
+  if (!name || !lastName || !email || !password || !country || !currency || !preferredLanguage) {
     return { valid: false, error: 'Todos los campos obligatorios deben ser completados' };
   }
 
@@ -149,9 +149,9 @@ function validateProfileData(data: {
   birthDate?: string; country?: string; state?: string; city?: string;
   currency?: string; preferredLanguage?: string; occupation?: string;
 }): { valid: boolean; error?: string } {
-  const { name, lastName, email, phone, birthDate, country, state, city, currency, preferredLanguage, occupation } = data;
+  const { name, lastName, email, country, currency, preferredLanguage } = data;
 
-  if (!name || !lastName || !email || !phone || !birthDate || !country || !state || !city || !currency || !preferredLanguage || !occupation) {
+  if (!name || !lastName || !email || !country || !currency || !preferredLanguage) {
     return { valid: false, error: 'Todos los campos obligatorios deben ser completados' };
   }
 
@@ -231,9 +231,12 @@ export const register = async (req: Request, res: Response) => {
     const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const user = await prisma.user.create({
       data: {
-        name, lastName, email, password: hashedPassword, phone,
-        birthDate: new Date(birthDate), country, state, city,
-        currency, preferredLanguage, occupation, company, verified: false
+        name, lastName, email, password: hashedPassword,
+        phone: phone || null,
+        birthDate: birthDate ? new Date(birthDate) : null,
+        country, state: state || null, city: city || null,
+        currency, preferredLanguage,
+        occupation: occupation || null, company, verified: false
       },
       select: { id: true, email: true, verified: true, createdAt: true }
     });
@@ -690,8 +693,12 @@ export const updateProfile = async (req: Request, res: Response) => {
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: {
-        name, lastName, email, phone, birthDate: new Date(birthDate),
-        country, state, city, currency, preferredLanguage, occupation, company
+        name, lastName, email,
+        phone: phone || null,
+        birthDate: birthDate ? new Date(birthDate) : null,
+        country, state: state || null, city: city || null,
+        currency, preferredLanguage,
+        occupation: occupation || null, company
       },
       select: USER_PROFILE_SELECT
     });
