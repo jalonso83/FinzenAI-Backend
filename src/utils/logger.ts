@@ -202,5 +202,6 @@ export const emailLogger = new Logger({ prefix: 'Email' });
 export const gamificationLogger = new Logger({ prefix: 'Gamification' });
 export const zenioLogger = new Logger({ prefix: 'Zenio' });
 export const dbLogger = new Logger({ prefix: 'Database' });
+export const revenueCatLogger = new Logger({ prefix: 'RevenueCat' });
 
 export default logger;

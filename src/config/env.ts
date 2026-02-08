@@ -71,6 +71,10 @@ export const ENV = {
   FRONTEND_URL: getOptionalEnv('FRONTEND_URL', 'http://localhost:5173'),
   APP_URL: getOptionalEnv('APP_URL', 'https://finzenai.com'),
 
+  // === REVENUECAT ===
+  REVENUECAT_SECRET_KEY: getOptionalEnv('REVENUECAT_SECRET_KEY', ''),
+  REVENUECAT_WEBHOOK_AUTH_HEADER: getOptionalEnv('REVENUECAT_WEBHOOK_AUTH_HEADER', ''),
+
   // === SERVER ===
   PORT: getOptionalEnv('PORT', '3001'),
   NODE_ENV: getOptionalEnv('NODE_ENV', 'development'),

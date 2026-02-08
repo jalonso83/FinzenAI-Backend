@@ -330,6 +330,11 @@ model Subscription {
   zenioQueriesUsed     Int                @default(0)
   zenioQueriesResetAt  DateTime           @default(now())
 
+  // RevenueCat (In-App Purchases)
+  paymentProvider        PaymentProvider    @default(STRIPE)
+  revenueCatAppUserId    String?
+  originalTransactionId  String?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("subscriptions")
@@ -378,6 +383,12 @@ enum PaymentStatus {
   PENDING
   REFUNDED
   CANCELED
+}
+
+enum PaymentProvider {
+  STRIPE
+  APPLE
+  GOOGLE
 }
 
 // Registro de dispositivos que ya usaron trial (anti-abuso)

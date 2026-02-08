@@ -35,9 +35,11 @@ import reminderRoutes from './routes/reminders';
 import referralRoutes from './routes/referrals';
 import weeklyReportRoutes from './routes/weeklyReports';
 import webRoutes from './routes/web';
+import revenueCatRoutes from './routes/revenueCat';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
+import { handleRevenueCatWebhook } from './webhooks/revenueCatWebhook';
 
 // Importar rate limiters
 import { webhookLimiter, apiLimiter } from './config/rateLimiter';
@@ -74,6 +76,9 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Webhook de RevenueCat (JSON body, después de express.json)
+app.post('/webhooks/revenuecat', webhookLimiter, handleRevenueCatWebhook);
+
 // Middleware de logging
 app.use((req, res, next) => {
   logger.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
@@ -94,6 +99,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/investment', investmentRoutes);
 app.use('/api/scheduler', budgetSchedulerRoutes);
+app.use('/api/subscriptions/rc', revenueCatRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/email-sync', emailSyncRoutes);
 app.use('/api/notifications', notificationRoutes);
