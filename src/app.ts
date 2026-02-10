@@ -35,6 +35,7 @@ import reminderRoutes from './routes/reminders';
 import referralRoutes from './routes/referrals';
 import weeklyReportRoutes from './routes/weeklyReports';
 import webRoutes from './routes/web';
+import oauthTestRoutes from './routes/oauthTest';
 import revenueCatRoutes from './routes/revenueCat';
 
 // Importar webhooks
@@ -87,6 +88,9 @@ app.use((req, res, next) => {
 
 // Rutas Web (Universal Links, checkout pages) - SIN prefijo /api
 app.use(webRoutes);
+
+// OAuth Test Page (temporary - for Google verification)
+app.use(oauthTestRoutes);
 
 // Rutas API
 app.use('/api/auth', authRoutes);
