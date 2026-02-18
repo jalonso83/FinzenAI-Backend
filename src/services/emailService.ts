@@ -215,7 +215,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
                 <strong>Para comenzar tu viaje hacia la libertad financiera, confirma tu cuenta:</strong>
             </p>
 
-            <a href="${ENV.FRONTEND_URL}/verify-email?token=${token}&email=${email}" class="confirm-button">
+            <a href="${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${token}&email=${email}" class="confirm-button">
                 🎯 Confirmar Cuenta y Comenzar
             </a>
 
@@ -249,7 +249,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
                 <a href="mailto:info@finzenai.com">info@finzenai.com</a>
             </p>
             <p style="margin-top: 15px; font-size: 12px;">
-                © 2025 FinZen AI. Todos los derechos reservados.<br>
+                © 2026 FinZen AI. Todos los derechos reservados.<br>
                 <a href="https://finzenai.com/privacy">Política de Privacidad</a> | 
                 <a href="https://finzenai.com/terms">Términos de Servicio</a> | 
                 <a href="https://finzenai.com/unsubscribe?email=${email}">Cancelar suscripción</a>
@@ -269,7 +269,7 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
     if (!ENV.RESEND_API_KEY) {
       // Modo simulación para desarrollo
       logger.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-      logger.log(`[SIMULACIÓN] Enlace: ${ENV.FRONTEND_URL}/verify-email?token=${userId}&email=${email}`);
+      logger.log(`[SIMULACIÓN] Enlace: ${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${userId}&email=${email}`);
       return;
     }
 
@@ -297,7 +297,7 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
     logger.error('❌ Error sending verification email:', error);
     // No fallar en ningún entorno, solo simular
     logger.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-    logger.log(`[SIMULACIÓN] Enlace: ${ENV.FRONTEND_URL}/verify-email?token=${userId}&email=${email}`);
+    logger.log(`[SIMULACIÓN] Enlace: ${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${userId}&email=${email}`);
   }
 };
 
@@ -463,7 +463,7 @@ const getPasswordResetTemplate = (name: string, resetCode: string) => {
                 <a href="https://finzenai.com">finzenai.com</a>
             </p>
             <p style="margin-top: 15px; font-size: 12px;">
-                © 2025 FinZen AI. Todos los derechos reservados.
+                © 2026 FinZen AI. Todos los derechos reservados.
             </p>
         </div>
     </div>

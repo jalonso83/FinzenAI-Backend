@@ -1,5 +1,5 @@
 import express, { Router } from 'express';
-import { register, login, verifyEmail, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility } from '../controllers/auth';
+import { register, login, verifyEmail, verifyEmailFromLink, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility } from '../controllers/auth';
 import { authenticateToken } from '../middlewares/auth';
 import {
   loginLimiter,
@@ -15,6 +15,7 @@ const router: Router = express.Router();
 router.post('/register', registerLimiter, register);
 router.post('/login', loginLimiter, login);
 router.post('/verify-email', emailVerificationLimiter, verifyEmail);
+router.get('/verify-email-link', emailVerificationLimiter, verifyEmailFromLink);
 router.post('/forgot-password', passwordResetLimiter, forgotPassword);
 router.post('/reset-password', passwordResetLimiter, resetPassword);
 router.post('/check-trial-eligibility', apiLimiter, checkTrialEligibility);

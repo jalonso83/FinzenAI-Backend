@@ -198,6 +198,20 @@ async function main() {
       subjectPatterns: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro', 'pago', 'notificacion', 'alerta'],
       isActive: true,
       logoUrl: null
+    },
+    {
+      name: 'Alaver - Asociación de Ahorros y Préstamos',
+      country: 'DO',
+      senderEmails: [
+        'Alaverenlinea@notificaciones.alaver.com.do',
+        'alaverenlinea@notificaciones.alaver.com.do',
+        'notificaciones@alaver.com.do',
+        'alertas@alaver.com.do',
+        'noreply@alaver.com.do'
+      ],
+      subjectPatterns: ['consumo', 'compra', 'transaccion', 'cargo', 'retiro', 'pago', 'notificacion', 'aviso'],
+      isActive: true,
+      logoUrl: null
     }
   ];
 

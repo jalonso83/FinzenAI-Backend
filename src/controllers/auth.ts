@@ -399,6 +399,226 @@ export const verifyEmail = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * Genera HTML para la página de respuesta de verificación de email
+ * Mismo estilo y branding que el email de verificación (emailService.ts)
+ */
+function getVerificationResultHtml(success: boolean, message: string, detail: string): string {
+  const statusIcon = success ? '&#10003;' : '&#10007;';
+  const statusColor = success ? '#28a745' : '#dc3545';
+  const buttonText = success ? 'Abrir FinZen AI' : 'Contactar Soporte';
+  const buttonHref = success ? 'finzenai://' : 'mailto:info@finzenai.com';
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${success ? 'Cuenta Verificada' : 'Error de Verificación'} - FinZen AI</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f6f9;
+            color: #333;
+            line-height: 1.6;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .header {
+            background-color: #204274;
+            padding: 40px 20px;
+            text-align: center;
+            color: white;
+        }
+        .header p {
+            margin: 10px 0 0 0;
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 40px 30px;
+            text-align: center;
+        }
+        .status-icon {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 25px;
+            font-size: 40px;
+            color: white;
+            background-color: ${statusColor};
+        }
+        .status-message {
+            font-size: 22px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 15px;
+        }
+        .status-detail {
+            font-size: 16px;
+            color: #6c757d;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+        .confirm-button {
+            display: inline-block;
+            padding: 15px 40px;
+            background-color: #204274;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        .confirm-button:hover {
+            transform: translateY(-2px);
+        }
+        .divider {
+            height: 2px;
+            background-color: #204274;
+            margin: 20px 30px;
+            border: none;
+        }
+        .footer {
+            padding: 20px;
+            text-align: center;
+            background-color: #f8f9fa;
+            color: #6c757d;
+            font-size: 14px;
+        }
+        .footer a {
+            color: #204274;
+            text-decoration: none;
+        }
+        @media (max-width: 600px) {
+            .content {
+                padding: 20px 15px;
+            }
+            .header {
+                padding: 30px 15px;
+            }
+            .confirm-button {
+                padding: 15px 30px;
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <!-- Header -->
+        <div class="header">
+            <img src="https://i.imgur.com/N1mxVXn.png" width="150"
+                style="display: block; margin: 0 auto 20px; border: none; outline: none; text-decoration: none;" />
+            <p>Tu copiloto financiero</p>
+        </div>
+
+        <!-- Content -->
+        <div class="content">
+            <div class="status-icon">${statusIcon}</div>
+            <div class="status-message">${message}</div>
+            <p class="status-detail">${detail}</p>
+            <a href="${buttonHref}" class="confirm-button">${buttonText}</a>
+        </div>
+
+        <hr class="divider">
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>
+                <strong>FinZen AI</strong> - Transformando vidas a través de la inteligencia financiera<br>
+                <a href="https://finzenai.com">finzenai.com</a> |
+                <a href="mailto:info@finzenai.com">info@finzenai.com</a>
+            </p>
+            <p style="margin-top: 15px; font-size: 12px;">
+                &copy; 2026 FinZen AI. Todos los derechos reservados.<br>
+                <a href="https://finzenai.com/privacy">Política de Privacidad</a> |
+                <a href="https://finzenai.com/terms">Términos de Servicio</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+/**
+ * GET /api/auth/verify-email-link
+ * Verifica email desde el link del correo electrónico (click desde email)
+ */
+export const verifyEmailFromLink = async (req: Request, res: Response) => {
+  try {
+    const email = req.query.email as string;
+    const token = req.query.token as string;
+
+    if (!email || !token) {
+      return res.status(400).send(getVerificationResultHtml(
+        false,
+        'Enlace inválido',
+        'El enlace de verificación es inválido o está incompleto. Por favor solicita un nuevo correo de verificación desde la aplicación.'
+      ));
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      return res.status(404).send(getVerificationResultHtml(
+        false,
+        'Cuenta no encontrada',
+        'No encontramos una cuenta asociada a este correo electrónico. Verifica que te registraste con este email.'
+      ));
+    }
+
+    if (user.verified) {
+      return res.send(getVerificationResultHtml(
+        true,
+        '¡Tu cuenta ya estaba verificada!',
+        'Ya puedes iniciar sesión en la aplicación.'
+      ));
+    }
+
+    // Verificar token (token === userId, misma lógica que verifyEmail)
+    if (token !== user.id) {
+      return res.status(400).send(getVerificationResultHtml(
+        false,
+        'Token inválido',
+        'El enlace de verificación ha expirado o es inválido. Por favor solicita un nuevo correo de verificación desde la aplicación.'
+      ));
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { verified: true }
+    });
+
+    logger.log(`✅ Email verificado via link para: ${email}`);
+
+    return res.send(getVerificationResultHtml(
+      true,
+      '¡Tu cuenta ha sido verificada exitosamente!',
+      'Ya puedes iniciar sesión en la aplicación FinZen AI.'
+    ));
+  } catch (error) {
+    logger.error('Verify email from link error:', error);
+    return res.status(500).send(getVerificationResultHtml(
+      false,
+      'Error del servidor',
+      'Ocurrió un error inesperado. Por favor intenta nuevamente más tarde o contacta a soporte.'
+    ));
+  }
+};
+
 // Función para generar código de 6 dígitos
 const generateResetCode = (): string => {
   return Math.floor(100000 + Math.random() * 900000).toString();
