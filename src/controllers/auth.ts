@@ -896,7 +896,7 @@ export const updateProfile = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
     }
 
-    const { name, lastName, email, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company } = req.body;
+    const { name, lastName, email, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company, onboardingCompleted } = req.body;
 
     // 1. Validar datos
     const validation = validateProfileData(req.body);
@@ -918,7 +918,8 @@ export const updateProfile = async (req: Request, res: Response) => {
         birthDate: birthDate ? new Date(birthDate) : null,
         country, state: state || null, city: city || null,
         currency, preferredLanguage,
-        occupation: occupation || null, company
+        occupation: occupation || null, company,
+        ...(typeof onboardingCompleted === 'boolean' && { onboardingCompleted })
       },
       select: USER_PROFILE_SELECT
     });
