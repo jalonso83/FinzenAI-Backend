@@ -36,6 +36,16 @@ export class SubscriptionService {
         plan = 'FREE' as PlanType;
       }
 
+      // Auto-reparar: FREE + CANCELED → FREE + ACTIVE
+      // Un usuario en plan FREE no debería tener status CANCELED
+      if (subscription.plan === 'FREE' && subscription.status === 'CANCELED') {
+        logger.warn(`Estado inválido FREE+CANCELED detectado para usuario ${userId}. Reparando a ACTIVE.`);
+        subscription = await prisma.subscription.update({
+          where: { userId },
+          data: { status: 'ACTIVE' },
+        });
+      }
+
       const limits = PLANS[plan].limits;
       const features = PLANS[plan].features;
 
@@ -275,7 +285,7 @@ export class SubscriptionService {
         where: { userId },
         data: {
           plan: SubscriptionPlan.FREE,
-          status: SubscriptionStatus.CANCELED,
+          status: SubscriptionStatus.ACTIVE,
           stripeSubscriptionId: null,
           stripePriceId: null,
           currentPeriodStart: null,

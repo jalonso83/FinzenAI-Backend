@@ -105,8 +105,16 @@ export const startTrial = async (req: Request, res: Response) => {
 
       if (existingDeviceTrial) {
         logger.warn(`⚠️ Dispositivo ${deviceId} ya usó trial con usuario ${existingDeviceTrial.usedByUserId}`);
+
+        // Marcar hasUsedTrial para que el cliente no intente trial de nuevo
+        // y pueda ir directo al flujo de compra
+        await prisma.user.update({
+          where: { id: userId },
+          data: { hasUsedTrial: true }
+        });
+
         return res.status(400).json({
-          message: 'Este dispositivo ya ha utilizado un período de prueba',
+          message: 'Este dispositivo ya ha utilizado un período de prueba. Puedes suscribirte directamente.',
           canUseTrial: false
         });
       }
