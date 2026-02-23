@@ -338,6 +338,29 @@ export const login = async (req: Request, res: Response) => {
   }
 };
 
+export const resendVerificationEmail = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+
+    // Respuesta genérica por seguridad (no revelar si el email existe)
+    if (!user || user.verified) {
+      return res.status(200).json({ message: 'If the email exists and is unverified, a verification email has been sent' });
+    }
+
+    await sendVerificationEmailSafe(user.email, user.id, user.name);
+    return res.status(200).json({ message: 'Verification email sent' });
+  } catch (error) {
+    logger.error('Resend verification email error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Failed to resend verification email' });
+  }
+};
+
 export const verifyEmail = async (req: Request, res: Response) => {
   try {
     const { email, token }: VerifyEmailRequest = req.body;

@@ -1,5 +1,5 @@
 import express, { Router } from 'express';
-import { register, login, verifyEmail, verifyEmailFromLink, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility } from '../controllers/auth';
+import { register, login, resendVerificationEmail, verifyEmail, verifyEmailFromLink, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility } from '../controllers/auth';
 import { authenticateToken } from '../middlewares/auth';
 import {
   loginLimiter,
@@ -14,6 +14,7 @@ const router: Router = express.Router();
 // Rutas de autenticación (con rate limiting)
 router.post('/register', registerLimiter, register);
 router.post('/login', loginLimiter, login);
+router.post('/resend-verification', emailVerificationLimiter, resendVerificationEmail);
 router.post('/verify-email', emailVerificationLimiter, verifyEmail);
 router.get('/verify-email-link', emailVerificationLimiter, verifyEmailFromLink);
 router.post('/forgot-password', passwordResetLimiter, forgotPassword);
