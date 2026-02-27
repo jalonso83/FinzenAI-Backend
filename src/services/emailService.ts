@@ -260,7 +260,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
 </html>`;
 };
 
-export const sendVerificationEmail = async (email: string, userId: string, name: string) => {
+export const sendVerificationEmail = async (email: string, token: string, name: string) => {
   try {
     logger.log('🔍 Verificando configuración de Resend...');
     logger.log('RESEND_API_KEY existe:', !!ENV.RESEND_API_KEY);
@@ -269,13 +269,13 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
     if (!ENV.RESEND_API_KEY) {
       // Modo simulación para desarrollo
       logger.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-      logger.log(`[SIMULACIÓN] Enlace: ${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${userId}&email=${email}`);
+      logger.log(`[SIMULACIÓN] Enlace: ${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${token}&email=${email}`);
       return;
     }
 
     // Envío real con Resend
     logger.log('📧 Intentando enviar email real con Resend...');
-    const htmlContent = getEmailTemplate(name, userId, email);
+    const htmlContent = getEmailTemplate(name, token, email);
 
     logger.log('📤 Enviando email a:', email);
     logger.log('📤 Desde: noreply@finzenai.com');
@@ -297,7 +297,7 @@ export const sendVerificationEmail = async (email: string, userId: string, name:
     logger.error('❌ Error sending verification email:', error);
     // No fallar en ningún entorno, solo simular
     logger.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-    logger.log(`[SIMULACIÓN] Enlace: ${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${userId}&email=${email}`);
+    logger.log(`[SIMULACIÓN] Enlace: ${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${token}&email=${email}`);
   }
 };
 
@@ -489,7 +489,6 @@ export const sendPasswordResetEmail = async (email: string, resetCode: string, n
     const htmlContent = getPasswordResetTemplate(name || 'Usuario', resetCode);
 
     logger.log('📤 Enviando email de reset a:', email);
-    logger.log('📤 Código:', resetCode);
 
     const { data, error } = await resend.emails.send({
       from: 'FinZen AI <noreply@finzenai.com>',

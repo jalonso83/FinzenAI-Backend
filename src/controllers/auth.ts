@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
@@ -13,6 +14,44 @@ import { logger } from '../utils/logger';
 // Constantes
 const MIN_PASSWORD_LENGTH = 6;
 const BCRYPT_ROUNDS = 12;
+const VERIFICATION_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 horas
+
+/**
+ * Genera un token de verificación firmado con HMAC
+ * Formato: base64(userId:timestamp:hmac)
+ */
+function generateVerificationToken(userId: string): string {
+  const timestamp = Date.now().toString();
+  const payload = `${userId}:${timestamp}`;
+  const hmac = crypto.createHmac('sha256', ENV.JWT_SECRET).update(payload).digest('hex');
+  return Buffer.from(`${payload}:${hmac}`).toString('base64url');
+}
+
+/**
+ * Verifica y decodifica un token de verificación HMAC
+ * Retorna el userId si es válido y no ha expirado, null si no
+ */
+function verifyVerificationToken(token: string): { userId: string } | null {
+  try {
+    const decoded = Buffer.from(token, 'base64url').toString('utf8');
+    const parts = decoded.split(':');
+    if (parts.length !== 3) return null;
+
+    const [userId, timestamp, hmac] = parts;
+
+    // Verificar firma
+    const expectedHmac = crypto.createHmac('sha256', ENV.JWT_SECRET).update(`${userId}:${timestamp}`).digest('hex');
+    if (!crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(expectedHmac))) return null;
+
+    // Verificar expiración
+    const tokenTime = parseInt(timestamp, 10);
+    if (isNaN(tokenTime) || Date.now() - tokenTime > VERIFICATION_TOKEN_EXPIRY_MS) return null;
+
+    return { userId };
+  } catch {
+    return null;
+  }
+}
 
 // Tipos para las peticiones
 interface RegisterRequest {
@@ -70,10 +109,12 @@ function validateRegistrationData(data: RegisterRequest): { valid: boolean; erro
 
 /**
  * Envía email de verificación sin bloquear el registro
+ * Genera token HMAC firmado con expiración de 24h
  */
 async function sendVerificationEmailSafe(email: string, userId: string, name: string): Promise<void> {
   try {
-    await sendVerificationEmail(email, userId, name);
+    const token = generateVerificationToken(userId);
+    await sendVerificationEmail(email, token, name);
   } catch (emailError) {
     logger.error('❌ Error enviando email de verificación:', emailError);
   }
@@ -391,28 +432,28 @@ export const verifyEmail = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar token (implementación simplificada)
-    // En producción, deberías usar un token más seguro
-    if (token === user.id) {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { verified: true }
-      });
-
-      return res.json({
-        message: 'Email verified successfully',
-        user: {
-          id: user.id,
-          email: user.email,
-          verified: true
-        }
-      });
-    } else {
+    // Verificar token HMAC firmado
+    const tokenData = verifyVerificationToken(token);
+    if (!tokenData || tokenData.userId !== user.id) {
       return res.status(400).json({
         error: 'Invalid token',
-        message: 'Invalid verification token'
+        message: 'El enlace de verificación es inválido o ha expirado'
       });
     }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { verified: true }
+    });
+
+    return res.json({
+      message: 'Email verified successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        verified: true
+      }
+    });
   } catch (error) {
     logger.error('Verify email error:', error);
     return res.status(500).json({
@@ -611,12 +652,13 @@ export const verifyEmailFromLink = async (req: Request, res: Response) => {
       ));
     }
 
-    // Verificar token (token === userId, misma lógica que verifyEmail)
-    if (token !== user.id) {
+    // Verificar token HMAC firmado
+    const tokenData = verifyVerificationToken(token);
+    if (!tokenData || tokenData.userId !== user.id) {
       return res.status(400).send(getVerificationResultHtml(
         false,
-        'Token inválido',
-        'El enlace de verificación ha expirado o es inválido. Por favor solicita un nuevo correo de verificación desde la aplicación.'
+        'Enlace inválido o expirado',
+        'El enlace de verificación ha expirado (24 horas) o es inválido. Por favor solicita un nuevo correo de verificación desde la aplicación.'
       ));
     }
 
@@ -644,7 +686,7 @@ export const verifyEmailFromLink = async (req: Request, res: Response) => {
 
 // Función para generar código de 6 dígitos
 const generateResetCode = (): string => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
 };
 
 export const forgotPassword = async (req: Request, res: Response) => {
@@ -951,5 +993,61 @@ export const updateProfile = async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Update profile error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Error al actualizar perfil' });
+  }
+};
+
+/**
+ * DELETE /api/auth/account
+ * Elimina la cuenta del usuario y todos sus datos
+ * Requiere confirmación con contraseña
+ */
+export const deleteAccount = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
+    }
+
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: 'Validation error', message: 'La contraseña es requerida para eliminar la cuenta' });
+    }
+
+    // Verificar que el usuario existe
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: 'Not found', message: 'Usuario no encontrado' });
+    }
+
+    // Verificar contraseña
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'Invalid password', message: 'La contraseña es incorrecta' });
+    }
+
+    logger.log(`🗑️ Iniciando eliminación de cuenta para: ${user.email}`);
+
+    // Eliminar todo en una transacción atómica
+    await prisma.$transaction(async (tx) => {
+      // TrialDeviceRegistry no tiene cascade intencionalmente (anti-abuso:
+      // el registro del dispositivo debe persistir para evitar trials repetidos)
+      // No se borra.
+
+      // Eliminar User — cascade borra automáticamente todas las relaciones:
+      // Transaction, Budget, Onboarding, Goal, GamificationEvent, FinScoreHistory,
+      // UserStreak, UserBadge, ChallengeParticipant, Subscription, Payment,
+      // EmailConnection (+BankEmailFilter, ImportedBankEmail, EmailSyncLog),
+      // UserDevice, NotificationPreferences, NotificationLog, UserTipHistory,
+      // PaymentReminder, ReferralCode, Referral, ReferralReward,
+      // MerchantCategoryMapping, WeeklyReport
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    logger.log(`✅ Cuenta eliminada exitosamente: ${user.email}`);
+
+    return res.json({ message: 'Cuenta eliminada exitosamente. Todos tus datos han sido borrados.' });
+  } catch (error) {
+    logger.error('Delete account error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Error al eliminar la cuenta' });
   }
 };

@@ -1,4 +1,5 @@
 import express, { Application } from 'express';
+import helmet from 'helmet';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { prisma, disconnectPrisma } from './lib/prisma';
@@ -69,13 +70,26 @@ if (!corsOrigin && process.env.NODE_ENV === 'production') {
   throw new Error('CORS_ORIGIN must be set in production environment');
 }
 
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+
 // Middleware
 app.use(cors({
   origin: corsOrigin?.split(',') || 'http://localhost:5173',
   credentials: true
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // Webhook de RevenueCat (JSON body, después de express.json)
 app.post('/webhooks/revenuecat', webhookLimiter, handleRevenueCatWebhook);
@@ -89,8 +103,11 @@ app.use((req, res, next) => {
 // Rutas Web (Universal Links, checkout pages) - SIN prefijo /api
 app.use(webRoutes);
 
-// OAuth Test Page (temporary - for Google verification)
-app.use(oauthTestRoutes);
+// OAuth Test Page — DESHABILITADO (ya no necesario para verificacion de Google)
+// app.use(oauthTestRoutes);
+
+// Rate limiting global para todas las rutas API
+app.use('/api', apiLimiter);
 
 // Rutas API
 app.use('/api/auth', authRoutes);

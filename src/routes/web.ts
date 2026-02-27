@@ -3,6 +3,16 @@ import type { Router as RouterType } from 'express';
 
 const router: RouterType = Router();
 
+// Sanitizar inputs para prevenir XSS en HTML y contextos JS
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // Configuracion de Apple Universal Links
 const APPLE_TEAM_ID = 'PK4462U2Y4';
 const APP_BUNDLE_ID = 'com.jl.alonso.finzenaimobile';
@@ -40,7 +50,7 @@ router.get('/.well-known/apple-app-site-association', (req: Request, res: Respon
  * Si falla, muestra pagina web con boton para abrir la app
  */
 router.get('/checkout/success', (req: Request, res: Response) => {
-  const sessionId = req.query.session_id as string || '';
+  const sessionId = escapeHtml(req.query.session_id as string || '');
 
   const html = `
 <!DOCTYPE html>
@@ -301,7 +311,7 @@ router.get('/checkout/cancel', (req: Request, res: Response) => {
  * También intenta abrir la app si está instalada
  */
 router.get('/join', (req: Request, res: Response) => {
-  const refCode = req.query.ref as string || '';
+  const refCode = escapeHtml(req.query.ref as string || '');
 
   // URLs de las tiendas (actualizar con los IDs reales)
   const APP_STORE_URL = 'https://apps.apple.com/app/finzen-ai/id6740000000'; // TODO: Actualizar con ID real

@@ -59,7 +59,9 @@ router.delete('/all', deleteAllNotifications);
 router.delete('/:id', deleteNotification);
 
 // Prueba (solo desarrollo)
-router.post('/test', sendTestNotification);
-router.post('/test-tip', sendTestTip);
+if (process.env.NODE_ENV !== 'production') {
+  router.post('/test', sendTestNotification);
+  router.post('/test-tip', sendTestTip);
+}
 
 export default router;

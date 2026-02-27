@@ -35,27 +35,29 @@ router.get('/status', (req: Request, res: Response) => {
 /**
  * POST /api/scheduler/run-manual
  * Ejecuta manualmente la renovación de presupuestos
- * Útil para testing o ejecución bajo demanda
+ * Solo disponible en desarrollo
  */
-router.post('/run-manual', async (req: Request, res: Response) => {
-  try {
-    logger.log(`[Manual Execution] Ejecutado por usuario: ${req.user?.email}`);
-    
-    await BudgetScheduler.runManual();
-    
-    return res.json({
-      success: true,
-      message: 'Renovación manual de presupuestos ejecutada correctamente'
-    });
-  } catch (error) {
-    logger.error('Error running manual renewal:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: 'Error al ejecutar la renovación manual'
-    });
-  }
-});
+if (process.env.NODE_ENV !== 'production') {
+  router.post('/run-manual', async (req: Request, res: Response) => {
+    try {
+      logger.log(`[Manual Execution] Ejecutado por usuario: ${req.user?.email}`);
+
+      await BudgetScheduler.runManual();
+
+      return res.json({
+        success: true,
+        message: 'Renovación manual de presupuestos ejecutada correctamente'
+      });
+    } catch (error) {
+      logger.error('Error running manual renewal:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        message: 'Error al ejecutar la renovación manual'
+      });
+    }
+  });
+}
 
 /**
  * GET /api/scheduler/budget-history/:categoryId?
