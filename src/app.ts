@@ -104,8 +104,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Prevent caching of API responses
-app.use('/api', (req, res, next) => {
+// Prevent caching of all responses (CASA CWE-524)
+app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
