@@ -56,6 +56,14 @@ const PORT = process.env.PORT || 3001;
 // Habilitar trust proxy para obtener IP real detrás de Railway/proxies
 app.set('trust proxy', 1);
 
+// Block TRACE and TRACK methods (prevents proxy fingerprinting - CASA CWE-204)
+app.use((req, res, next) => {
+  if (req.method === 'TRACE' || req.method === 'TRACK') {
+    return res.status(405).set('Allow', 'GET, POST, PUT, PATCH, DELETE, OPTIONS').end();
+  }
+  next();
+});
+
 // Webhook de Stripe - DEBE ir ANTES de express.json() para recibir raw body
 app.post(
   '/webhooks/stripe',
@@ -81,7 +89,28 @@ app.use(helmet({
     },
   },
   crossOriginEmbedderPolicy: false,
+  hidePoweredBy: true,
 }));
+
+// Remove proxy disclosure headers and hide server identity
+app.use((req, res, next) => {
+  res.removeHeader('Via');
+  res.removeHeader('X-Powered-By');
+  res.removeHeader('X-Cache');
+  res.removeHeader('X-Cache-Hits');
+  res.removeHeader('X-Served-By');
+  res.removeHeader('X-Timer');
+  res.setHeader('Server', 'FinZenAI');
+  next();
+});
+
+// Prevent caching of API responses
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
 
 // Middleware
 app.use(cors({
@@ -204,11 +233,12 @@ async function startServer() {
     await initPrices();
 
     // Iniciar servidor
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       logger.log(`🚀 FinZen AI Backend running on port ${PORT}`);
       logger.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
     });
+    server.setTimeout(120000); // 2 minutos máximo por request
   } catch (error) {
     logger.error('❌ Failed to start server:', error);
     process.exit(1);

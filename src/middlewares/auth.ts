@@ -31,7 +31,7 @@ export const authenticateToken = async (
       });
     }
 
-    const decoded = jwt.verify(token, ENV.JWT_SECRET) as any;
+    const decoded = jwt.verify(token, ENV.JWT_SECRET, { algorithms: ['HS256'] }) as any;
     
     // Verificar que el usuario existe en la base de datos
     const user = await prisma.user.findUnique({

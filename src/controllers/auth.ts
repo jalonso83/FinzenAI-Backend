@@ -12,7 +12,7 @@ import { REFERRAL_CONFIG } from '../config/referralConfig';
 import { logger } from '../utils/logger';
 
 // Constantes
-const MIN_PASSWORD_LENGTH = 6;
+const MIN_PASSWORD_LENGTH = 8;
 const BCRYPT_ROUNDS = 12;
 const VERIFICATION_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 horas
 
@@ -356,7 +356,7 @@ export const login = async (req: Request, res: Response) => {
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       ENV.JWT_SECRET,
-      { expiresIn: '7d' }
+      { algorithm: 'HS256', expiresIn: '7d' }
     );
 
     return res.json({
@@ -750,10 +750,10 @@ export const resetPassword = async (req: Request, res: Response) => {
       });
     }
 
-    if (newPassword.length < 6) {
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
       return res.status(400).json({
         error: 'Validation error',
-        message: 'La contraseña debe tener al menos 6 caracteres'
+        message: `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`
       });
     }
 
@@ -830,10 +830,10 @@ export const changePassword = async (req: Request, res: Response) => {
       });
     }
 
-    if (newPassword.length < 6) {
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
       return res.status(400).json({
         error: 'Validation error',
-        message: 'La nueva contraseña debe tener al menos 6 caracteres'
+        message: `La nueva contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`
       });
     }
 

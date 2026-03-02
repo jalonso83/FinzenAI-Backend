@@ -6,6 +6,16 @@ import { EmailSyncService } from '../services/emailSyncService';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
+
+const ALLOWED_REDIRECT_PREFIXES = [
+  'finzenai://',
+  'https://finzenai-backend-production.up.railway.app',
+];
+
+function isValidRedirectUrl(url: string): boolean {
+  return ALLOWED_REDIRECT_PREFIXES.some(prefix => url.startsWith(prefix));
+}
+
 /**
  * Obtiene la URL de autorizacion para Gmail
  * GET /api/email-sync/gmail/auth-url
@@ -73,6 +83,12 @@ export const handleGmailCallback = async (req: Request, res: Response) => {
         // Si falla el decode, asumir que state es el userId (compatibilidad)
         userId = state as string;
       }
+    }
+
+    // Validar redirect URL contra allowlist
+    if (!isValidRedirectUrl(mobileRedirectUrl)) {
+      logger.error('[EmailSync] Invalid redirect URL blocked:', mobileRedirectUrl);
+      return res.status(400).json({ error: 'Invalid redirect URL' });
     }
 
     if (error) {
@@ -177,6 +193,12 @@ export const handleOutlookCallback = async (req: Request, res: Response) => {
         // Si falla el decode, asumir que state es el userId (compatibilidad)
         userId = state as string;
       }
+    }
+
+    // Validar redirect URL contra allowlist
+    if (!isValidRedirectUrl(mobileRedirectUrl)) {
+      logger.error('[EmailSync] Invalid redirect URL blocked:', mobileRedirectUrl);
+      return res.status(400).json({ error: 'Invalid redirect URL' });
     }
 
     if (error) {

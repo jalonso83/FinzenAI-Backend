@@ -10,25 +10,20 @@ import multer from 'multer';
 
 const router: Router = express.Router();
 
-// Endpoint de prueba para alertas de gastos hormiga (requiere API key, no auth)
-router.post('/test-ant-alert/:userId', async (req: Request, res: Response) => {
-  const apiKey = req.headers['x-api-key'];
-  const expectedKey = process.env.CRON_API_KEY || 'default-cron-key';
+// Endpoint de prueba para alertas de gastos hormiga (solo desarrollo)
+if (process.env.NODE_ENV !== 'production') {
+  router.post('/test-ant-alert/:userId', async (req: Request, res: Response) => {
+    const { userId } = req.params;
+    const period = (req.query.period as 'weekly' | 'monthly') || 'weekly';
 
-  if (apiKey !== expectedKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const { userId } = req.params;
-  const period = (req.query.period as 'weekly' | 'monthly') || 'weekly';
-
-  try {
-    const result = await AntExpenseScheduler.analyzeUser(userId, period);
-    return res.json(result);
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message });
-  }
-});
+    try {
+      const result = await AntExpenseScheduler.analyzeUser(userId, period);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+}
 
 // Configurar multer para archivos de audio
 const upload = multer({

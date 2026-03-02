@@ -16,28 +16,23 @@ import { BudgetReminderService } from '../services/budgetReminderService';
 
 const router: Router = express.Router();
 
-// Ruta para ejecutar job de recordatorios (protegida por API key)
-router.post('/run-daily-reminders', async (req: Request, res: Response) => {
-  const apiKey = req.headers['x-api-key'];
-  const expectedKey = process.env.CRON_API_KEY || 'default-cron-key';
-
-  if (apiKey !== expectedKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  try {
-    const results = await BudgetReminderService.runDailyReminders();
-    return res.status(200).json({
-      success: true,
-      ...results
-    });
-  } catch (error: any) {
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// Ruta para ejecutar job de recordatorios (solo desarrollo)
+if (process.env.NODE_ENV !== 'production') {
+  router.post('/run-daily-reminders', async (req: Request, res: Response) => {
+    try {
+      const results = await BudgetReminderService.runDailyReminders();
+      return res.status(200).json({
+        success: true,
+        ...results
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
+}
 
 // Todas las rutas siguientes requieren autenticación
 router.use(authenticateToken);

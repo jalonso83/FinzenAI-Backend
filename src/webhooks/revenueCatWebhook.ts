@@ -11,13 +11,15 @@ import { revenueCatLogger as logger } from '../utils/logger';
  * POST /webhooks/revenuecat
  */
 export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
-  // Verificar Authorization header
-  if (REVENUECAT_WEBHOOK_AUTH) {
-    const authHeader = req.headers['authorization'];
-    if (authHeader !== REVENUECAT_WEBHOOK_AUTH) {
-      logger.error('Webhook RC: Authorization header inválido');
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+  // Verificar Authorization header (requerido siempre)
+  if (!REVENUECAT_WEBHOOK_AUTH) {
+    logger.error('Webhook RC: REVENUECAT_WEBHOOK_AUTH_HEADER no configurado');
+    return res.status(500).json({ error: 'Webhook not configured' });
+  }
+  const authHeader = req.headers['authorization'];
+  if (authHeader !== REVENUECAT_WEBHOOK_AUTH) {
+    logger.error('Webhook RC: Authorization header inválido');
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const event = req.body;

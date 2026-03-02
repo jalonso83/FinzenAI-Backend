@@ -11,9 +11,11 @@ import { authenticateToken } from '../middlewares/auth';
 
 const router: Router = express.Router();
 
-// Rutas administrativas (protegidas por API key)
-router.post('/run-generation', runManualGeneration);
-router.post('/generate/:userId', generateForUser);
+// Rutas administrativas (solo desarrollo)
+if (process.env.NODE_ENV !== 'production') {
+  router.post('/run-generation', runManualGeneration);
+  router.post('/generate/:userId', generateForUser);
+}
 
 // Todas las rutas siguientes requieren autenticación
 router.use(authenticateToken);
