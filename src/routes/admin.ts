@@ -1,9 +1,10 @@
 import { Router } from 'express';
+import type { Router as ExpressRouter } from 'express';
 import { authenticateAdmin } from '../middlewares/adminAuth';
 import { strictApiLimiter } from '../config/rateLimiter';
 import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement } from '../controllers/admin';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 // All admin routes require admin authentication + strict rate limiting (30/min)
 router.use(authenticateAdmin);
