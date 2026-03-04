@@ -75,6 +75,9 @@ export const ENV = {
   REVENUECAT_SECRET_KEY: getOptionalEnv('REVENUECAT_SECRET_KEY', ''),
   REVENUECAT_WEBHOOK_AUTH_HEADER: getOptionalEnv('REVENUECAT_WEBHOOK_AUTH_HEADER', ''),
 
+  // === ADMIN ===
+  ADMIN_EMAILS: getOptionalEnv('ADMIN_EMAILS', ''),
+
   // === SERVER ===
   PORT: getOptionalEnv('PORT', '3001'),
   NODE_ENV: getOptionalEnv('NODE_ENV', 'development'),
