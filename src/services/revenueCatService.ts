@@ -130,9 +130,9 @@ export class RevenueCatService {
 
       if (sub.billing_issues_detected_at) {
         status = SubscriptionStatus.PAST_DUE;
-      } else if (sub.period_type === 'trial') {
-        status = SubscriptionStatus.TRIALING;
       }
+      // NO setear TRIALING por period_type — el usuario PAGÓ via Apple.
+      // El trial gratuito lo maneja TrialScheduler, no RevenueCat.
     }
 
     // Si no hay plan activo, dejar en FREE
@@ -164,6 +164,9 @@ export class RevenueCatService {
         currentPeriodStart,
         currentPeriodEnd,
         cancelAtPeriodEnd,
+        // Limpiar campos de trial para que el cron no lo toque
+        trialStartedAt: null,
+        trialEndsAt: null,
       },
     });
 

@@ -251,6 +251,36 @@ export class TrialScheduler {
    */
   private static async handleTrialEnded(subscriptionId: string, userId: string): Promise<void> {
     try {
+      // Obtener suscripción completa para verificar si es pagada
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: subscriptionId }
+      });
+
+      if (!subscription) return;
+
+      // GUARD: No degradar suscripciones PAGADAS (Apple/Stripe)
+      // Si tiene stripeSubscriptionId o paymentProvider APPLE con producto real, es pagada
+      if (subscription.stripeSubscriptionId) {
+        logger.warn(`[TrialScheduler] ⚠️ Suscripción ${subscriptionId} tiene Stripe activo. NO se degrada usuario ${userId}.`);
+        // Limpiar campos de trial para que no vuelva a entrar al cron
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: { status: 'ACTIVE', trialStartedAt: null, trialEndsAt: null }
+        });
+        return;
+      }
+
+      if (subscription.paymentProvider === 'APPLE' && subscription.revenueCatAppUserId) {
+        logger.warn(`[TrialScheduler] ⚠️ Suscripción ${subscriptionId} tiene compra Apple/RevenueCat. NO se degrada usuario ${userId}.`);
+        // Limpiar campos de trial para que no vuelva a entrar al cron
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: { status: 'ACTIVE', trialStartedAt: null, trialEndsAt: null }
+        });
+        return;
+      }
+
+      // Es un trial real (sin pago) — proceder con downgrade
       // Enviar notificación de trial terminado
       await NotificationService.notifyTrialEnded(userId);
 
@@ -264,11 +294,7 @@ export class TrialScheduler {
         logger.warn(`[TrialScheduler] Error eliminando conexiones de email:`, emailError);
       }
 
-      // Obtener notificaciones previas
-      const subscription = await prisma.subscription.findUnique({
-        where: { id: subscriptionId }
-      });
-      const sentNotifications = (subscription?.trialNotificationsSent as string[]) || [];
+      const sentNotifications = (subscription.trialNotificationsSent as string[]) || [];
 
       // Actualizar suscripción: cambiar estado a ACTIVE con plan FREE
       await prisma.subscription.update({
