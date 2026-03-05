@@ -46,3 +46,21 @@ export const getEngagement = async (req: Request, res: Response) => {
     return handleError(res, 'engagement', error);
   }
 };
+
+export const getUsersList = async (req: Request, res: Response) => {
+  try {
+    const data = await AdminService.getUsersList(req.query as any);
+    return res.json({ message: 'Users list retrieved', data });
+  } catch (error) {
+    return handleError(res, 'users list', error);
+  }
+};
+
+export const getDistinctCountries = async (req: Request, res: Response) => {
+  try {
+    const data = await AdminService.getDistinctCountries();
+    return res.json({ message: 'Countries retrieved', data });
+  } catch (error) {
+    return handleError(res, 'countries', error);
+  }
+};

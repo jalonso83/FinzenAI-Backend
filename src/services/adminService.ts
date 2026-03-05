@@ -1,6 +1,18 @@
 import { prisma } from '../lib/prisma';
+import { Prisma } from '@prisma/client';
 import { PLAN_PRICES } from '../config/adminConfig';
 import { logger } from '../utils/logger';
+
+interface UsersListQuery {
+  page?: string;
+  limit?: string;
+  search?: string;
+  plan?: string;
+  status?: string;
+  country?: string;
+  sortBy?: string;
+  sortOrder?: string;
+}
 
 interface DateRange {
   from: Date;
@@ -629,5 +641,151 @@ export class AdminService {
       })),
       period: { from, to },
     };
+  }
+
+  // ─── USERS LIST (CRM) ─────────────────────────────────────
+  static async getUsersList(query: UsersListQuery) {
+    const page = Math.max(1, parseInt(query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(query.limit || '20', 10)));
+    const skip = (page - 1) * limit;
+    const search = query.search?.trim() || '';
+    const plan = query.plan?.toUpperCase();
+    const status = query.status?.toUpperCase();
+    const country = query.country || '';
+    const sortBy = query.sortBy || 'createdAt';
+    const sortOrder = (query.sortOrder || 'desc') as 'asc' | 'desc';
+
+    // Build where clause
+    const where: Prisma.UserWhereInput = {};
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (plan && ['FREE', 'PREMIUM', 'PRO'].includes(plan)) {
+      if (plan === 'FREE') {
+        where.subscription = { is: null };
+      } else {
+        where.subscription = { plan: plan as any };
+      }
+    }
+
+    if (status) {
+      const statusMap: Record<string, Prisma.UserWhereInput> = {
+        ACTIVE: { subscription: { status: 'ACTIVE', plan: { not: 'FREE' } } },
+        TRIALING: { subscription: { status: 'TRIALING' } },
+        CANCELED: { subscription: { status: 'CANCELED' } },
+        EXPIRED: { subscription: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } } },
+      };
+      if (statusMap[status]) {
+        // Merge with existing subscription filter if plan is also set
+        const existing = where.subscription as Prisma.SubscriptionNullableRelationFilter | undefined;
+        const statusFilter = statusMap[status].subscription as Prisma.SubscriptionNullableRelationFilter;
+        if (existing && typeof existing === 'object') {
+          where.subscription = { ...existing, ...statusFilter };
+        } else {
+          Object.assign(where, statusMap[status]);
+        }
+      }
+    }
+
+    if (country) {
+      where.country = country;
+    }
+
+    // Build orderBy
+    const allowedSorts = ['createdAt', 'name', 'email', 'country'];
+    const orderByField = allowedSorts.includes(sortBy) ? sortBy : 'createdAt';
+    const orderBy: Prisma.UserOrderByWithRelationInput = { [orderByField]: sortOrder };
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          lastName: true,
+          email: true,
+          country: true,
+          verified: true,
+          createdAt: true,
+          subscription: {
+            select: {
+              plan: true,
+              status: true,
+              trialEndsAt: true,
+              currentPeriodEnd: true,
+            },
+          },
+          _count: {
+            select: {
+              transactions: true,
+            },
+          },
+        },
+        orderBy,
+        skip,
+        take: limit,
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    // Get last activity for these users via raw query
+    const userIds = users.map(u => u.id);
+    let lastActivityMap: Record<string, Date> = {};
+
+    if (userIds.length > 0) {
+      const lastActivities = await prisma.$queryRawUnsafe<
+        { userId: string; lastActivity: Date }[]
+      >(
+        `SELECT "userId", MAX("createdAt") as "lastActivity"
+         FROM gamification_events
+         WHERE "userId" = ANY($1::text[])
+         GROUP BY "userId"`,
+        userIds
+      );
+      lastActivities.forEach(a => {
+        lastActivityMap[a.userId] = a.lastActivity;
+      });
+    }
+
+    const mappedUsers = users.map(u => ({
+      id: u.id,
+      name: u.name,
+      lastName: u.lastName,
+      email: u.email,
+      country: u.country,
+      verified: u.verified,
+      createdAt: u.createdAt,
+      plan: u.subscription?.plan || 'FREE',
+      subscriptionStatus: u.subscription?.status || null,
+      trialEndsAt: u.subscription?.trialEndsAt || null,
+      currentPeriodEnd: u.subscription?.currentPeriodEnd || null,
+      transactionCount: u._count.transactions,
+      lastActivity: lastActivityMap[u.id] || null,
+    }));
+
+    return {
+      users: mappedUsers,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  static async getDistinctCountries() {
+    const result = await prisma.user.findMany({
+      distinct: ['country'],
+      select: { country: true },
+      orderBy: { country: 'asc' },
+    });
+    return result.map(r => r.country).filter(Boolean);
   }
 }
