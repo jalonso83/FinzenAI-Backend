@@ -5,6 +5,7 @@ import { OutlookService } from './outlookService';
 import { EmailParserService, ParsedTransaction } from './emailParserService';
 import { NotificationService } from './notificationService';
 import { GamificationService } from './gamificationService';
+import { encrypt, decrypt } from '../utils/encryption';
 
 import { logger } from '../utils/logger';
 export interface SyncResult {
@@ -34,7 +35,10 @@ export class EmailSyncService {
     // Obtener email del usuario de Google
     const gmailEmail = await GmailService.getUserEmail(tokens.access_token);
 
-    // Crear o actualizar conexion
+    // Crear o actualizar conexion (tokens encriptados con AES-256-GCM)
+    const encryptedAccessToken = encrypt(tokens.access_token);
+    const encryptedRefreshToken = tokens.refresh_token ? encrypt(tokens.refresh_token) : undefined;
+
     const connection = await prisma.emailConnection.upsert({
       where: {
         userId_provider: {
@@ -44,8 +48,8 @@ export class EmailSyncService {
       },
       update: {
         email: gmailEmail,
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token || undefined,
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
         tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
         isActive: true,
         lastSyncStatus: 'PENDING'
@@ -54,8 +58,8 @@ export class EmailSyncService {
         userId,
         provider: 'GMAIL',
         email: gmailEmail,
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token || undefined,
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
         tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
         isActive: true
       }
@@ -97,7 +101,10 @@ export class EmailSyncService {
     // Obtener email del usuario de Microsoft
     const outlookEmail = await OutlookService.getUserEmail(tokens.access_token);
 
-    // Crear o actualizar conexion
+    // Crear o actualizar conexion (tokens encriptados con AES-256-GCM)
+    const encryptedAccessToken = encrypt(tokens.access_token);
+    const encryptedRefreshToken = tokens.refresh_token ? encrypt(tokens.refresh_token) : undefined;
+
     const connection = await prisma.emailConnection.upsert({
       where: {
         userId_provider: {
@@ -107,8 +114,8 @@ export class EmailSyncService {
       },
       update: {
         email: outlookEmail,
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token || undefined,
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
         tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
         isActive: true,
         lastSyncStatus: 'PENDING'
@@ -117,8 +124,8 @@ export class EmailSyncService {
         userId,
         provider: 'OUTLOOK',
         email: outlookEmail,
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token || undefined,
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
         tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
         isActive: true
       }
@@ -368,7 +375,7 @@ export class EmailSyncService {
             f.senderEmails.some(e => from.toLowerCase().includes(e.toLowerCase()))
           );
 
-          // Guardar email importado
+          // Guardar email importado (rawContent encriptado)
           const importedEmail = await prisma.importedBankEmail.create({
             data: {
               emailConnectionId: connectionId,
@@ -376,7 +383,7 @@ export class EmailSyncService {
               subject,
               senderEmail: from,
               receivedAt,
-              rawContent: body.substring(0, 5000), // Limitar tamano
+              rawContent: encrypt(body.substring(0, 5000)),
               status: 'PROCESSING'
             }
           });
@@ -649,11 +656,12 @@ export class EmailSyncService {
       throw new Error('Conexión no encontrada');
     }
 
-    // Revocar acceso según el proveedor
+    // Revocar acceso según el proveedor (desencriptar token para la API)
+    const plainAccessToken = decrypt(connection.accessToken);
     if (connection.provider === 'GMAIL') {
-      await GmailService.revokeAccess(connection.accessToken);
+      await GmailService.revokeAccess(plainAccessToken);
     } else if (connection.provider === 'OUTLOOK') {
-      await OutlookService.revokeAccess(connection.accessToken);
+      await OutlookService.revokeAccess(plainAccessToken);
     }
 
     // Eliminar conexion y datos relacionados
@@ -693,13 +701,14 @@ export class EmailSyncService {
       return 0;
     }
 
-    // Revocar acceso para cada conexión
+    // Revocar acceso para cada conexión (desencriptar token para la API)
     for (const connection of connections) {
       try {
+        const plainAccessToken = decrypt(connection.accessToken);
         if (connection.provider === 'GMAIL') {
-          await GmailService.revokeAccess(connection.accessToken);
+          await GmailService.revokeAccess(plainAccessToken);
         } else if (connection.provider === 'OUTLOOK') {
-          await OutlookService.revokeAccess(connection.accessToken);
+          await OutlookService.revokeAccess(plainAccessToken);
         }
       } catch (revokeError) {
         // Continuar aunque falle el revoke (el token puede ya estar inválido)

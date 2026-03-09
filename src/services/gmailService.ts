@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import axios from 'axios';
 import { logger } from '../utils/logger';
+import { encrypt, decrypt } from '../utils/encryption';
 
 // Configuracion de Google OAuth
 const GOOGLE_CLIENT_ID = ENV.GOOGLE_CLIENT_ID;
@@ -123,22 +124,26 @@ export class GmailService {
         throw new Error('No refresh token available');
       }
 
-      const newTokens = await this.refreshAccessToken(connection.refreshToken);
+      // Desencriptar refresh token para usarlo con Google API
+      const plainRefreshToken = decrypt(connection.refreshToken);
+      const newTokens = await this.refreshAccessToken(plainRefreshToken);
 
-      // Actualizar tokens en la base de datos
+      // Guardar tokens encriptados en la base de datos
       await prisma.emailConnection.update({
         where: { id: connection.id },
         data: {
-          accessToken: newTokens.access_token,
+          accessToken: encrypt(newTokens.access_token),
           tokenExpiresAt: new Date(Date.now() + newTokens.expires_in * 1000),
-          ...(newTokens.refresh_token && { refreshToken: newTokens.refresh_token })
+          ...(newTokens.refresh_token && { refreshToken: encrypt(newTokens.refresh_token) })
         }
       });
 
+      // Retornar token en texto plano para uso inmediato con la API
       return newTokens.access_token;
     }
 
-    return connection.accessToken;
+    // Desencriptar access token almacenado para uso con la API
+    return decrypt(connection.accessToken);
   }
 
   /**

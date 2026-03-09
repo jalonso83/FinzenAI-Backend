@@ -78,6 +78,9 @@ export const ENV = {
   // === ADMIN ===
   ADMIN_EMAILS: getOptionalEnv('ADMIN_EMAILS', ''),
 
+  // === ENCRYPTION ===
+  ENCRYPTION_KEY: getRequiredInProduction('ENCRYPTION_KEY', ''),
+
   // === SERVER ===
   PORT: getOptionalEnv('PORT', '3001'),
   NODE_ENV: getOptionalEnv('NODE_ENV', 'development'),
