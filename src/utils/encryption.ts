@@ -3,7 +3,6 @@ import { ENV } from '../config/env';
 
 /**
  * AES-256-GCM Encryption Module
- *
  * Encrypts/decrypts sensitive data (OAuth tokens, email content).
  * Format: iv:authTag:encryptedData (all hex-encoded)
  */
@@ -28,16 +27,13 @@ function getKey(): Buffer {
  */
 export function encrypt(plaintext: string): string {
   if (!plaintext) return plaintext;
-
   const key = getKey();
   const iv = crypto.randomBytes(IV_LENGTH);
-
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH });
   let encrypted = cipher.update(plaintext, 'utf8', 'hex');
   encrypted += cipher.final('hex');
 
   const authTag = cipher.getAuthTag().toString('hex');
-
   return `${iv.toString('hex')}${SEPARATOR}${authTag}${SEPARATOR}${encrypted}`;
 }
 
