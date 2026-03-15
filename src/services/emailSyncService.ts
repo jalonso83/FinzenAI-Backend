@@ -539,15 +539,18 @@ export class EmailSyncService {
         return null;
       }
 
-      // Convertir USD a RD$ si es necesario
+      // Convertir moneda extranjera a la moneda del usuario si es necesario
       let finalAmount = parsed.amount;
       let conversionInfo = '';
 
-      if (parsed.currency === 'USD' || parsed.currency === 'US$') {
-        const { ExchangeRateService } = await import('./exchangeRateService');
-        const conversion = await ExchangeRateService.convertUsdToDop(parsed.amount);
-        finalAmount = conversion.amountDop;
-        conversionInfo = ` [USD ${parsed.amount} → RD$ ${finalAmount} @${conversion.rate}]`;
+      const { ExchangeRateService } = await import('./exchangeRateService');
+      const txCurrency = ExchangeRateService.normalizeCurrency(parsed.currency);
+      const userCurrency = 'DOP'; // Moneda base de la app
+
+      if (txCurrency && txCurrency !== userCurrency) {
+        const conversion = await ExchangeRateService.convert(parsed.amount, txCurrency, userCurrency);
+        finalAmount = conversion.amount;
+        conversionInfo = ` [${txCurrency} ${parsed.amount} → ${userCurrency} ${finalAmount} @${conversion.rate}]`;
       }
 
       // Crear descripcion

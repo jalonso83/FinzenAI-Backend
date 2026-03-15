@@ -545,6 +545,26 @@ enum ImportedEmailStatus {
 }
 
 // =============================================
+// MODELO DE TASAS DE CAMBIO (Multi-Moneda)
+// =============================================
+
+model ExchangeRate {
+  id           String   @id @default(cuid())
+  currency     String   // Código ISO: EUR, USD, GBP, etc.
+  rateToDop    Float    // 1 unidad de esta moneda = X DOP
+  rateToUsd    Float    // 1 unidad de esta moneda = X USD (para cross-rates)
+  source       String   @default("ExchangeRate-API")
+  date         DateTime // Fecha de la tasa
+
+  createdAt    DateTime @default(now())
+
+  @@unique([currency, date])
+  @@index([currency])
+  @@index([date])
+  @@map("exchange_rates")
+}
+
+// =============================================
 // MODELOS DE NOTIFICACIONES PUSH (FCM)
 // =============================================
 

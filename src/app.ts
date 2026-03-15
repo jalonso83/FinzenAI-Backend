@@ -13,6 +13,7 @@ import { TrialScheduler } from './services/trialScheduler';
 import { ReferralScheduler } from './services/referralScheduler';
 import { BudgetReminderScheduler } from './services/budgetReminderScheduler';
 import { WeeklyReportScheduler } from './services/weeklyReportScheduler';
+import { ExchangeRateScheduler } from './services/exchangeRateScheduler';
 import { validateReferralConfig } from './config/referralConfig';
 import { initPrices } from './controllers/investment';
 
@@ -231,6 +232,9 @@ async function startServer() {
     // Iniciar scheduler de reportes semanales PRO
     WeeklyReportScheduler.startScheduler();
 
+    // Iniciar scheduler de tasas de cambio (medianoche)
+    ExchangeRateScheduler.startScheduler();
+
     // Inicializar precios de referencia para calculadoras
     await initPrices();
 
@@ -260,6 +264,7 @@ process.on('SIGINT', async () => {
   TrialScheduler.stopScheduler();
   ReferralScheduler.stopScheduler();
   WeeklyReportScheduler.stopScheduler();
+  ExchangeRateScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
@@ -276,6 +281,7 @@ process.on('SIGTERM', async () => {
   TrialScheduler.stopScheduler();
   ReferralScheduler.stopScheduler();
   WeeklyReportScheduler.stopScheduler();
+  ExchangeRateScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });

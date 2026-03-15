@@ -81,6 +81,9 @@ export const ENV = {
   // === ENCRYPTION ===
   ENCRYPTION_KEY: getRequiredInProduction('ENCRYPTION_KEY', ''),
 
+  // === EXCHANGE RATES ===
+  EXCHANGE_RATE_API_KEY: getOptionalEnv('EXCHANGE_RATE_API_KEY', ''),
+
   // === SERVER ===
   PORT: getOptionalEnv('PORT', '3001'),
   NODE_ENV: getOptionalEnv('NODE_ENV', 'development'),
