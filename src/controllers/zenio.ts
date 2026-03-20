@@ -2767,8 +2767,7 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       if (error.response?.status === 400) {
         return res.status(400).json({
           message: 'Request inválida a OpenAI. Por favor, verifica la configuración.',
-          threadId,
-          error: error.response?.data
+          threadId
         });
       }
 
@@ -2788,9 +2787,8 @@ export const chatWithZenio = async (req: Request, res: Response) => {
 
       if (error && typeof error === 'object' && 'response' in error && error.response && typeof error.response === 'object' && 'data' in error.response) {
         logger.error('❌ OpenAI API error:', error.response.data);
-        return res.status(500).json({ 
-          error: 'Error al comunicarse con Zenio.', 
-          openai: error.response.data 
+        return res.status(500).json({
+          error: 'Error al comunicarse con Zenio.'
         });
       }
     }

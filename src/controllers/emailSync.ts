@@ -80,8 +80,8 @@ export const handleGmailCallback = async (req: Request, res: Response) => {
         userId = stateData.userId;
         mobileRedirectUrl = stateData.mobileRedirectUrl || mobileRedirectUrl;
       } catch (e) {
-        // Si falla el decode, asumir que state es el userId (compatibilidad)
-        userId = state as string;
+        logger.error('[EmailSync] Invalid OAuth state:', e);
+        return res.status(400).json({ error: 'Estado OAuth inválido' });
       }
     }
 
@@ -190,8 +190,8 @@ export const handleOutlookCallback = async (req: Request, res: Response) => {
         userId = stateData.userId;
         mobileRedirectUrl = stateData.mobileRedirectUrl || mobileRedirectUrl;
       } catch (e) {
-        // Si falla el decode, asumir que state es el userId (compatibilidad)
-        userId = state as string;
+        logger.error('[EmailSync] Invalid Outlook OAuth state:', e);
+        return res.status(400).json({ error: 'Estado OAuth inválido' });
       }
     }
 

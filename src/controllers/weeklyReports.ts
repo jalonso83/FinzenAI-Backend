@@ -133,7 +133,12 @@ export const getUnviewedCount = async (req: Request, res: Response): Promise<Res
 export const runManualGeneration = async (req: Request, res: Response): Promise<Response> => {
   try {
     const apiKey = req.headers['x-api-key'];
-    const expectedKey = process.env.CRON_API_KEY || 'default-cron-key';
+    const expectedKey = process.env.CRON_API_KEY;
+
+    if (!expectedKey) {
+      logger.error('CRON_API_KEY no configurada');
+      return res.status(503).json({ error: 'Service unavailable' });
+    }
 
     if (apiKey !== expectedKey) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -161,7 +166,12 @@ export const runManualGeneration = async (req: Request, res: Response): Promise<
 export const generateForUser = async (req: Request, res: Response): Promise<Response> => {
   try {
     const apiKey = req.headers['x-api-key'];
-    const expectedKey = process.env.CRON_API_KEY || 'default-cron-key';
+    const expectedKey = process.env.CRON_API_KEY;
+
+    if (!expectedKey) {
+      logger.error('CRON_API_KEY no configurada');
+      return res.status(503).json({ error: 'Service unavailable' });
+    }
 
     if (apiKey !== expectedKey) {
       return res.status(401).json({ error: 'Unauthorized' });
