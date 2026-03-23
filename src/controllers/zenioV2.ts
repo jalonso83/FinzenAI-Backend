@@ -13,7 +13,7 @@ import OpenAI from 'openai';
 import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
-import { ZENIO_SYSTEM_PROMPT, ZENIO_MODEL, ZENIO_TEMPERATURE, ZENIO_VECTOR_STORE_ID } from '../config/zenioPrompt';
+import { ZENIO_SYSTEM_PROMPT, ZENIO_MODEL, ZENIO_TEMPERATURE } from '../config/zenioPrompt';
 import { ZENIO_FUNCTION_TOOLS } from '../config/zenioTools';
 
 // Importar lógica de negocio reutilizable del controlador original
@@ -30,6 +30,7 @@ import axios from 'axios';
 // =============================================
 const openai = new OpenAI({
   apiKey: ENV.OPENAI_API_KEY,
+  timeout: 60000, // 60 segundos timeout
 });
 
 // =============================================
@@ -953,8 +954,7 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     // 4.1 Obtener categorías si no vienen del frontend
     if (!categories || categories.length === 0) {
       try {
-        const dbCategories = await prisma.category.findMany({ select: { name: true, type: true } });
-        categories = dbCategories.map((cat: any) => cat.name);
+        categories = await prisma.category.findMany({ select: { id: true, name: true, type: true } });
       } catch { categories = []; }
     }
 
@@ -971,7 +971,22 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     const fechaActual = fechaRD.toISOString().split('T')[0];
     const fechaHumana = fechaRD.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-    const dynamicInstructions = `${ZENIO_SYSTEM_PROMPT}\n\nFECHA ACTUAL: Hoy es ${fechaHumana} (${fechaActual}). Año ${fechaRD.getFullYear()}. Zona horaria: República Dominicana (UTC-4). Cuando el usuario mencione "hoy", "ayer", "mañana", etc., usa esta fecha como referencia.`;
+    // Formatear categorías para inyectar en el contexto
+    let categoriesContext = '';
+    if (categories && categories.length > 0) {
+      const expenseCategories: string[] = [];
+      const incomeCategories: string[] = [];
+      for (const cat of categories) {
+        const catName = typeof cat === 'object' && cat.name ? cat.name : cat;
+        const catType = typeof cat === 'object' && cat.type ? cat.type : null;
+        if (catType === 'EXPENSE') expenseCategories.push(catName);
+        else if (catType === 'INCOME') incomeCategories.push(catName);
+        else { expenseCategories.push(catName); incomeCategories.push(catName); }
+      }
+      categoriesContext = `\n\nCATEGORÍAS DISPONIBLES EN LA APP:\n- Gastos: ${expenseCategories.join(', ')}\n- Ingresos: ${incomeCategories.join(', ')}\nUSA SOLO estas categorías. NUNCA inventes categorías que no estén en esta lista. Si el usuario pide ver categorías, muéstrale ESTAS.`;
+    }
+
+    const dynamicInstructions = `${ZENIO_SYSTEM_PROMPT}\n\nFECHA ACTUAL: Hoy es ${fechaHumana} (${fechaActual}). Año ${fechaRD.getFullYear()}. Zona horaria: República Dominicana (UTC-4). Cuando el usuario mencione "hoy", "ayer", "mañana", etc., usa esta fecha como referencia.${categoriesContext}`;
 
     // 7. Construir input para Responses API
     const input: any[] = [];
@@ -1005,14 +1020,10 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     }
 
     // 8. Construir tools para la request
+    // NOTA: file_search se omite por ahora - Responses API maneja vector stores
+    // de forma diferente a Assistants API. Se añadirá cuando se confirme el formato.
     const tools: any[] = [
       ...ZENIO_FUNCTION_TOOLS,
-      // Agregar file_search para el vector store educativo
-      {
-        type: 'file_search',
-        vector_store_ids: [ZENIO_VECTOR_STORE_ID],
-        max_num_results: 5,
-      },
     ];
 
     // 9. Llamar a Responses API
@@ -1021,6 +1032,9 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     let lastKnownResponseId = incomingThreadId || undefined;
 
     logger.log(`[ZenioV2] Llamando Responses API. isFirst=${isFirstMessage}, previousResponseId=${previousResponseId || 'none'}`);
+    logger.log(`[ZenioV2] Input enviado:`, JSON.stringify(input));
+    logger.log(`[ZenioV2] Tools disponibles:`, tools.map((t: any) => t.name || t.type).join(', '));
+    logger.log(`[ZenioV2] Categorías recibidas del frontend: ${categories?.length || 0}`);
 
     let response: any;
     try {
@@ -1058,6 +1072,11 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
 
     lastKnownResponseId = response.id;
 
+    // LOG: qué devolvió el modelo
+    logger.log(`[ZenioV2] Response ID: ${response.id}`);
+    logger.log(`[ZenioV2] Output items: ${response.output?.map((item: any) => `${item.type}${item.type === 'function_call' ? `(${item.name})` : ''}`).join(', ')}`);
+    logger.log(`[ZenioV2] output_text: ${response.output_text?.substring(0, 200) || '(vacío)'}`);
+
     // 10. Loop de tool calls (similar a maxSteps)
     let executedActions: any[] = [];
     let toolCallIterations = 0;
@@ -1070,6 +1089,7 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
 
       toolCallIterations++;
       logger.log(`[ZenioV2] Tool call iteración ${toolCallIterations}, ${functionCalls.length} calls`);
+      logger.log(`[ZenioV2] Tool calls:`, functionCalls.map((fc: any) => `${fc.name}(${fc.arguments?.substring(0, 100)})`).join(', '));
 
       // Procesar todos los tool calls
       const toolResults = await processToolCalls(functionCalls, userId, userName, categories, userTimezone);
