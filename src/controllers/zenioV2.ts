@@ -1031,10 +1031,10 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     const previousResponseId = isFirstMessage ? undefined : incomingThreadId;
     let lastKnownResponseId = incomingThreadId || undefined;
 
-    logger.log(`[ZenioV2] Llamando Responses API. isFirst=${isFirstMessage}, previousResponseId=${previousResponseId || 'none'}`);
-    logger.log(`[ZenioV2] Input enviado:`, JSON.stringify(input));
-    logger.log(`[ZenioV2] Tools disponibles:`, tools.map((t: any) => t.name || t.type).join(', '));
-    logger.log(`[ZenioV2] Categorías recibidas del frontend: ${categories?.length || 0}`);
+    logger.error(`[ZenioV2-DEBUG] Llamando Responses API. isFirst=${isFirstMessage}, previousResponseId=${previousResponseId || 'none'}`);
+    logger.error(`[ZenioV2-DEBUG] Input enviado: ${JSON.stringify(input).substring(0, 500)}`);
+    logger.error(`[ZenioV2-DEBUG] Tools disponibles: ${tools.map((t: any) => t.name || t.type).join(', ')}`);
+    logger.error(`[ZenioV2-DEBUG] Categorías recibidas del frontend: ${categories?.length || 0}`);
 
     let response: any;
     try {
@@ -1073,9 +1073,9 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     lastKnownResponseId = response.id;
 
     // LOG: qué devolvió el modelo
-    logger.log(`[ZenioV2] Response ID: ${response.id}`);
-    logger.log(`[ZenioV2] Output items: ${response.output?.map((item: any) => `${item.type}${item.type === 'function_call' ? `(${item.name})` : ''}`).join(', ')}`);
-    logger.log(`[ZenioV2] output_text: ${response.output_text?.substring(0, 200) || '(vacío)'}`);
+    logger.error(`[ZenioV2-DEBUG] Response ID: ${response.id}`);
+    logger.error(`[ZenioV2-DEBUG] Output items: ${response.output?.map((item: any) => `${item.type}${item.type === 'function_call' ? `(${item.name})` : ''}`).join(', ')}`);
+    logger.error(`[ZenioV2-DEBUG] output_text: ${response.output_text?.substring(0, 300) || '(vacío)'}`);
 
     // 10. Loop de tool calls (similar a maxSteps)
     let executedActions: any[] = [];
@@ -1088,8 +1088,8 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
       if (functionCalls.length === 0) break;
 
       toolCallIterations++;
-      logger.log(`[ZenioV2] Tool call iteración ${toolCallIterations}, ${functionCalls.length} calls`);
-      logger.log(`[ZenioV2] Tool calls:`, functionCalls.map((fc: any) => `${fc.name}(${fc.arguments?.substring(0, 100)})`).join(', '));
+      logger.error(`[ZenioV2-DEBUG] Tool call iteración ${toolCallIterations}, ${functionCalls.length} calls`);
+      logger.error(`[ZenioV2-DEBUG] Tool calls: ${functionCalls.map((fc: any) => `${fc.name}(${fc.arguments?.substring(0, 100)})`).join(', ')}`);
 
       // Procesar todos los tool calls
       const toolResults = await processToolCalls(functionCalls, userId, userName, categories, userTimezone);
