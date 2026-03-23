@@ -29,7 +29,6 @@
   "author": "FinZen AI Team",
   "license": "MIT",
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.47",
     "@prisma/client": "^5.7.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
@@ -38,7 +37,6 @@
     "@types/multer": "^2.0.0",
     "@types/node": "^20.10.5",
     "@types/node-cron": "^3.0.11",
-    "ai": "^6.0.136",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -55,8 +53,7 @@
     "prisma": "^5.7.1",
     "resend": "^4.0.0",
     "stripe": "^19.3.0",
-    "typescript": "^5.3.3",
-    "zod": "^4.3.6"
+    "typescript": "^5.3.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",
