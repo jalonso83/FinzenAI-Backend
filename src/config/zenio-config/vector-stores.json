@@ -1,0 +1,28 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "vs_685da89f2ce4819193d9d9fc40b7f5c1",
+      "object": "vector_store",
+      "created_at": 1750968479,
+      "name": "Vector store for Zenio - FinZen Assistant",
+      "description": null,
+      "usage_bytes": 245243,
+      "file_counts": {
+        "in_progress": 0,
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0,
+        "total": 2
+      },
+      "status": "completed",
+      "expires_after": null,
+      "expires_at": null,
+      "last_active_at": 1774079294,
+      "metadata": {}
+    }
+  ],
+  "first_id": "vs_685da89f2ce4819193d9d9fc40b7f5c1",
+  "last_id": "vs_685da89f2ce4819193d9d9fc40b7f5c1",
+  "has_more": false
+}

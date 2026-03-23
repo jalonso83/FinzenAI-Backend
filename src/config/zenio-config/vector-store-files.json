@@ -1,0 +1,42 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "file-WJPmNsZyTqCPzEjDKEJuLQ",
+      "object": "vector_store.file",
+      "usage_bytes": 186147,
+      "created_at": 1750968479,
+      "vector_store_id": "vs_685da89f2ce4819193d9d9fc40b7f5c1",
+      "status": "completed",
+      "last_error": null,
+      "chunking_strategy": {
+        "type": "static",
+        "static": {
+          "max_chunk_size_tokens": 800,
+          "chunk_overlap_tokens": 400
+        }
+      },
+      "attributes": {}
+    },
+    {
+      "id": "file-NETkfdVZcZxXH2oXUNvAMB",
+      "object": "vector_store.file",
+      "usage_bytes": 59096,
+      "created_at": 1750968479,
+      "vector_store_id": "vs_685da89f2ce4819193d9d9fc40b7f5c1",
+      "status": "completed",
+      "last_error": null,
+      "chunking_strategy": {
+        "type": "static",
+        "static": {
+          "max_chunk_size_tokens": 800,
+          "chunk_overlap_tokens": 400
+        }
+      },
+      "attributes": {}
+    }
+  ],
+  "first_id": "file-WJPmNsZyTqCPzEjDKEJuLQ",
+  "last_id": "file-NETkfdVZcZxXH2oXUNvAMB",
+  "has_more": false
+}
