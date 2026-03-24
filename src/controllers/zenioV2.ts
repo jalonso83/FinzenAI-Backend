@@ -1020,12 +1020,9 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     }
 
     // 8. Construir tools para la request
+    // file_search se añadirá solo para consultas educativas en una fase posterior
     const tools: any[] = [
       ...ZENIO_FUNCTION_TOOLS,
-      {
-        type: 'file_search' as const,
-        vector_store_ids: [ZENIO_VECTOR_STORE_ID],
-      },
     ];
 
     // 9. Llamar a Responses API
