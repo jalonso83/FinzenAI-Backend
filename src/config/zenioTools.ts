@@ -4,6 +4,13 @@
  * Fecha de backup: 2026-03-23
  *
  * Estas definiciones se pasan directamente a openai.responses.create({ tools: [...] })
+ *
+ * IMPORTANTE: El formato de FunctionTool en Responses API requiere:
+ *   { type: 'function', name, description, parameters, strict }
+ * El campo `strict` es OBLIGATORIO. Usamos strict: false para permitir
+ * keywords como format, minimum, maximum, minProperties en los schemas.
+ * Sin strict, el SDK defaults a true y las tools se ignoran silenciosamente
+ * si el schema no cumple con las reglas de structured outputs.
  */
 
 export const ZENIO_FUNCTION_TOOLS = [
@@ -11,6 +18,7 @@ export const ZENIO_FUNCTION_TOOLS = [
     type: 'function' as const,
     name: 'manage_budget_record',
     description: 'Inserta, actualiza, elimina o lista presupuestos. Para listar, usa filtros_busqueda para criterios específicos como límite, categoría, recurrencia, monto. Para update/delete especifica category y previous_amount.',
+    strict: false,
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -75,8 +83,10 @@ export const ZENIO_FUNCTION_TOOLS = [
     type: 'function' as const,
     name: 'manage_transaction_record',
     description: 'Inserta, actualiza, elimina o lista transacciones. Para listar, usa filtros_busqueda para criterios específicos como límite, tipo, categoría, fecha. Para update/delete usa criterios_identificacion con al menos dos campos.',
+    strict: false,
     parameters: {
       type: 'object',
+      additionalProperties: false,
       required: ['operation'],
       properties: {
         operation: {
@@ -183,8 +193,10 @@ export const ZENIO_FUNCTION_TOOLS = [
     type: 'function' as const,
     name: 'onboarding_financiero',
     description: 'Recolecta las respuestas del usuario para su onboarding financiero y las envía al backend. Solo debe enviar una sola respuesta para cada una de las preguntas.',
+    strict: false,
     parameters: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         nombre_usuario: {
           type: 'string',
@@ -229,8 +241,10 @@ export const ZENIO_FUNCTION_TOOLS = [
     type: 'function' as const,
     name: 'manage_goal_record',
     description: 'Inserta, actualiza, elimina o lista metas de ahorro. Para listar, usa filtros_busqueda para criterios específicos como límite, categoría, prioridad, monto. Para update/delete especifica criterios_identificacion.',
+    strict: false,
     parameters: {
       type: 'object',
+      additionalProperties: false,
       required: ['operation'],
       properties: {
         operation: {
@@ -357,8 +371,10 @@ export const ZENIO_FUNCTION_TOOLS = [
     type: 'function' as const,
     name: 'list_categories',
     description: 'Devuelve un array con todas las categorías válidas de un módulo (presupuestos, transacciones, metas).',
+    strict: false,
     parameters: {
       type: 'object',
+      additionalProperties: false,
       required: ['module'],
       properties: {
         module: {

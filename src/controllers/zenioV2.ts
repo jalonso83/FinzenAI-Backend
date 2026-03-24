@@ -13,7 +13,7 @@ import OpenAI from 'openai';
 import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
-import { ZENIO_SYSTEM_PROMPT, ZENIO_MODEL, ZENIO_TEMPERATURE } from '../config/zenioPrompt';
+import { ZENIO_SYSTEM_PROMPT, ZENIO_MODEL, ZENIO_TEMPERATURE, ZENIO_VECTOR_STORE_ID } from '../config/zenioPrompt';
 import { ZENIO_FUNCTION_TOOLS } from '../config/zenioTools';
 
 // Importar lógica de negocio reutilizable del controlador original
@@ -1020,10 +1020,12 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     }
 
     // 8. Construir tools para la request
-    // NOTA: file_search se omite por ahora - Responses API maneja vector stores
-    // de forma diferente a Assistants API. Se añadirá cuando se confirme el formato.
     const tools: any[] = [
       ...ZENIO_FUNCTION_TOOLS,
+      {
+        type: 'file_search' as const,
+        vector_store_ids: [ZENIO_VECTOR_STORE_ID],
+      },
     ];
 
     // 9. Llamar a Responses API
