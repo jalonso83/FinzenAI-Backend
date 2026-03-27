@@ -127,10 +127,12 @@ model Onboarding {
   savingHabit        String
   emergencyFund      String
   financialFeeling   String
-  incomeRange        String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incomeRange             String?
+  activationDescription   String?
+  onboardingStatus        String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Category {

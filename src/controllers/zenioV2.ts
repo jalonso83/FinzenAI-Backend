@@ -14,7 +14,8 @@ import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
 import { ZENIO_SYSTEM_PROMPT, ZENIO_MODEL, ZENIO_TEMPERATURE, ZENIO_VECTOR_STORE_ID } from '../config/zenioPrompt';
-import { ZENIO_FUNCTION_TOOLS } from '../config/zenioTools';
+import { ZENIO_FUNCTION_TOOLS, ZENIO_ONBOARDING_V21_TOOLS } from '../config/zenioTools';
+import { ZENIO_ONBOARDING_V21_PROMPT } from '../config/zenioOnboardingV21';
 
 // Importar lógica de negocio reutilizable del controlador original
 import { MappingSource } from '@prisma/client';
@@ -277,6 +278,57 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
     success: true,
     message: `¡Perfecto ${userName}! Tu perfil ha sido registrado. Ahora puedo ofrecerte recomendaciones ajustadas a tu situación.`,
     onboardingCompleted: true,
+  };
+}
+
+// =============================================
+// ONBOARDING V2.1 — Ejecutor de onboarding_financiero
+// Solo se usa cuando ONBOARDING_MODE=v2.1
+// =============================================
+
+async function executeOnboardingV21(args: any, userId: string, userName: string): Promise<any> {
+  const isCompleted = args.estado_onboarding === 'completado';
+
+  await prisma.onboarding.upsert({
+    where: { userId },
+    update: {
+      mainGoals: Array.isArray(args.meta_financiera) ? args.meta_financiera : [args.meta_financiera],
+      mainChallenge: args.desafio_financiero,
+      mainChallengeOther: args.desafio_financiero?.toLowerCase().includes('otro') ? args.desafio_financiero : undefined,
+      emergencyFund: args.fondo_emergencia,
+      financialFeeling: args.sentir_financiero || null,
+      incomeRange: args.rango_ingresos || null,
+      activationDescription: args.activacion_realizada,
+      onboardingStatus: args.estado_onboarding,
+    },
+    create: {
+      userId,
+      mainGoals: Array.isArray(args.meta_financiera) ? args.meta_financiera : [args.meta_financiera],
+      mainChallenge: args.desafio_financiero,
+      mainChallengeOther: args.desafio_financiero?.toLowerCase().includes('otro') ? args.desafio_financiero : undefined,
+      savingHabit: 'N/A (v2.1)',
+      emergencyFund: args.fondo_emergencia,
+      financialFeeling: args.sentir_financiero || '',
+      incomeRange: args.rango_ingresos || null,
+      activationDescription: args.activacion_realizada,
+      onboardingStatus: args.estado_onboarding,
+    },
+  });
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      onboarding: true,
+      onboardingCompleted: isCompleted,
+    },
+  });
+
+  return {
+    success: true,
+    message: isCompleted
+      ? `Perfil registrado. Onboarding completado para ${userName}.`
+      : `Perfil parcialmente registrado. Estado: ${args.estado_onboarding}.`,
+    onboardingCompleted: isCompleted,
   };
 }
 
@@ -852,7 +904,8 @@ async function processToolCalls(
   userId: string,
   userName: string,
   categories?: any[],
-  timezone?: string
+  timezone?: string,
+  onboardingMode?: string
 ): Promise<ToolCallResult[]> {
   const results: ToolCallResult[] = [];
 
@@ -866,7 +919,9 @@ async function processToolCalls(
     try {
       switch (functionName) {
         case 'onboarding_financiero':
-          result = await executeOnboardingFinanciero(functionArgs, userId, userName);
+          result = onboardingMode === 'v2.1'
+            ? await executeOnboardingV21(functionArgs, userId, userName)
+            : await executeOnboardingFinanciero(functionArgs, userId, userName);
           break;
         case 'manage_transaction_record':
           result = await executeManageTransactionRecord(functionArgs, userId, categories, timezone);
@@ -948,7 +1003,7 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     }
 
     // 4. Obtener datos del request
-    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactions } = req.body;
+    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactions, onboardingVersion } = req.body;
     const userTimezone = timezone || 'UTC';
 
     // 4.1 Obtener categorías si no vienen del frontend
@@ -986,7 +1041,20 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
       categoriesContext = `\n\nCATEGORÍAS DISPONIBLES EN LA APP:\n- Gastos: ${expenseCategories.join(', ')}\n- Ingresos: ${incomeCategories.join(', ')}\nUSA SOLO estas categorías. NUNCA inventes categorías que no estén en esta lista. Si el usuario pide ver categorías, muéstrale ESTAS.`;
     }
 
-    const dynamicInstructions = `${ZENIO_SYSTEM_PROMPT}\n\nFECHA ACTUAL: Hoy es ${fechaHumana} (${fechaActual}). Año ${fechaRD.getFullYear()}. Zona horaria: República Dominicana (UTC-4). Cuando el usuario mencione "hoy", "ayer", "mañana", etc., usa esta fecha como referencia.${categoriesContext}`;
+    // Switch de onboarding: el cliente envía onboardingVersion en el payload.
+    // Si no lo envía (apps desplegadas), usa el onboarding actual.
+    // Variable de entorno ONBOARDING_MODE sirve como override global:
+    //   'current' (o no definida) = respetar lo que pida el cliente (default: actual)
+    //   'v2.1' = forzar v2.1 para todos
+    const envMode = process.env.ONBOARDING_MODE || 'current';
+    const effectiveVersion = envMode === 'v2.1' ? 'v2.1' : (onboardingVersion || 'current');
+    const isV21Onboarding = isOnboarding && !user?.onboardingCompleted && effectiveVersion === 'v2.1';
+
+    const dateContext = `\n\nFECHA ACTUAL: Hoy es ${fechaHumana} (${fechaActual}). Año ${fechaRD.getFullYear()}. Zona horaria: República Dominicana (UTC-4). Cuando el usuario mencione "hoy", "ayer", "mañana", etc., usa esta fecha como referencia.`;
+
+    const dynamicInstructions = isV21Onboarding
+      ? `${ZENIO_ONBOARDING_V21_PROMPT}${dateContext}${categoriesContext}`
+      : `${ZENIO_SYSTEM_PROMPT}${dateContext}${categoriesContext}`;
 
     // 7. Construir input para Responses API
     const input: any[] = [];
@@ -1007,10 +1075,17 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
 
       // Si es onboarding
       if (isOnboarding && !user?.onboardingCompleted) {
-        input.push({
-          role: 'user',
-          content: `Quiero iniciar mi onboarding financiero. Mi nombre es ${userName}.`,
-        });
+        if (isV21Onboarding) {
+          input.push({
+            role: 'user',
+            content: `Quiero iniciar mi onboarding financiero. Mi nombre es ${userName}. Mi país es ${user?.country || 'DO'} y mi moneda es ${user?.currency || 'DOP'}.`,
+          });
+        } else {
+          input.push({
+            role: 'user',
+            content: `Quiero iniciar mi onboarding financiero. Mi nombre es ${userName}.`,
+          });
+        }
       } else if (message) {
         input.push({ role: 'user', content: message });
       }
@@ -1021,9 +1096,9 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
 
     // 8. Construir tools para la request
     // file_search se añadirá solo para consultas educativas en una fase posterior
-    const tools: any[] = [
-      ...ZENIO_FUNCTION_TOOLS,
-    ];
+    const tools: any[] = isV21Onboarding
+      ? [...ZENIO_ONBOARDING_V21_TOOLS]
+      : [...ZENIO_FUNCTION_TOOLS];
 
     // 9. Llamar a Responses API
     // previous_response_id = threadId que viene del frontend (es el response ID anterior)
@@ -1091,7 +1166,7 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
       logger.error(`[ZenioV2-DEBUG] Tool calls: ${functionCalls.map((fc: any) => `${fc.name}(${fc.arguments?.substring(0, 100)})`).join(', ')}`);
 
       // Procesar todos los tool calls
-      const toolResults = await processToolCalls(functionCalls, userId, userName, categories, userTimezone);
+      const toolResults = await processToolCalls(functionCalls, userId, userName, categories, userTimezone, effectiveVersion);
 
       // Recoger acciones ejecutadas
       for (const tr of toolResults) {
@@ -1184,6 +1259,11 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
       responsePayload.transaction = lastAction.data?.transaction;
       responsePayload.budget = lastAction.data?.budget;
       responsePayload.goal = lastAction.data?.goal;
+
+      // Señal de onboarding completado para el frontend
+      if (executedActions.some((a: any) => a.data?.onboardingCompleted)) {
+        responsePayload.onboardingCompleted = true;
+      }
     }
 
     return res.json(responsePayload);

@@ -391,6 +391,73 @@ export const ZENIO_FUNCTION_TOOLS = [
  * Tools adicionales del Assistant original (no son function calls)
  * Se incluyen como referencia para la migración
  */
+/**
+ * Tools para Onboarding v2.1
+ * Se usan SOLO cuando ONBOARDING_MODE=v2.1
+ * Incluyen los mismos tools de gestión + versión actualizada de onboarding_financiero
+ */
+export const ZENIO_ONBOARDING_V21_TOOLS = [
+  // Reutilizar tools existentes de gestión (sin cambios)
+  ZENIO_FUNCTION_TOOLS[0], // manage_budget_record
+  ZENIO_FUNCTION_TOOLS[1], // manage_transaction_record
+  ZENIO_FUNCTION_TOOLS[3], // manage_goal_record
+  ZENIO_FUNCTION_TOOLS[4], // list_categories
+  // Versión v2.1 de onboarding_financiero
+  {
+    type: 'function' as const,
+    name: 'onboarding_financiero',
+    description: 'Registra el perfil de onboarding v2.1 del usuario. Incluye datos recolectados durante el flujo conversacional y la descripción de lo que se activó (presupuestos, metas, transacciones creadas).',
+    strict: false,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        nombre_usuario: {
+          type: 'string',
+          description: 'Nombre del usuario',
+        },
+        meta_financiera: {
+          type: 'string',
+          description: 'Meta financiera principal del usuario (respuesta Q1)',
+        },
+        desafio_financiero: {
+          type: 'string',
+          description: 'Mayor desafío financiero actual (respuesta Q2)',
+        },
+        fondo_emergencia: {
+          type: 'string',
+          description: 'Nivel de fondo de emergencia (respuesta Q3)',
+        },
+        sentir_financiero: {
+          type: 'string',
+          description: 'Sentir financiero en una palabra (follow-up Q3)',
+        },
+        rango_ingresos: {
+          type: 'string',
+          description: 'Rango de ingresos seleccionado o "no proporcionado"',
+        },
+        activacion_realizada: {
+          type: 'string',
+          description: 'Descripción de lo que se creó durante la activación (presupuestos, metas, transacciones)',
+        },
+        estado_onboarding: {
+          type: 'string',
+          enum: ['completado', 'parcial', 'abandonado'],
+          description: 'Estado final del onboarding',
+        },
+      },
+      required: [
+        'nombre_usuario',
+        'meta_financiera',
+        'desafio_financiero',
+        'fondo_emergencia',
+        'activacion_realizada',
+        'estado_onboarding',
+      ],
+    },
+  },
+];
+
 export const ZENIO_BUILTIN_TOOLS = {
   file_search: {
     vector_store_ids: ['vs_685da89f2ce4819193d9d9fc40b7f5c1'],
