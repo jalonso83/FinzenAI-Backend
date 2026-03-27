@@ -25,8 +25,8 @@ export const PLANS = {
       yearly: null,
     },
     limits: {
-      budgets: 2,
-      goals: 1,
+      budgets: 4,
+      goals: 2,
       zenioQueries: 15,
       reminders: 2, // Máximo 2 recordatorios de pago activos
       budgetAlerts: false, // Sin alertas de umbral de presupuesto
