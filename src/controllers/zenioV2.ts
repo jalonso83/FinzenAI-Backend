@@ -631,9 +631,9 @@ async function listTransactions(transactionData: any, userId: string, categories
 
 async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[]): Promise<any> {
   const subscription = await prisma.subscription.findUnique({ where: { userId } });
-  const BUDGET_LIMITS: Record<string, number> = { FREE: 3, PREMIUM: -1, PRO: -1 };
+  const BUDGET_LIMITS: Record<string, number> = { FREE: 4, PREMIUM: -1, PRO: -1 };
   const plan = subscription?.plan || 'FREE';
-  const budgetLimit = BUDGET_LIMITS[plan] || 3;
+  const budgetLimit = BUDGET_LIMITS[plan] || 4;
 
   if (budgetLimit !== -1) {
     const currentCount = await prisma.budget.count({ where: { user_id: userId, is_active: true } });
@@ -1416,9 +1416,9 @@ export const createBudgetFromZenioV2 = async (req: Request, res: Response) => {
     if (!userId) throw new Error('No se pudo determinar el usuario autenticado.');
 
     const subscription = await prisma.subscription.findUnique({ where: { userId } });
-    const BUDGET_LIMITS: Record<string, number> = { FREE: 3, PREMIUM: -1, PRO: -1 };
+    const BUDGET_LIMITS: Record<string, number> = { FREE: 4, PREMIUM: -1, PRO: -1 };
     const plan = subscription?.plan || 'FREE';
-    const budgetLimit = BUDGET_LIMITS[plan] || 3;
+    const budgetLimit = BUDGET_LIMITS[plan] || 4;
 
     if (budgetLimit !== -1) {
       const count = await prisma.budget.count({ where: { user_id: userId, is_active: true } });

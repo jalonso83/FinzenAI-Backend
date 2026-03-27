@@ -1626,13 +1626,13 @@ async function insertBudget(category: string, amount: string, recurrence: string
   });
 
   const BUDGET_LIMITS: Record<string, number> = {
-    FREE: 3,
+    FREE: 4,
     PREMIUM: -1,
     PRO: -1,
   };
 
   const plan = subscription?.plan || 'FREE';
-  const budgetLimit = BUDGET_LIMITS[plan] || 3;
+  const budgetLimit = BUDGET_LIMITS[plan] || 4;
 
   if (budgetLimit !== -1) {
     const currentBudgetCount = await prisma.budget.count({
@@ -2954,13 +2954,13 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
     });
 
     const BUDGET_LIMITS: Record<string, number> = {
-      FREE: 3,
+      FREE: 4,
       PREMIUM: -1, // Ilimitado
       PRO: -1,     // Ilimitado
     };
 
     const plan = subscription?.plan || 'FREE';
-    const budgetLimit = BUDGET_LIMITS[plan] || 3;
+    const budgetLimit = BUDGET_LIMITS[plan] || 4;
 
     if (budgetLimit !== -1) {
       const currentBudgetCount = await prisma.budget.count({
