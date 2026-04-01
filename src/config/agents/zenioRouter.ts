@@ -4,12 +4,29 @@
  * Determina qué agente especializado debe responder
  */
 
-export type AgentType = 'asistente' | 'educativo';
+export type AgentType = 'asistente' | 'educativo' | 'analista';
+
+// Patrones para detectar intención de ANÁLISIS (ANALISTA)
+const ANALYSIS_PATTERNS = [
+  /\b(c[oó]mo\s+voy|c[oó]mo\s+estoy|c[oó]mo\s+ando)\b/i,
+  /\b(resumen|resum[ée]n|panorama|estado)\s+(de\s+)?(mis\s+)?(finanza|gasto|presupuesto|meta|dinero|situaci[oó]n)/i,
+  /\b(anal[ií]z|analiza|an[aá]lisis)\b/i,
+  /\b(estoy\s+gastando\s+(mucho|demasiado|poco|bien|mal))\b/i,
+  /\b(voy\s+bien|voy\s+mal|voy\s+atrasado|voy\s+adelantado)\b/i,
+  /\b(cu[aá]nto\s+(llevo|he)\s+(gastado|ahorrado|gastando))\s+(este|en\s+el)\s+mes/i,
+  /\b(compar[ae]|compara|vs|versus)\s+(mes|semana|periodo)/i,
+  /\b(tendencia|patr[oó]n|comportamiento)\s+(de\s+)?(gasto|ahorro|financier)/i,
+  /\b(progreso|avance)\s+(de\s+)?(mi|mis|la|las)\s+(meta|ahorro)/i,
+  /\b(me\s+alcanza|no\s+me\s+alcanza|me\s+sobra|me\s+falta)\b/i,
+  /\b(qu[ée]\s+tal\s+(voy|estoy|ando))\b/i,
+  /\b(dame\s+un\s+(resumen|an[aá]lisis|reporte|informe))\b/i,
+  /\b(evalua|eval[uú]a|diagnostica|diagnostico)\s+(mi|mis)\b/i,
+];
 
 // Patrones para detectar intención operativa (ASISTENTE)
 const OPERATION_PATTERNS = [
-  // Transacciones
-  /\b(gast[éeao]|ingres[éeao]|cobr[éeao]|pagu[ée]|compr[ée]|pag[ué])\b/i,
+  // Transacciones — verbos naturales dominicanos
+  /\b(gast[éeao]|ingres[éeao]|cobr[éeao]|pagu[ée]|compr[ée]|pag[ué]|deposit[éeao]|transfer[ií]|me\s+cobrar|me\s+pagar|recib[ií]|me\s+descontar|invert[ií]|ahorr[ée]|prest[ée]|saqu[ée]|met[ií]|apart[ée]|bot[ée])\b/i,
   /\b(registr|anot|agreg|cre[ao]|elimin|borr|actualiz|modific|edit)\w*\b/i,
   /\b(transacci[oó]n|gasto|ingreso)\b/i,
   // Presupuestos
@@ -64,6 +81,11 @@ export function classifyIntent(message: string): AgentType {
   // Contar matches en cada categoría
   let operationScore = 0;
   let educationScore = 0;
+  let analysisScore = 0;
+
+  for (const pattern of ANALYSIS_PATTERNS) {
+    if (pattern.test(msg)) analysisScore++;
+  }
 
   for (const pattern of OPERATION_PATTERNS) {
     if (pattern.test(msg)) operationScore++;
@@ -73,13 +95,17 @@ export function classifyIntent(message: string): AgentType {
     if (pattern.test(msg)) educationScore++;
   }
 
+  // Si hay señales de análisis claras, priorizar Analista
+  if (analysisScore > 0 && operationScore === 0) return 'analista';
+  if (analysisScore >= 2) return 'analista'; // fuerte señal de análisis incluso con algo operativo
+
   // Si hay señales operativas claras (monto + acción), priorizar Asistente
   if (operationScore > 0 && /\d/.test(msg)) return 'asistente';
 
   // Si solo hay señales educativas, enviar a Educativo
-  if (educationScore > 0 && operationScore === 0) return 'educativo';
+  if (educationScore > 0 && operationScore === 0 && analysisScore === 0) return 'educativo';
 
-  // Si hay ambas, el que tenga más score gana
+  // Si hay ambas (educativo vs operativo), el que tenga más score gana
   if (educationScore > operationScore) return 'educativo';
 
   // Default: Asistente (el más versátil)

@@ -1,7 +1,7 @@
 /**
  * Zenio Agents Controller
  * Implementa la arquitectura de agentes especializados:
- *   Router (código) → Asistente | Educativo
+ *   Router (código) → Asistente | Educativo | Analista
  *
  * Reutiliza la lógica de OpenAI Responses API y tool calls
  * del controller V2 sin modificarlo.
@@ -19,8 +19,10 @@ import {
   classifyIntent,
   ZENIO_ASISTENTE_PROMPT,
   ZENIO_EDUCATIVO_PROMPT,
+  ZENIO_ANALISTA_PROMPT,
   ASISTENTE_TOOLS,
   EDUCATIVO_TOOLS,
+  ANALISTA_TOOLS,
   type AgentType,
 } from '../config/agents';
 
@@ -125,6 +127,9 @@ async function handleToolCall(
         break;
       case 'list_categories':
         result = await handleListCategories(args, categories);
+        break;
+      case 'analizar_finanzas':
+        result = await handleAnalizarFinanzas(args, userId);
         break;
       default:
         result = { error: true, message: `Función no soportada: ${functionName}` };
@@ -479,6 +484,167 @@ async function handleListCategories(args: any, categories?: any[]): Promise<any>
   return { categories: filtered.map((c: any) => c.name), count: filtered.length, module };
 }
 
+// --- Analizar finanzas handler (ANALISTA) ---
+async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
+  const periodo = args?.periodo || 'ambos';
+
+  const ahora = new Date();
+  const offsetRD = -4;
+  const utc = ahora.getTime() + (ahora.getTimezoneOffset() * 60000);
+  const fechaRD = new Date(utc + (offsetRD * 60 * 60 * 1000));
+
+  const mesActualInicio = new Date(fechaRD.getFullYear(), fechaRD.getMonth(), 1);
+  const mesActualFin = new Date(fechaRD.getFullYear(), fechaRD.getMonth() + 1, 0, 23, 59, 59, 999);
+  const mesAnteriorInicio = new Date(fechaRD.getFullYear(), fechaRD.getMonth() - 1, 1);
+  const mesAnteriorFin = new Date(fechaRD.getFullYear(), fechaRD.getMonth(), 0, 23, 59, 59, 999);
+
+  // 1. Transacciones
+  let transaccionesMesActual: any[] = [];
+  let transaccionesMesAnterior: any[] = [];
+
+  if (periodo === 'mes_actual' || periodo === 'ambos') {
+    transaccionesMesActual = await prisma.transaction.findMany({
+      where: { userId, date: { gte: mesActualInicio, lte: mesActualFin } },
+      include: { category: { select: { name: true, type: true } } },
+      orderBy: { date: 'desc' },
+    });
+  }
+  if (periodo === 'mes_anterior' || periodo === 'ambos') {
+    transaccionesMesAnterior = await prisma.transaction.findMany({
+      where: { userId, date: { gte: mesAnteriorInicio, lte: mesAnteriorFin } },
+      include: { category: { select: { name: true, type: true } } },
+      orderBy: { date: 'desc' },
+    });
+  }
+
+  // 2. Resumen de gastos por categoría
+  const resumenGastosMesActual: Record<string, number> = {};
+  let totalGastosMesActual = 0;
+  let totalIngresosMesActual = 0;
+  for (const tx of transaccionesMesActual) {
+    if (tx.type === 'EXPENSE') {
+      const cat = tx.category?.name || 'Sin categoría';
+      resumenGastosMesActual[cat] = (resumenGastosMesActual[cat] || 0) + tx.amount;
+      totalGastosMesActual += tx.amount;
+    } else {
+      totalIngresosMesActual += tx.amount;
+    }
+  }
+
+  const resumenGastosMesAnterior: Record<string, number> = {};
+  let totalGastosMesAnterior = 0;
+  let totalIngresosMesAnterior = 0;
+  for (const tx of transaccionesMesAnterior) {
+    if (tx.type === 'EXPENSE') {
+      const cat = tx.category?.name || 'Sin categoría';
+      resumenGastosMesAnterior[cat] = (resumenGastosMesAnterior[cat] || 0) + tx.amount;
+      totalGastosMesAnterior += tx.amount;
+    } else {
+      totalIngresosMesAnterior += tx.amount;
+    }
+  }
+
+  // Top 3 categorías de gasto
+  const topCategorias = Object.entries(resumenGastosMesActual)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5)
+    .map(([cat, monto]) => ({ categoria: cat, monto, porcentaje: totalGastosMesActual > 0 ? Math.round((monto / totalGastosMesActual) * 100) : 0 }));
+
+  // 3. Presupuestos activos
+  const presupuestos = await prisma.budget.findMany({
+    where: { user_id: userId, is_active: true },
+    include: { category: { select: { name: true, icon: true } } },
+  });
+
+  const presupuestosResumen = presupuestos.map(b => ({
+    categoria: b.category.name,
+    asignado: b.amount,
+    gastado: b.spent,
+    porcentajeUso: b.amount > 0 ? Math.round((b.spent / b.amount) * 100) : 0,
+    estado: b.amount > 0 ? (b.spent / b.amount >= 0.9 ? 'ROJO' : b.spent / b.amount >= 0.7 ? 'AMARILLO' : 'VERDE') : 'VERDE',
+    restante: b.amount - b.spent,
+  }));
+
+  // 4. Metas activas
+  const metas = await prisma.goal.findMany({
+    where: { userId, isActive: true, isCompleted: false },
+    include: { category: { select: { name: true } } },
+  });
+
+  const metasResumen = metas.map(g => {
+    const progreso = g.targetAmount > 0 ? Math.round((g.currentAmount / g.targetAmount) * 100) : 0;
+    let diasRestantes = null;
+    let tiempoPorcentaje = null;
+    if (g.targetDate) {
+      const hoy = fechaRD;
+      const inicio = g.createdAt;
+      const fin = g.targetDate;
+      const totalDias = Math.max(1, Math.ceil((fin.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)));
+      const diasTranscurridos = Math.ceil((hoy.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24));
+      diasRestantes = Math.max(0, totalDias - diasTranscurridos);
+      tiempoPorcentaje = Math.round((diasTranscurridos / totalDias) * 100);
+    }
+    return {
+      nombre: g.name,
+      montoObjetivo: g.targetAmount,
+      montoActual: g.currentAmount,
+      progreso,
+      fechaLimite: g.targetDate ? g.targetDate.toISOString().split('T')[0] : null,
+      diasRestantes,
+      tiempoPorcentaje,
+      vaAlDia: tiempoPorcentaje ? progreso >= tiempoPorcentaje : null,
+      aportesMensuales: g.monthlyContributionAmount,
+    };
+  });
+
+  // 5. Perfil de onboarding
+  let onboarding = null;
+  try {
+    onboarding = await prisma.onboarding.findUnique({ where: { userId } });
+  } catch {}
+
+  const perfilOnboarding = onboarding ? {
+    metaPrincipal: onboarding.mainGoals,
+    desafio: onboarding.mainChallenge,
+    fondoEmergencia: onboarding.emergencyFund,
+    sentimiento: onboarding.financialFeeling,
+    rangoIngresos: onboarding.incomeRange,
+  } : null;
+
+  // 6. Días restantes del mes
+  const diasEnMes = new Date(fechaRD.getFullYear(), fechaRD.getMonth() + 1, 0).getDate();
+  const diaActual = fechaRD.getDate();
+  const diasRestantesMes = diasEnMes - diaActual;
+
+  return {
+    success: true,
+    snapshot: {
+      fecha: fechaRD.toISOString().split('T')[0],
+      diaActual,
+      diasRestantesMes,
+      mesActual: {
+        totalGastos: totalGastosMesActual,
+        totalIngresos: totalIngresosMesActual,
+        balance: totalIngresosMesActual - totalGastosMesActual,
+        transacciones: transaccionesMesActual.length,
+        topCategorias,
+        gastosPorCategoria: resumenGastosMesActual,
+      },
+      mesAnterior: periodo === 'ambos' || periodo === 'mes_anterior' ? {
+        totalGastos: totalGastosMesAnterior,
+        totalIngresos: totalIngresosMesAnterior,
+        balance: totalIngresosMesAnterior - totalGastosMesAnterior,
+        transacciones: transaccionesMesAnterior.length,
+        gastosPorCategoria: resumenGastosMesAnterior,
+      } : null,
+      presupuestos: presupuestosResumen,
+      metas: metasResumen,
+      perfilOnboarding,
+    },
+    action: 'finanzas_analizadas',
+  };
+}
+
 // =============================================
 // CONTROLADOR PRINCIPAL — AGENTES
 // =============================================
@@ -536,8 +702,18 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
     logger.error(`[ZenioAgents] Router → ${agentType} | Mensaje: "${(message || '').substring(0, 80)}"`);
 
     // 6. Seleccionar prompt y tools según agente
-    const agentPrompt = agentType === 'educativo' ? ZENIO_EDUCATIVO_PROMPT : ZENIO_ASISTENTE_PROMPT;
-    const agentTools = agentType === 'educativo' ? EDUCATIVO_TOOLS : ASISTENTE_TOOLS;
+    const agentPromptMap: Record<AgentType, string> = {
+      asistente: ZENIO_ASISTENTE_PROMPT,
+      educativo: ZENIO_EDUCATIVO_PROMPT,
+      analista: ZENIO_ANALISTA_PROMPT,
+    };
+    const agentToolsMap: Record<AgentType, any[]> = {
+      asistente: ASISTENTE_TOOLS,
+      educativo: EDUCATIVO_TOOLS,
+      analista: ANALISTA_TOOLS,
+    };
+    const agentPrompt = agentPromptMap[agentType];
+    const agentTools = agentToolsMap[agentType];
 
     // 7. Construir contexto dinámico
     const ahora = new Date();
