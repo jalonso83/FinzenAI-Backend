@@ -49,9 +49,5 @@ export const EDUCATIVO_TOOLS: any[] = [
   {
     type: 'file_search' as const,
     vector_store_ids: [ZENIO_VECTOR_STORE_ID],
-    ranking_options: {
-      ranker: 'default_2024_08_21',
-      score_threshold: 0.0,
-    },
   },
 ];
