@@ -8,19 +8,33 @@ export type AgentType = 'asistente' | 'educativo' | 'analista';
 
 // Patrones para detectar intención de ANÁLISIS (ANALISTA)
 const ANALYSIS_PATTERNS = [
-  /\b(c[oó]mo\s+voy|c[oó]mo\s+estoy|c[oó]mo\s+ando)\b/i,
-  /\b(resumen|resum[ée]n|panorama|estado)\s+(de\s+)?(mis\s+)?(finanza|gasto|presupuesto|meta|dinero|situaci[oó]n)/i,
-  /\b(anal[ií]z|analiza|an[aá]lisis)\b/i,
-  /\b(estoy\s+gastando\s+(mucho|demasiado|poco|bien|mal))\b/i,
-  /\b(voy\s+bien|voy\s+mal|voy\s+atrasado|voy\s+adelantado)\b/i,
-  /\b(cu[aá]nto\s+(llevo|he)\s+(gastado|ahorrado|gastando))\s+(este|en\s+el)\s+mes/i,
-  /\b(compar[ae]|compara|vs|versus)\s+(mes|semana|periodo)/i,
-  /\b(tendencia|patr[oó]n|comportamiento)\s+(de\s+)?(gasto|ahorro|financier)/i,
-  /\b(progreso|avance)\s+(de\s+)?(mi|mis|la|las)\s+(meta|ahorro)/i,
-  /\b(me\s+alcanza|no\s+me\s+alcanza|me\s+sobra|me\s+falta)\b/i,
-  /\b(qu[ée]\s+tal\s+(voy|estoy|ando))\b/i,
-  /\b(dame\s+un\s+(resumen|an[aá]lisis|reporte|informe))\b/i,
-  /\b(evalua|eval[uú]a|diagnostica|diagnostico)\s+(mi|mis)\b/i,
+  // "cómo voy" con o sin tilde — sin \b al inicio para evitar problemas Unicode
+  /como\s+voy/i,
+  /como\s+estoy/i,
+  /como\s+ando/i,
+  /que\s+tal\s+voy/i,
+  /como\s+van\s+mis/i,
+  // Resumen/análisis
+  /resumen\s+(de\s+)?(mis\s+)?(finanza|gasto|presupuesto|meta|dinero)/i,
+  /analiz|analisis/i,
+  // Estado de gastos
+  /estoy\s+gastando\s+(mucho|demasiado|poco|bien|mal)/i,
+  /voy\s+bien|voy\s+mal|voy\s+atrasado/i,
+  /cuanto\s+(llevo|he)\s+(gastado|ahorrado)/i,
+  // Comparaciones
+  /compar.*mes|vs\s+mes|versus/i,
+  /tendencia|patron.*gasto|comportamiento.*financ/i,
+  // Progreso
+  /progreso\s+(de\s+)?(mi|mis)/i,
+  /avance\s+(de\s+)?(mi|mis)/i,
+  // Alcance
+  /me\s+alcanza|no\s+me\s+alcanza|me\s+sobra|me\s+falta/i,
+  // Solicitudes directas
+  /dame\s+(un\s+)?(resumen|analisis|reporte|informe)/i,
+  /evalua.*mis|diagnostica.*mis/i,
+  // Variantes comunes
+  /como\s+voy\s+(este|en\s+el)\s+mes/i,
+  /cuanto\s+gaste|cuanto\s+he\s+gastado/i,
 ];
 
 // Patrones para detectar intención operativa (ASISTENTE)
@@ -76,7 +90,8 @@ const EDUCATION_PATTERNS = [
 export function classifyIntent(message: string): AgentType {
   if (!message || message.trim().length === 0) return 'asistente';
 
-  const msg = message.toLowerCase().trim();
+  // Normalizar: lowercase + quitar tildes para que los regex funcionen siempre
+  const msg = message.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   // Contar matches en cada categoría
   let operationScore = 0;
