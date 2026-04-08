@@ -197,14 +197,20 @@ export class AdminService {
       `, from, to),
     ]);
 
-    // Compute MRR from plan counts
+    // Plan distribution (ACTIVE + TRIALING — para visualización)
     const planCounts: Record<string, number> = {};
     planDistribution.forEach(p => {
       planCounts[p.plan] = p._count.plan;
     });
+
+    // MRR: solo suscripciones ACTIVE (pagando), NO TRIALING
+    const paidSubs = planDistribution.filter(p => true); // planDistribution incluye TRIALING
+    // Necesitamos contar solo ACTIVE para MRR
+    const activePremium = await prisma.subscription.count({ where: { plan: 'PREMIUM', status: 'ACTIVE' } });
+    const activePro = await prisma.subscription.count({ where: { plan: 'PRO', status: 'ACTIVE' } });
     const mrrEstimated =
-      (planCounts['PREMIUM'] || 0) * PLAN_PRICES.PREMIUM +
-      (planCounts['PRO'] || 0) * PLAN_PRICES.PRO;
+      activePremium * PLAN_PRICES.PREMIUM +
+      activePro * PLAN_PRICES.PRO;
 
     // DAU: compute average daily unique users
     const dauByDay = new Map<string, Set<string>>();
@@ -408,11 +414,11 @@ export class AdminService {
       paymentsFailed,
       totalPaymentAmount,
     ] = await Promise.all([
-      // Current plan distribution for MRR
+      // Current plan distribution for MRR — solo ACTIVE (pagando)
       prisma.subscription.groupBy({
         by: ['plan'],
         _count: { plan: true },
-        where: { status: { in: ['ACTIVE', 'TRIALING'] } },
+        where: { status: 'ACTIVE' },
       }),
 
       // Previous period plan distribution
