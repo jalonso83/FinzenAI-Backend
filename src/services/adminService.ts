@@ -421,10 +421,10 @@ export class AdminService {
         where: { status: 'ACTIVE' },
       }),
 
-      // Previous period plan distribution
+      // Previous period plan distribution — solo ACTIVE (pagando) para MRR
       prisma.$queryRawUnsafe<{ plan: string; cnt: bigint }[]>(`
         SELECT plan, COUNT(*)::bigint as cnt FROM subscriptions
-        WHERE status IN ('ACTIVE', 'TRIALING')
+        WHERE status = 'ACTIVE'
           AND "createdAt" < $1
         GROUP BY plan
       `, from),
@@ -480,7 +480,7 @@ export class AdminService {
           COUNT(CASE WHEN s.plan = 'PREMIUM' THEN 1 END)::bigint as premium,
           COUNT(CASE WHEN s.plan = 'PRO' THEN 1 END)::bigint as pro
         FROM months m
-        LEFT JOIN subscriptions s ON s.status IN ('ACTIVE', 'TRIALING')
+        LEFT JOIN subscriptions s ON s.status = 'ACTIVE'
           AND s."createdAt" <= m.month + interval '1 month'
           AND (s."updatedAt" >= m.month OR s.status != 'CANCELED')
         GROUP BY m.month
