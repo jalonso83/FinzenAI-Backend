@@ -3,8 +3,14 @@ import { prisma } from '../lib/prisma';
 import { SubscriptionStatus } from '@prisma/client';
 import { revenueCatService } from '../services/revenueCatService';
 import { subscriptionService } from '../services/subscriptionService';
-import { REVENUECAT_WEBHOOK_AUTH, RC_WEBHOOK_EVENTS } from '../config/revenueCat';
+import { REVENUECAT_WEBHOOK_AUTH, RC_WEBHOOK_EVENTS, PRODUCT_TO_PLAN } from '../config/revenueCat';
 import { revenueCatLogger as logger } from '../utils/logger';
+
+// Precios mensuales por plan (USD)
+const PLAN_PRICES: Record<string, Record<string, number>> = {
+  PRO: { monthly: 9.99, yearly: 99.99 },
+  PREMIUM: { monthly: 4.99, yearly: 49.99 },
+};
 
 /**
  * Handler principal del webhook de RevenueCat
@@ -55,10 +61,52 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
 
     switch (eventType) {
       case RC_WEBHOOK_EVENTS.INITIAL_PURCHASE:
-      case RC_WEBHOOK_EVENTS.RENEWAL:
+      case RC_WEBHOOK_EVENTS.RENEWAL: {
+        // Sync suscripción
+        await revenueCatService.verifyAndSyncPurchase(userId);
+
+        // Registrar pago en tabla Payment
+        try {
+          const productId = event.event.product_id;
+          const productInfo = productId ? PRODUCT_TO_PLAN[productId] : null;
+          const plan = productInfo?.plan || 'PRO';
+          const period = productInfo?.period || 'monthly';
+          const amount = PLAN_PRICES[plan]?.[period] || 9.99;
+
+          // Evitar duplicados: verificar si ya existe un pago para esta transacción
+          const transactionId = event.event.transaction_id || event.event.original_transaction_id;
+          const existingPayment = transactionId
+            ? await prisma.payment.findFirst({
+                where: { description: { contains: transactionId } },
+              })
+            : null;
+
+          if (!existingPayment) {
+            await prisma.payment.create({
+              data: {
+                userId,
+                amount,
+                currency: 'usd',
+                status: 'SUCCEEDED',
+                description: `RevenueCat ${eventType} - ${plan} ${period}${transactionId ? ` (tx: ${transactionId})` : ''}`,
+              },
+            });
+            logger.log(`Pago registrado: $${amount} USD para usuario ${userId} (${plan} ${period})`);
+          } else {
+            logger.log(`Pago duplicado ignorado para tx: ${transactionId}`);
+          }
+        } catch (paymentError: any) {
+          logger.error(`Error registrando pago para ${userId}:`, paymentError.message);
+          // No fallar el webhook por error de payment — la suscripción ya se sincronizó
+        }
+
+        logger.log(`${eventType} procesado para usuario ${userId}`);
+        break;
+      }
+
       case RC_WEBHOOK_EVENTS.UNCANCELLATION:
       case RC_WEBHOOK_EVENTS.PRODUCT_CHANGE:
-        // Para compras/renovaciones: fetch subscriber info fresco y sync
+        // Para uncancellation/cambio de producto: solo sync
         await revenueCatService.verifyAndSyncPurchase(userId);
         logger.log(`${eventType} procesado para usuario ${userId}`);
         break;
