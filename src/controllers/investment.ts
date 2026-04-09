@@ -564,10 +564,10 @@ const skipVsSaveExpenses = [
   },
   { 
     amount: 2000, 
-    name: "Compras online impulsivas", 
-    icon: "🛍️", 
+    name: "Compras online impulsivas",
+    icon: "📲",
     frequency: "monthly" as const,
-    alternatives: ["Compras planificadas", "Lista de deseos mensual"]
+    alternatives: ["Lista de deseos mensual", "Esperar 24 horas antes de comprar"]
   }
 ];
 

@@ -295,10 +295,20 @@ function generateFallbackCategorySuggestions(calculations: AntExpenseCalculation
       'Agrupa diligencias para hacer menos viajes',
       'Comparte viajes con compañeros de trabajo',
     ],
-    'Compras': [
-      'Espera 24 horas antes de compras impulsivas',
-      'Haz una lista antes de ir de compras',
+    'Electrónica y tecnología': [
+      'Espera 24 horas antes de compras impulsivas de gadgets',
       'Compara precios en al menos 3 lugares',
+      'Considera si realmente necesitas la última versión',
+    ],
+    'Delivery': [
+      'Cocinar en casa puede ahorrarte hasta 70% vs delivery',
+      'Limita el delivery a 1-2 veces por semana',
+      'Revisa si los cargos de envío justifican el pedido',
+    ],
+    'Comunicaciones': [
+      'Revisa si tu plan de datos se ajusta a tu uso real',
+      'Compara planes entre operadoras cada 6 meses',
+      'Usa WiFi siempre que puedas para reducir consumo de datos',
     ],
   };
 
