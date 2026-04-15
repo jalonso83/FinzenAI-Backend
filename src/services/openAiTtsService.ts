@@ -1,24 +1,18 @@
 /**
- * ElevenLabs TTS Service
- * Genera audio de alta calidad a partir de texto usando la API de ElevenLabs.
- * Se usa como alternativa al TTS nativo del dispositivo (expo-speech).
- *
- * Independiente del TTS actual — se activa por endpoint separado.
+ * OpenAI TTS Service
+ * Genera audio de alta calidad usando gpt-4o-mini-tts de OpenAI.
+ * Reemplaza ElevenLabs — mismo proveedor que Zenio, mismo billing.
  */
 
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
 
-const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1';
+const OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
 
 interface TTSOptions {
   text: string;
-  voiceId?: string;
-  modelId?: string;
-  stability?: number;      // 0-1: más alto = más consistente, más bajo = más expresivo
-  similarityBoost?: number; // 0-1: qué tan parecido al original
-  style?: number;          // 0-1: exageración del estilo
-  speakerBoost?: boolean;  // mejora la claridad del hablante
+  voice?: string;
+  instructions?: string;
 }
 
 interface TTSResult {
@@ -28,18 +22,14 @@ interface TTSResult {
   error?: string;
 }
 
-class ElevenLabsService {
+class OpenAiTtsService {
 
   private get apiKey(): string {
-    return ENV.ELEVENLABS_API_KEY;
-  }
-
-  private get defaultVoiceId(): string {
-    return ENV.ELEVENLABS_VOICE_ID;
+    return ENV.OPENAI_API_KEY;
   }
 
   /**
-   * Verifica si ElevenLabs está configurado y disponible
+   * Verifica si el servicio está disponible
    */
   isAvailable(): boolean {
     return !!this.apiKey && this.apiKey.length > 0;
@@ -51,24 +41,19 @@ class ElevenLabsService {
    */
   async generateSpeech(options: TTSOptions): Promise<TTSResult> {
     if (!this.isAvailable()) {
-      return { success: false, error: 'ElevenLabs API key no configurada' };
+      return { success: false, error: 'OpenAI API key no configurada' };
     }
 
     const {
       text,
-      voiceId = this.defaultVoiceId,
-      modelId = 'eleven_multilingual_v2',
-      stability = 0.5,
-      similarityBoost = 0.75,
-      style = 0.0,
-      speakerBoost = true,
+      voice = 'fable',
+      instructions = 'Habla como un amigo cercano, tono cálido y motivador. Eres un copiloto financiero dominicano llamado Zenio. Pronuncia los montos en español.',
     } = options;
 
     if (!text || text.trim().length === 0) {
       return { success: false, error: 'Texto vacío' };
     }
 
-    // Limpiar texto para TTS (quitar markdown, emojis excesivos, etc.)
     const cleanText = this.cleanTextForSpeech(text);
 
     if (cleanText.length === 0) {
@@ -76,40 +61,35 @@ class ElevenLabsService {
     }
 
     try {
-      logger.log(`[ElevenLabs] Generando audio: ${cleanText.substring(0, 80)}... (${cleanText.length} chars)`);
+      logger.log(`[OpenAI TTS] Generando audio (${voice}): ${cleanText.substring(0, 80)}... (${cleanText.length} chars)`);
 
-      const response = await fetch(`${ELEVENLABS_API_URL}/text-to-speech/${voiceId}`, {
+      const response = await fetch(OPENAI_TTS_URL, {
         method: 'POST',
         headers: {
-          'Accept': 'audio/mpeg',
+          'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
-          'xi-api-key': this.apiKey,
         },
         body: JSON.stringify({
-          text: cleanText,
-          model_id: modelId,
-          voice_settings: {
-            stability,
-            similarity_boost: similarityBoost,
-            style,
-            use_speaker_boost: speakerBoost,
-          },
+          model: 'gpt-4o-mini-tts',
+          voice,
+          input: cleanText,
+          instructions,
         }),
       });
 
       if (!response.ok) {
         const errorBody = await response.text();
-        logger.error(`[ElevenLabs] Error API: ${response.status} ${errorBody}`);
+        logger.error(`[OpenAI TTS] Error API: ${response.status} ${errorBody}`);
         return {
           success: false,
-          error: `ElevenLabs API error: ${response.status}`,
+          error: `OpenAI TTS error: ${response.status}`,
         };
       }
 
       const arrayBuffer = await response.arrayBuffer();
       const audio = Buffer.from(arrayBuffer);
 
-      logger.log(`[ElevenLabs] Audio generado: ${audio.length} bytes`);
+      logger.log(`[OpenAI TTS] Audio generado: ${audio.length} bytes`);
 
       return {
         success: true,
@@ -118,7 +98,7 @@ class ElevenLabsService {
       };
 
     } catch (error: any) {
-      logger.error('[ElevenLabs] Error:', error.message);
+      logger.error('[OpenAI TTS] Error:', error.message);
       return {
         success: false,
         error: error.message || 'Error generando audio',
@@ -128,7 +108,6 @@ class ElevenLabsService {
 
   /**
    * Limpia el texto para que suene bien en TTS
-   * Quita markdown, emojis, formato, etc.
    */
   private cleanTextForSpeech(text: string): string {
     let clean = text;
@@ -146,7 +125,7 @@ class ElevenLabsService {
     clean = clean.replace(/^[\s]*[-·•]\s*/gm, '');
     clean = clean.replace(/^[\s]*\d+\.\s*/gm, '');
 
-    // Quitar emojis (la mayoría)
+    // Quitar emojis
     clean = clean.replace(/[\u{1F600}-\u{1F64F}]/gu, '');
     clean = clean.replace(/[\u{1F300}-\u{1F5FF}]/gu, '');
     clean = clean.replace(/[\u{1F680}-\u{1F6FF}]/gu, '');
@@ -157,8 +136,9 @@ class ElevenLabsService {
     clean = clean.replace(/[\u{1FA00}-\u{1FA6F}]/gu, '');
     clean = clean.replace(/[\u{1FA70}-\u{1FAFF}]/gu, '');
     clean = clean.replace(/[\u{200D}]/gu, '');
+    clean = clean.replace(/📋|📊|🟢|🟡|🔴|✅|❌|⚠️|👋|🎉/g, '');
 
-    // Quitar la firma de Zenio (no tiene sentido hablarla)
+    // Quitar la firma de Zenio
     clean = clean.replace(/—\s*Zenio,?\s*tu copiloto financiero\.?/gi, '');
 
     // Quitar URLs
@@ -167,9 +147,6 @@ class ElevenLabsService {
     // Quitar líneas vacías múltiples
     clean = clean.replace(/\n{3,}/g, '\n\n');
 
-    // Reemplazar "RD$" por "pesos" para que se pronuncie bien
-    clean = clean.replace(/RD\$\s*([\d,.]+)/g, '$1 pesos');
-
     // Trim
     clean = clean.trim();
 
@@ -177,4 +154,4 @@ class ElevenLabsService {
   }
 }
 
-export const elevenLabsService = new ElevenLabsService();
+export const openAiTtsService = new OpenAiTtsService();

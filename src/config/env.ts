@@ -75,10 +75,6 @@ export const ENV = {
   REVENUECAT_SECRET_KEY: getOptionalEnv('REVENUECAT_SECRET_KEY', ''),
   REVENUECAT_WEBHOOK_AUTH_HEADER: getOptionalEnv('REVENUECAT_WEBHOOK_AUTH_HEADER', ''),
 
-  // === ELEVENLABS ===
-  ELEVENLABS_API_KEY: getOptionalEnv('ELEVENLABS_API_KEY', ''),
-  ELEVENLABS_VOICE_ID: getOptionalEnv('ELEVENLABS_VOICE_ID', 'YExhVa4bZONzeingloMX'),
-
   // === ADMIN ===
   ADMIN_EMAILS: getOptionalEnv('ADMIN_EMAILS', ''),
 
