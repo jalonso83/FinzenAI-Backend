@@ -47,7 +47,16 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
       return res.status(500).json({ error: result.error || 'Error generando audio' });
     }
 
-    logger.error(`[TTS] OK: audio generado ${result.audio.length} bytes | usuario: ${userId}`);
+    logger.error(`[TTS] OK: audio generado ${result.audio.length} bytes | usuario: ${userId} | formato: ${req.body.format || 'binary'}`);
+
+    // Si el cliente pide base64 (más confiable en iOS), devolver JSON
+    if (req.body.format === 'base64') {
+      return res.json({
+        success: true,
+        audio: result.audio.toString('base64'),
+        contentType: 'audio/mpeg',
+      });
+    }
 
     res.set({
       'Content-Type': 'audio/mpeg',
