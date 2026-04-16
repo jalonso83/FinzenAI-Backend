@@ -20,18 +20,18 @@ const router: RouterType = Router();
 router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res: Response) => {
   const platform = req.headers['x-platform'] || req.headers['user-agent'] || 'desconocido';
   const userId = req.user?.id || 'unknown';
-  logger.log(`[TTS] Solicitud recibida | usuario: ${userId} | plataforma: ${platform} | texto: ${(req.body?.text || '').substring(0, 60)}...`);
+  logger.error(`[TTS] Solicitud recibida | usuario: ${userId} | plataforma: ${platform} | texto: ${(req.body?.text || '').substring(0, 60)}...`);
 
   try {
     const { text } = req.body;
 
     if (!text || text.trim().length === 0) {
-      logger.log(`[TTS] RECHAZADO: texto vacío | usuario: ${userId}`);
+      logger.error(`[TTS] RECHAZADO: texto vacío | usuario: ${userId}`);
       return res.status(400).json({ error: 'Texto requerido' });
     }
 
     if (text.length > 5000) {
-      logger.log(`[TTS] RECHAZADO: texto largo (${text.length} chars) | usuario: ${userId}`);
+      logger.error(`[TTS] RECHAZADO: texto largo (${text.length} chars) | usuario: ${userId}`);
       return res.status(400).json({ error: 'Texto demasiado largo (máximo 5000 caracteres)' });
     }
 
@@ -47,7 +47,7 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
       return res.status(500).json({ error: result.error || 'Error generando audio' });
     }
 
-    logger.log(`[TTS] OK: audio generado ${result.audio.length} bytes | usuario: ${userId}`);
+    logger.error(`[TTS] OK: audio generado ${result.audio.length} bytes | usuario: ${userId}`);
 
     res.set({
       'Content-Type': 'audio/mpeg',
