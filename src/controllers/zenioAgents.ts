@@ -699,7 +699,7 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
 
     // 5. ROUTER — Clasificar intención
     const agentType: AgentType = classifyIntent(message || '');
-    logger.error(`[ZenioAgents] Router → ${agentType} | Mensaje: "${(message || '').substring(0, 80)}"`);
+    logger.log(`[ZenioAgents] Router → ${agentType} | Mensaje: "${(message || '').substring(0, 80)}"`);
 
     // 6. Seleccionar prompt y tools según agente
     const agentPromptMap: Record<AgentType, string> = {
@@ -771,7 +771,7 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
       if (functionCalls.length === 0) break;
 
       toolCallIterations++;
-      logger.error(`[ZenioAgents] Tool call iteración ${toolCallIterations}, ${functionCalls.length} calls (agente: ${agentType})`);
+      logger.log(`[ZenioAgents] Tool call iteración ${toolCallIterations}, ${functionCalls.length} calls (agente: ${agentType})`);
 
       const toolResults = [];
       for (const call of functionCalls) {

@@ -18,26 +18,36 @@ const router: RouterType = Router();
  * Response: audio/mpeg (binary)
  */
 router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res: Response) => {
+  const platform = req.headers['x-platform'] || req.headers['user-agent'] || 'desconocido';
+  const userId = req.user?.id || 'unknown';
+  logger.log(`[TTS] Solicitud recibida | usuario: ${userId} | plataforma: ${platform} | texto: ${(req.body?.text || '').substring(0, 60)}...`);
+
   try {
     const { text } = req.body;
 
     if (!text || text.trim().length === 0) {
+      logger.log(`[TTS] RECHAZADO: texto vacío | usuario: ${userId}`);
       return res.status(400).json({ error: 'Texto requerido' });
     }
 
     if (text.length > 5000) {
+      logger.log(`[TTS] RECHAZADO: texto largo (${text.length} chars) | usuario: ${userId}`);
       return res.status(400).json({ error: 'Texto demasiado largo (máximo 5000 caracteres)' });
     }
 
     if (!openAiTtsService.isAvailable()) {
+      logger.error(`[TTS] FALLO: servicio no disponible (API key?) | usuario: ${userId}`);
       return res.status(503).json({ error: 'Servicio TTS no disponible' });
     }
 
     const result = await openAiTtsService.generateSpeech({ text });
 
     if (!result.success || !result.audio) {
+      logger.error(`[TTS] FALLO: OpenAI no generó audio | usuario: ${userId} | error: ${result.error}`);
       return res.status(500).json({ error: result.error || 'Error generando audio' });
     }
+
+    logger.log(`[TTS] OK: audio generado ${result.audio.length} bytes | usuario: ${userId}`);
 
     res.set({
       'Content-Type': 'audio/mpeg',
@@ -48,7 +58,7 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
     return res.send(result.audio);
 
   } catch (error: any) {
-    logger.error('[TTS] Error:', error.message);
+    logger.error(`[TTS] ERROR INTERNO: ${error.message} | usuario: ${userId}`);
     return res.status(500).json({ error: 'Error interno del servicio TTS' });
   }
 });
