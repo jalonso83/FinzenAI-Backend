@@ -83,4 +83,43 @@ router.get('/status', authenticateToken, async (_req: Request, res: Response) =>
   });
 });
 
+/**
+ * POST /api/tts/test — endpoint de diagnóstico para debuggear problemas de iOS
+ */
+router.post('/test', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const { text, format } = req.body;
+    logger.error(`[TTS-TEST] Solicitud: texto="${(text || '').substring(0, 40)}...", format=${format}`);
+
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({ error: 'Texto requerido' });
+    }
+
+    const result = await openAiTtsService.generateSpeech({ text });
+
+    if (!result.success || !result.audio) {
+      logger.error(`[TTS-TEST] FALLO OpenAI: ${result.error}`);
+      return res.status(500).json({ error: result.error });
+    }
+
+    logger.error(`[TTS-TEST] Audio generado: ${result.audio.length} bytes`);
+
+    // Siempre devolver base64 en /test
+    const base64 = result.audio.toString('base64');
+    logger.error(`[TTS-TEST] Base64 generado: ${base64.length} chars (primeros 100: ${base64.substring(0, 100)}...)`);
+
+    return res.json({
+      success: true,
+      audio: base64,
+      audioSize: result.audio.length,
+      base64Size: base64.length,
+      contentType: 'audio/mpeg',
+      endpoint: 'test',
+    });
+  } catch (error: any) {
+    logger.error(`[TTS-TEST] ERROR: ${error.message}`);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
