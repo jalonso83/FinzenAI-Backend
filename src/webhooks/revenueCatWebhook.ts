@@ -65,42 +65,55 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
         // Sync suscripción
         await revenueCatService.verifyAndSyncPurchase(userId);
 
-        // Registrar pago en tabla Payment
-        try {
-          const productId = event.event.product_id;
-          const productInfo = productId ? PRODUCT_TO_PLAN[productId] : null;
-          const plan = productInfo?.plan || 'PRO';
-          const period = productInfo?.period || 'monthly';
-          const amount = PLAN_PRICES[plan]?.[period] || 9.99;
+        // CRÍTICO: Registrar pago en tabla Payment - DEBE exitir o fallar el webhook
+        const productId = event.event.product_id;
+        const productInfo = productId ? PRODUCT_TO_PLAN[productId] : null;
+        const plan = productInfo?.plan || 'PRO';
+        const period = productInfo?.period || 'monthly';
+        const amount = PLAN_PRICES[plan]?.[period] || 9.99;
+        const transactionId = event.event.transaction_id || event.event.original_transaction_id;
 
-          // Evitar duplicados: verificar si ya existe un pago para esta transacción
-          const transactionId = event.event.transaction_id || event.event.original_transaction_id;
-          const existingPayment = transactionId
-            ? await prisma.payment.findFirst({
-                where: { description: { contains: transactionId } },
-              })
-            : null;
+        // Obtener el ID de la suscripción en NUESTRA BD
+        const userSubscription = await prisma.subscription.findUnique({
+          where: { userId },
+          select: { id: true },
+        });
 
-          if (!existingPayment) {
+        if (!userSubscription) {
+          logger.error(`❌ CRITICAL: No subscription found in database for user ${userId}`);
+          throw new Error(`No subscription found in database for user ${userId}`);
+        }
+
+        // Evitar duplicados: verificar si ya existe un pago para esta transacción
+        let existingPayment = null;
+        if (transactionId) {
+          existingPayment = await prisma.payment.findFirst({
+            where: { description: { contains: transactionId } },
+          });
+        }
+
+        if (!existingPayment) {
+          try {
             await prisma.payment.create({
               data: {
                 userId,
+                subscriptionId: userSubscription.id,
                 amount,
                 currency: 'usd',
                 status: 'SUCCEEDED',
                 description: `RevenueCat ${eventType} - ${plan} ${period}${transactionId ? ` (tx: ${transactionId})` : ''}`,
               },
             });
-            logger.log(`Pago registrado: $${amount} USD para usuario ${userId} (${plan} ${period})`);
-          } else {
-            logger.log(`Pago duplicado ignorado para tx: ${transactionId}`);
+            logger.log(`✅ Pago registrado: $${amount} USD para usuario ${userId} (${plan} ${period}, subscriptionId: ${userSubscription.id})`);
+          } catch (paymentError: any) {
+            logger.error(`❌ CRITICAL: Error registrando pago para ${userId}:`, paymentError.message);
+            throw new Error(`Failed to record RevenueCat payment for user ${userId}: ${paymentError.message}`);
           }
-        } catch (paymentError: any) {
-          logger.error(`Error registrando pago para ${userId}:`, paymentError.message);
-          // No fallar el webhook por error de payment — la suscripción ya se sincronizó
+        } else {
+          logger.log(`✅ Pago duplicado ignorado para tx: ${transactionId}`);
         }
 
-        logger.log(`${eventType} procesado para usuario ${userId}`);
+        logger.log(`✅ ${eventType} procesado para usuario ${userId}`);
         break;
       }
 

@@ -65,12 +65,16 @@ export const handleStripeWebhook = async (req: Request, res: Response) => {
         logger.log(`⚠️  Unhandled event type: ${event.type}`);
     }
 
-    res.json({ received: true });
+    logger.log(`✅ Webhook ${event.type} processed successfully`);
+    res.json({ received: true, processed: true });
   } catch (error: any) {
-    logger.error('❌ Error processing webhook:', error);
+    logger.error(`❌ CRITICAL: Error processing webhook ${event.type}:`, error.message);
+    logger.error('Stack trace:', error.stack);
+    // IMPORTANTE: Responder con error 500 para que Stripe reintente
     res.status(500).json({
       error: 'Webhook processing failed',
-      message: error.message
+      message: error.message,
+      eventType: event.type
     });
   }
 };
@@ -184,7 +188,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   const subscriptionId = invoiceAny.subscription as string;
   if (!subscriptionId) {
     logger.error('❌ No subscription ID in invoice');
-    return;
+    throw new Error('No subscription ID in invoice');
   }
 
   // Obtener la suscripción de Stripe para acceder al metadata
@@ -193,31 +197,61 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
 
   if (!userId) {
     logger.error('❌ No userId in subscription metadata');
-    return;
+    throw new Error('No userId in subscription metadata');
   }
 
-  // Registrar pago
-  await subscriptionService.recordPayment({
-    userId,
-    subscriptionId,
-    amount: invoice.amount_paid / 100, // Convertir de centavos a dólares
-    currency: invoice.currency,
-    status: 'SUCCEEDED',
-    stripePaymentIntentId: invoiceAny.payment_intent as string,
-    stripeInvoiceId: invoice.id,
-    description: `Payment for subscription`,
+  // CRÍTICO: Registrar pago - DEBE exitir o fallar el webhook
+  // Obtener el ID de la suscripción en NUESTRA BD (no el de Stripe)
+  const userSubscription = await prisma.subscription.findUnique({
+    where: { userId },
+    select: { id: true },
   });
 
-  // Asegurar que la suscripción está activa
-  await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.ACTIVE);
+  if (!userSubscription) {
+    logger.error(`❌ CRITICAL: No subscription found in database for user ${userId}`);
+    throw new Error(`No subscription found in database for user ${userId}`);
+  }
 
-  logger.log(`✅ Payment recorded for user ${userId}: $${invoice.amount_paid / 100}`);
+  let paymentRecorded = false;
+  try {
+    await subscriptionService.recordPayment({
+      userId,
+      subscriptionId: userSubscription.id, // Usar ID de nuestra BD, NO el de Stripe
+      amount: invoice.amount_paid / 100, // Convertir de centavos a dólares
+      currency: invoice.currency,
+      status: 'SUCCEEDED',
+      stripePaymentIntentId: invoiceAny.payment_intent as string,
+      stripeInvoiceId: invoice.id,
+      description: `Payment for subscription`,
+    });
+    paymentRecorded = true;
+    logger.log(`✅ Payment recorded in database for user ${userId}: $${invoice.amount_paid / 100} (subscriptionId: ${userSubscription.id})`);
+  } catch (paymentError: any) {
+    logger.error('❌ CRITICAL: Failed to record payment in database:', paymentError.message);
+    throw new Error(`Payment recording failed for user ${userId}: ${paymentError.message}`);
+  }
+
+  // Solo continuar si el pago se registró exitosamente
+  if (!paymentRecorded) {
+    throw new Error('Payment was not recorded in database');
+  }
+
+  // Asegurar que la suscripción está activa
+  try {
+    await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.ACTIVE);
+    logger.log(`✅ Subscription status updated to ACTIVE for user ${userId}`);
+  } catch (statusError: any) {
+    logger.error('❌ Warning: Failed to update subscription status:', statusError.message);
+    // Este error no es crítico - el pago ya fue registrado
+  }
+
+  logger.log(`✅ Payment COMPLETE for user ${userId}: $${invoice.amount_paid / 100}`);
 
   // Procesar conversión de referido si aplica (no bloquear si falla)
   try {
     await ReferralService.handleRefereeConversion(userId, invoice.id);
   } catch (referralError) {
-    logger.error('❌ Error processing referral conversion:', referralError);
+    logger.error('⚠️  Warning: Error processing referral conversion:', referralError);
     // No fallar el webhook por error de referido
   }
 }
@@ -233,7 +267,7 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
   const subscriptionId = invoiceAny.subscription as string;
   if (!subscriptionId) {
     logger.error('❌ No subscription ID in invoice');
-    return;
+    throw new Error('No subscription ID in failed payment invoice');
   }
 
   // Obtener la suscripción de Stripe para acceder al metadata
@@ -242,24 +276,47 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
 
   if (!userId) {
     logger.error('❌ No userId in subscription metadata');
-    return;
+    throw new Error('No userId in failed payment subscription metadata');
   }
 
-  // Registrar pago fallido
-  await subscriptionService.recordPayment({
-    userId,
-    subscriptionId,
-    amount: invoice.amount_due / 100,
-    currency: invoice.currency,
-    status: 'FAILED',
-    stripeInvoiceId: invoice.id,
-    description: `Failed payment for subscription`,
+  // CRÍTICO: Registrar pago fallido - DEBE existir o fallar el webhook
+  // Obtener el ID de la suscripción en NUESTRA BD (no el de Stripe)
+  const userSubscription = await prisma.subscription.findUnique({
+    where: { userId },
+    select: { id: true },
   });
 
-  // Marcar suscripción como PAST_DUE
-  await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.PAST_DUE);
+  if (!userSubscription) {
+    logger.error(`❌ CRITICAL: No subscription found in database for user ${userId}`);
+    throw new Error(`No subscription found in database for user ${userId}`);
+  }
 
-  logger.log(`❌ Failed payment recorded for user ${userId}: $${invoice.amount_due / 100}`);
+  try {
+    await subscriptionService.recordPayment({
+      userId,
+      subscriptionId: userSubscription.id, // Usar ID de nuestra BD, NO el de Stripe
+      amount: invoice.amount_due / 100,
+      currency: invoice.currency,
+      status: 'FAILED',
+      stripeInvoiceId: invoice.id,
+      description: `Failed payment for subscription`,
+    });
+    logger.log(`✅ Failed payment recorded in database for user ${userId}: $${invoice.amount_due / 100} (subscriptionId: ${userSubscription.id})`);
+  } catch (paymentError: any) {
+    logger.error('❌ CRITICAL: Failed to record failed payment in database:', paymentError.message);
+    throw new Error(`Failed payment recording failed for user ${userId}: ${paymentError.message}`);
+  }
+
+  // Marcar suscripción como PAST_DUE
+  try {
+    await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.PAST_DUE);
+    logger.log(`✅ Subscription marked as PAST_DUE for user ${userId}`);
+  } catch (statusError: any) {
+    logger.warn('⚠️  Warning: Failed to update subscription status to PAST_DUE:', statusError.message);
+    // Este error no es crítico - el pago fallido ya fue registrado
+  }
+
+  logger.log(`❌ Failed payment RECORDED for user ${userId}: $${invoice.amount_due / 100}`);
 
   // TODO: Enviar email notificando pago fallido
 }

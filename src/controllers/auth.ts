@@ -254,10 +254,13 @@ async function processReferralCode(
 export const register = async (req: Request, res: Response) => {
   try {
     const registerData: RegisterRequest = req.body;
-    const { name, lastName, email, password, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company, deviceId, devicePlatform, deviceName, referralCode } = registerData;
+    let { name, lastName, email, password, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company, deviceId, devicePlatform, deviceName, referralCode } = registerData;
+
+    // Normalizar email a minúsculas
+    email = email.toLowerCase().trim();
 
     // 1. Validar datos de entrada
-    const validation = validateRegistrationData(registerData);
+    const validation = validateRegistrationData({ ...registerData, email });
     if (!validation.valid) {
       return res.status(400).json({ error: 'Validation error', message: validation.error });
     }
@@ -312,7 +315,10 @@ export const register = async (req: Request, res: Response) => {
 
 export const login = async (req: Request, res: Response) => {
   try {
-    const { email, password }: LoginRequest = req.body;
+    let { email, password }: LoginRequest = req.body;
+
+    // Normalizar email a minúsculas
+    email = email.toLowerCase().trim();
 
     // Validaciones básicas
     if (!email || !password) {
@@ -404,7 +410,10 @@ export const resendVerificationEmail = async (req: Request, res: Response) => {
 
 export const verifyEmail = async (req: Request, res: Response) => {
   try {
-    const { email, token }: VerifyEmailRequest = req.body;
+    let { email, token }: VerifyEmailRequest = req.body;
+
+    // Normalizar email a minúsculas
+    email = email.toLowerCase().trim();
 
     if (!email || !token) {
       return res.status(400).json({
@@ -623,8 +632,11 @@ function getVerificationResultHtml(success: boolean, message: string, detail: st
  */
 export const verifyEmailFromLink = async (req: Request, res: Response) => {
   try {
-    const email = req.query.email as string;
+    let email = req.query.email as string;
     const token = req.query.token as string;
+
+    // Normalizar email a minúsculas
+    email = email.toLowerCase().trim();
 
     if (!email || !token) {
       return res.status(400).send(getVerificationResultHtml(
@@ -691,7 +703,10 @@ const generateResetCode = (): string => {
 
 export const forgotPassword = async (req: Request, res: Response) => {
   try {
-    const { email } = req.body;
+    let { email } = req.body;
+
+    // Normalizar email a minúsculas
+    email = email.toLowerCase().trim();
 
     if (!email) {
       return res.status(400).json({
@@ -741,7 +756,10 @@ export const forgotPassword = async (req: Request, res: Response) => {
 
 export const resetPassword = async (req: Request, res: Response) => {
   try {
-    const { email, resetCode, newPassword } = req.body;
+    let { email, resetCode, newPassword } = req.body;
+
+    // Normalizar email a minúsculas
+    email = email.toLowerCase().trim();
 
     if (!email || !resetCode || !newPassword) {
       return res.status(400).json({

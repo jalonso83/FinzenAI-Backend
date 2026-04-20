@@ -144,8 +144,7 @@ export class AdminService {
         where: {
           plan: { not: 'FREE' },
           status: 'ACTIVE',
-          trialEndsAt: { not: null },
-          updatedAt: { gte: from, lte: to },
+          trialEndsAt: { not: null, gte: from, lte: to },
         },
       }),
 
@@ -402,33 +401,19 @@ export class AdminService {
     const thirtyDaysAgo = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     const [
-      currentPlanDist,
-      prevPlanDist,
       subscriptionsByStatus,
       trialsActive,
       cancellations30d,
       trialToPaidCount,
       totalTrialEnded,
-      mrrTrend,
       paymentsSucceeded,
       paymentsFailed,
       totalPaymentAmount,
+      currentMrrByPlan,
+      previousMrrByPlan,
+      mrrTrendData,
+      currentActiveSubs,
     ] = await Promise.all([
-      // Current plan distribution for MRR — solo ACTIVE (pagando)
-      prisma.subscription.groupBy({
-        by: ['plan'],
-        _count: { plan: true },
-        where: { status: 'ACTIVE' },
-      }),
-
-      // Previous period plan distribution — solo ACTIVE (pagando) para MRR
-      prisma.$queryRawUnsafe<{ plan: string; cnt: bigint }[]>(`
-        SELECT plan, COUNT(*)::bigint as cnt FROM subscriptions
-        WHERE status = 'ACTIVE'
-          AND "createdAt" < $1
-        GROUP BY plan
-      `, from),
-
       // Subscriptions by status
       prisma.subscription.groupBy({
         by: ['status'],
@@ -454,8 +439,7 @@ export class AdminService {
         where: {
           plan: { not: 'FREE' },
           status: 'ACTIVE',
-          trialEndsAt: { not: null },
-          updatedAt: { gte: from, lte: to },
+          trialEndsAt: { not: null, gte: from, lte: to },
         },
       }),
 
@@ -465,27 +449,6 @@ export class AdminService {
           trialEndsAt: { gte: from, lte: to },
         },
       }),
-
-      // MRR trend by month
-      prisma.$queryRawUnsafe<{ month: string; premium: bigint; pro: bigint }[]>(`
-        WITH months AS (
-          SELECT generate_series(
-            DATE_TRUNC('month', $1::timestamp),
-            DATE_TRUNC('month', $2::timestamp),
-            '1 month'::interval
-          ) as month
-        )
-        SELECT
-          m.month::text as month,
-          COUNT(CASE WHEN s.plan = 'PREMIUM' THEN 1 END)::bigint as premium,
-          COUNT(CASE WHEN s.plan = 'PRO' THEN 1 END)::bigint as pro
-        FROM months m
-        LEFT JOIN subscriptions s ON s.status = 'ACTIVE'
-          AND s."createdAt" <= m.month + interval '1 month'
-          AND (s."updatedAt" >= m.month OR s.status != 'CANCELED')
-        GROUP BY m.month
-        ORDER BY m.month ASC
-      `, from, to),
 
       // Payments succeeded in period
       prisma.payment.count({
@@ -497,37 +460,88 @@ export class AdminService {
         where: { status: 'FAILED', createdAt: { gte: from, lte: to } },
       }),
 
-      // Total payment amount in period
+      // Total payment amount in period (REAL dinero)
       prisma.payment.aggregate({
         where: { status: 'SUCCEEDED', createdAt: { gte: from, lte: to } },
         _sum: { amount: true },
       }),
+
+      // Current MRR by plan (REAL dinero de pagos)
+      prisma.$queryRawUnsafe<{ plan: string; total: string }[]>(`
+        SELECT s.plan, COALESCE(SUM(p.amount), 0)::text as total
+        FROM subscriptions s
+        LEFT JOIN payments p ON s."userId" = p."userId"
+          AND p.status = 'SUCCEEDED'
+          AND p."createdAt" >= $1
+          AND p."createdAt" <= $2
+        WHERE s.status = 'ACTIVE'
+        GROUP BY s.plan
+      `, from, to),
+
+      // Previous MRR by plan (REAL dinero de pagos)
+      prisma.$queryRawUnsafe<{ plan: string; total: string }[]>(`
+        SELECT s.plan, COALESCE(SUM(p.amount), 0)::text as total
+        FROM subscriptions s
+        LEFT JOIN payments p ON s."userId" = p."userId"
+          AND p.status = 'SUCCEEDED'
+          AND p."createdAt" >= $1
+          AND p."createdAt" <= $2
+        WHERE s.status = 'ACTIVE'
+        GROUP BY s.plan
+      `, prevFrom, prevTo),
+
+      // MRR trend by month (REAL dinero de pagos)
+      prisma.$queryRawUnsafe<{ month: string; premium: string; pro: string }[]>(`
+        WITH months AS (
+          SELECT generate_series(
+            DATE_TRUNC('month', $1::timestamp),
+            DATE_TRUNC('month', $2::timestamp),
+            '1 month'::interval
+          ) as month
+        )
+        SELECT
+          m.month::text as month,
+          COALESCE(SUM(CASE WHEN s.plan = 'PREMIUM' THEN p.amount ELSE 0 END), 0)::text as premium,
+          COALESCE(SUM(CASE WHEN s.plan = 'PRO' THEN p.amount ELSE 0 END), 0)::text as pro
+        FROM months m
+        LEFT JOIN subscriptions s ON s.status = 'ACTIVE'
+        LEFT JOIN payments p ON s."userId" = p."userId"
+          AND p.status = 'SUCCEEDED'
+          AND DATE_TRUNC('month', p."createdAt") = m.month
+        GROUP BY m.month
+        ORDER BY m.month ASC
+      `, from, to),
+
+      // Current active subs count (para ARPU calculation)
+      prisma.subscription.count({
+        where: { status: 'ACTIVE', plan: { not: 'FREE' } },
+      }),
     ]);
 
-    // Calculate MRR
-    const currentCounts: Record<string, number> = {};
-    currentPlanDist.forEach(p => { currentCounts[p.plan] = p._count.plan; });
-    const mrrCurrent =
-      (currentCounts['PREMIUM'] || 0) * PLAN_PRICES.PREMIUM +
-      (currentCounts['PRO'] || 0) * PLAN_PRICES.PRO;
+    // Calculate MRR from REAL payment data
+    const currentMrrObj: Record<string, number> = {};
+    currentMrrByPlan.forEach(p => {
+      currentMrrObj[p.plan] = Number(p.total) || 0;
+    });
+    const mrrCurrent = (currentMrrObj['PREMIUM'] || 0) + (currentMrrObj['PRO'] || 0);
 
-    const prevCounts: Record<string, number> = {};
-    prevPlanDist.forEach(p => { prevCounts[p.plan] = Number(p.cnt); });
-    const mrrPrevious =
-      (prevCounts['PREMIUM'] || 0) * PLAN_PRICES.PREMIUM +
-      (prevCounts['PRO'] || 0) * PLAN_PRICES.PRO;
+    const previousMrrObj: Record<string, number> = {};
+    previousMrrByPlan.forEach(p => {
+      previousMrrObj[p.plan] = Number(p.total) || 0;
+    });
+    const mrrPrevious = (previousMrrObj['PREMIUM'] || 0) + (previousMrrObj['PRO'] || 0);
 
-    const totalPaidSubs = (currentCounts['PREMIUM'] || 0) + (currentCounts['PRO'] || 0);
-    const arpu = totalPaidSubs > 0 ? Math.round((mrrCurrent / totalPaidSubs) * 100) / 100 : 0;
+    // ARPU: dinero real / número de suscripciones pagadas
+    const arpu = currentActiveSubs > 0 ? Math.round((mrrCurrent / currentActiveSubs) * 100) / 100 : 0;
 
     const trialToPaidRate = totalTrialEnded > 0
       ? Math.round((trialToPaidCount / totalTrialEnded) * 10000) / 100
       : 0;
 
-    // Revenue by plan
+    // Revenue by plan (REAL dinero)
     const revenueByPlan = {
-      PREMIUM: Math.round((currentCounts['PREMIUM'] || 0) * PLAN_PRICES.PREMIUM * 100) / 100,
-      PRO: Math.round((currentCounts['PRO'] || 0) * PLAN_PRICES.PRO * 100) / 100,
+      PREMIUM: Math.round((currentMrrObj['PREMIUM'] || 0) * 100) / 100,
+      PRO: Math.round((currentMrrObj['PRO'] || 0) * 100) / 100,
     };
 
     // Status distribution
@@ -544,13 +558,11 @@ export class AdminService {
       trialsActive,
       cancellations30d,
       trialToPaidRate,
-      mrrTrend: mrrTrend.map(m => ({
+      mrrTrend: mrrTrendData.map(m => ({
         month: m.month,
-        mrr: Math.round(
-          (Number(m.premium) * PLAN_PRICES.PREMIUM + Number(m.pro) * PLAN_PRICES.PRO) * 100
-        ) / 100,
-        premium: Number(m.premium),
-        pro: Number(m.pro),
+        mrr: Math.round((Number(m.premium) + Number(m.pro)) * 100) / 100,
+        premium: Math.round(Number(m.premium) * 100) / 100,
+        pro: Math.round(Number(m.pro) * 100) / 100,
       })),
       payments: {
         succeeded: paymentsSucceeded,
