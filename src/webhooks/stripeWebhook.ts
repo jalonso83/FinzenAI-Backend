@@ -6,6 +6,7 @@ import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
 import { getPlanFromPriceId } from '../config/stripe';
 import { ReferralService } from '../services/referralService';
 import Stripe from 'stripe';
+import { prisma } from '../lib/prisma';
 
 import { logger } from '../utils/logger';
 /**
