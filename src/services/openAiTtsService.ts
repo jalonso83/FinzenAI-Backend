@@ -13,7 +13,35 @@ interface TTSOptions {
   text: string;
   voice?: string;
   instructions?: string;
+  currency?: string;
+  country?: string;
 }
+
+// Mapeo de monedas a sus abreviaturas y nombres en español
+const CURRENCY_MAP: Record<string, { abbr: string; fullName: string }> = {
+  'dop': { abbr: 'RD', fullName: 'pesos dominicanos' },
+  'do': { abbr: 'RD', fullName: 'pesos dominicanos' },
+  'usd': { abbr: 'USD', fullName: 'dólares' },
+  'mxn': { abbr: 'MXN', fullName: 'pesos mexicanos' },
+  'mx': { abbr: 'MXN', fullName: 'pesos mexicanos' },
+  'ars': { abbr: 'ARS', fullName: 'pesos argentinos' },
+  'ar': { abbr: 'ARS', fullName: 'pesos argentinos' },
+  'clp': { abbr: 'CLP', fullName: 'pesos chilenos' },
+  'cl': { abbr: 'CLP', fullName: 'pesos chilenos' },
+  'cop': { abbr: 'COP', fullName: 'pesos colombianos' },
+  'co': { abbr: 'COP', fullName: 'pesos colombianos' },
+  'eur': { abbr: 'EUR', fullName: 'euros' },
+  'gbp': { abbr: 'GBP', fullName: 'libras esterlinas' },
+  'jpy': { abbr: 'JPY', fullName: 'yenes' },
+  'cad': { abbr: 'CAD', fullName: 'dólares canadienses' },
+  'aud': { abbr: 'AUD', fullName: 'dólares australianos' },
+  'brr': { abbr: 'BRL', fullName: 'reales brasileños' },
+  'br': { abbr: 'BRL', fullName: 'reales brasileños' },
+  'pe': { abbr: 'PEN', fullName: 'soles peruanos' },
+  'pen': { abbr: 'PEN', fullName: 'soles peruanos' },
+  've': { abbr: 'VES', fullName: 'bolívares' },
+  'ves': { abbr: 'VES', fullName: 'bolívares' },
+};
 
 interface TTSResult {
   success: boolean;
@@ -47,14 +75,16 @@ class OpenAiTtsService {
     const {
       text,
       voice = 'fable',
-      instructions = 'Habla como un amigo cercano, tono cálido y motivador. Eres un copiloto financiero dominicano llamado Zenio. Pronuncia los montos en español.',
+      currency = 'usd',
+      country = 'do',
+      instructions = 'Habla como un amigo cercano, tono cálido y motivador. Eres un copiloto financiero llamado Zenio. Pronuncia números y cantidades de dinero claramente.',
     } = options;
 
     if (!text || text.trim().length === 0) {
       return { success: false, error: 'Texto vacío' };
     }
 
-    const cleanText = this.cleanTextForSpeech(text);
+    const cleanText = this.cleanTextForSpeech(text, currency.toLowerCase());
 
     if (cleanText.length === 0) {
       return { success: false, error: 'Texto vacío después de limpieza' };
@@ -109,8 +139,35 @@ class OpenAiTtsService {
   /**
    * Limpia el texto para que suene bien en TTS
    */
-  private cleanTextForSpeech(text: string): string {
+  private cleanTextForSpeech(text: string, currency: string = 'usd'): string {
     let clean = text;
+
+    // Expandir abreviaturas monetarias según la moneda del usuario
+    const currencyInfo = CURRENCY_MAP[currency] || CURRENCY_MAP['usd'];
+    const currencyFullName = currencyInfo.fullName;
+    const currencyAbbr = currencyInfo.abbr;
+
+    // Expandir la moneda principal del usuario
+    clean = clean.replace(new RegExp(`\\b${currencyAbbr}\\b`, 'gi'), currencyFullName);
+    clean = clean.replace(new RegExp(`\\b${currencyAbbr}\\s*(\\d+)`, 'gi'), `${currencyFullName} $1`);
+    clean = clean.replace(new RegExp(`(\\d+)\\s*${currencyAbbr}\\b`, 'gi'), `$1 ${currencyFullName}`);
+    clean = clean.replace(new RegExp(`\\$\\s*(\\d+)`, 'gi'), `${currencyFullName} $1`);
+
+    // Expandir otras monedas comunes internacionales
+    clean = clean.replace(/\bUSD\b/gi, 'dólares estadounidenses');
+    clean = clean.replace(/\bUSD\s*(\d+)/gi, 'dólares estadounidenses $1');
+    clean = clean.replace(/(\d+)\s*USD\b/gi, '$1 dólares estadounidenses');
+
+    clean = clean.replace(/\bEUR\b/gi, 'euros');
+    clean = clean.replace(/\bEUR\s*(\d+)/gi, 'euros $1');
+    clean = clean.replace(/(\d+)\s*EUR\b/gi, '$1 euros');
+
+    clean = clean.replace(/\bGBP\b/gi, 'libras esterlinas');
+    clean = clean.replace(/\bMXN\b/gi, 'pesos mexicanos');
+    clean = clean.replace(/\bARS\b/gi, 'pesos argentinos');
+    clean = clean.replace(/\bCOP\b/gi, 'pesos colombianos');
+    clean = clean.replace(/\bBRL\b/gi, 'reales brasileños');
+    clean = clean.replace(/\bJPY\b/gi, 'yenes');
 
     // Quitar markdown headers
     clean = clean.replace(/#{1,6}\s*/g, '');

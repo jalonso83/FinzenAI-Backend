@@ -9,6 +9,7 @@ import { authenticateToken } from '../middlewares/auth';
 import { apiLimiter } from '../config/rateLimiter';
 import { openAiTtsService } from '../services/openAiTtsService';
 import { logger } from '../utils/logger';
+import { prisma } from '../lib/prisma';
 
 const router: RouterType = Router();
 
@@ -20,6 +21,7 @@ const router: RouterType = Router();
 router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res: Response) => {
   try {
     const { text } = req.body;
+    const userId = (req as any).userId;
 
     if (!text || text.trim().length === 0) {
       return res.status(400).json({ error: 'Texto requerido' });
@@ -33,7 +35,16 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
       return res.status(503).json({ error: 'Servicio TTS no disponible' });
     }
 
-    const result = await openAiTtsService.generateSpeech({ text });
+    // Obtener moneda del usuario
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { currency: true, country: true },
+    });
+
+    const currency = user?.currency || 'usd';
+    const country = user?.country || 'do';
+
+    const result = await openAiTtsService.generateSpeech({ text, currency, country });
 
     if (!result.success || !result.audio) {
       return res.status(500).json({ error: result.error || 'Error generando audio' });
