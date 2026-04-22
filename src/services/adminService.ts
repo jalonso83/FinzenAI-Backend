@@ -722,61 +722,47 @@ export class AdminService {
     const sortOrder = (query.sortOrder || 'desc') as 'asc' | 'desc';
 
     // Build where clause
-    const whereConditions: Prisma.UserWhereInput[] = [];
+    const where: Prisma.UserWhereInput = {};
 
     if (search) {
-      whereConditions.push({
-        OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { lastName: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-        ],
-      });
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     if (plan && ['FREE', 'PREMIUM', 'PRO'].includes(plan)) {
       if (plan === 'FREE') {
-        whereConditions.push({
-          OR: [
-            { subscription: null },
-            { subscription: { plan: 'FREE' } },
-          ],
-        });
+        // FREE = no subscription OR subscription.plan = FREE
+        where.AND = [
+          {
+            OR: [
+              { subscription: null },
+              { subscription: { plan: 'FREE' } },
+            ],
+          },
+        ];
       } else {
-        whereConditions.push({
-          subscription: { plan: plan as any },
-        });
+        where.subscription = { plan: plan as any };
       }
     }
 
     if (status && ['ACTIVE', 'TRIALING', 'CANCELED', 'EXPIRED'].includes(status)) {
-      const statusMap: Record<string, string> = {
-        ACTIVE: 'ACTIVE',
-        TRIALING: 'TRIALING',
-        CANCELED: 'CANCELED',
-        EXPIRED: 'EXPIRED',
-      };
-      whereConditions.push({
-        subscription: {
-          status: status === 'EXPIRED'
-            ? { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] as any }
-            : (statusMap[status] as any),
-        },
-      });
+      const statusValue = status === 'EXPIRED'
+        ? { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] as any }
+        : status;
+
+      if (where.AND) {
+        (where.AND as any[]).push({ subscription: { status: statusValue } });
+      } else {
+        where.subscription = { status: statusValue };
+      }
     }
 
     if (country) {
-      whereConditions.push({
-        country,
-      });
+      where.country = country;
     }
-
-    const where: Prisma.UserWhereInput =
-      whereConditions.length === 0
-        ? {}
-        : whereConditions.length === 1
-          ? whereConditions[0]
-          : { AND: whereConditions };
 
     // Build orderBy
     const allowedSorts = ['createdAt', 'name', 'email', 'country'];
