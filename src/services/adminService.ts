@@ -733,23 +733,37 @@ export class AdminService {
     }
 
     if (plan && ['FREE', 'PREMIUM', 'PRO'].includes(plan)) {
-      where.subscription = { plan: plan as any };
+      if (plan === 'FREE') {
+        where.AND = [
+          ...(where.AND || []),
+          {
+            OR: [
+              { subscription: null },
+              { subscription: { plan: 'FREE' } },
+            ],
+          },
+        ];
+      } else {
+        if (where.AND) {
+          where.AND.push({ subscription: { plan: plan as any } });
+        } else {
+          where.subscription = { plan: plan as any };
+        }
+      }
     }
 
-    if (status) {
-      const statusMap: Record<string, any> = {
-        ACTIVE: { status: 'ACTIVE' },
-        TRIALING: { status: 'TRIALING' },
-        CANCELED: { status: 'CANCELED' },
-        EXPIRED: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } },
+    if (status && ['ACTIVE', 'TRIALING', 'CANCELED', 'EXPIRED'].includes(status)) {
+      const statusConditions: Record<string, Prisma.SubscriptionWhereInput> = {
+        ACTIVE: { subscription: { status: 'ACTIVE' } },
+        TRIALING: { subscription: { status: 'TRIALING' } },
+        CANCELED: { subscription: { status: 'CANCELED' } },
+        EXPIRED: { subscription: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } } },
       };
-      if (statusMap[status]) {
-        const existing = where.subscription as any;
-        if (existing && typeof existing === 'object') {
-          // Merge status filter with existing subscription filter
-          where.subscription = { ...existing, ...statusMap[status] };
+      if (statusConditions[status]) {
+        if (where.AND) {
+          where.AND.push(statusConditions[status]);
         } else {
-          where.subscription = statusMap[status];
+          where.AND = [statusConditions[status]];
         }
       }
     }
