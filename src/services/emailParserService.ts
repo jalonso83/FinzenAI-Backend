@@ -150,7 +150,7 @@ export class EmailParserService {
       ) || categoryNames[0];
 
       const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.4-mini',
         messages: [
           {
             role: 'system',

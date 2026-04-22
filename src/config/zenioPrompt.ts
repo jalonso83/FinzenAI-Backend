@@ -325,7 +325,7 @@ Cada respuesta debe entregarse en **Markdown** y contener:
 /**
  * Configuración del modelo
  */
-export const ZENIO_MODEL = 'gpt-4o-mini';
+export const ZENIO_MODEL = 'gpt-5.4-mini';
 export const ZENIO_TEMPERATURE = 1.0;
 export const ZENIO_TOP_P = 1.0;
 

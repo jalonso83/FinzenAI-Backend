@@ -158,7 +158,7 @@ IMPORTANTE:
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.4-mini',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }]
     });

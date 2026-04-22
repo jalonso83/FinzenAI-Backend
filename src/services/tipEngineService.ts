@@ -298,7 +298,7 @@ export class TipEngineService {
       const prompt = this.buildPrompt(context);
 
       const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.4-mini',
         messages: [
           {
             role: 'system',
