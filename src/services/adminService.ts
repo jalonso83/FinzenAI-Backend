@@ -755,14 +755,14 @@ export class AdminService {
 
     if (status && ['ACTIVE', 'TRIALING', 'CANCELED', 'EXPIRED'].includes(status)) {
       if (status === 'EXPIRED') {
-        const filter = { subscription: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } } };
+        const filter: any = { subscription: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } } };
         if (where.AND) {
           (where.AND as any[]).push(filter);
         } else {
           where.AND = [filter];
         }
       } else {
-        const filter = { subscription: { status: status as any } };
+        const filter: any = { subscription: { status: status as any } };
         if (where.AND) {
           (where.AND as any[]).push(filter);
         } else {
