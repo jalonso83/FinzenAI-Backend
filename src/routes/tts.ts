@@ -21,7 +21,7 @@ const router: RouterType = Router();
 router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res: Response) => {
   try {
     const { text } = req.body;
-    const userId = (req as any).userId;
+    const userId = req.user?.id;
 
     if (!text || text.trim().length === 0) {
       return res.status(400).json({ error: 'Texto requerido' });
