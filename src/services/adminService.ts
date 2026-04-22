@@ -533,6 +533,8 @@ export class AdminService {
 
     // Calculate MRR from active subscriptions, normalized for billing period
     let mrrCurrent = 0;
+    const currentMrrObj: Record<string, number> = { PREMIUM: 0, PRO: 0 };
+
     currentMrrByPlan.forEach(sub => {
       const planConfig = PLANS[sub.plan as keyof typeof PLANS];
       if (!planConfig) return;
@@ -552,6 +554,9 @@ export class AdminService {
         : planConfig.price.monthly;
 
       mrrCurrent += monthlyPrice;
+      if (sub.plan in currentMrrObj) {
+        currentMrrObj[sub.plan] += monthlyPrice;
+      }
     });
 
     // Calculate previous MRR similarly
@@ -749,14 +754,15 @@ export class AdminService {
     }
 
     if (status && ['ACTIVE', 'TRIALING', 'CANCELED', 'EXPIRED'].includes(status)) {
-      const statusValue = status === 'EXPIRED'
-        ? { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] as any }
-        : status;
+      const subscriptionFilter: Prisma.SubscriptionWhereInput =
+        status === 'EXPIRED'
+          ? { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } }
+          : { status: status as any };
 
       if (where.AND) {
-        (where.AND as any[]).push({ subscription: { status: statusValue } });
+        (where.AND as any[]).push({ subscription: subscriptionFilter });
       } else {
-        where.subscription = { status: statusValue };
+        where.subscription = subscriptionFilter;
       }
     }
 
