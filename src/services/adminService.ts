@@ -722,55 +722,61 @@ export class AdminService {
     const sortOrder = (query.sortOrder || 'desc') as 'asc' | 'desc';
 
     // Build where clause
-    const where: Prisma.UserWhereInput = {};
+    const whereConditions: Prisma.UserWhereInput[] = [];
 
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-      ];
+      whereConditions.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { lastName: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+        ],
+      });
     }
 
     if (plan && ['FREE', 'PREMIUM', 'PRO'].includes(plan)) {
       if (plan === 'FREE') {
-        where.AND = [
-          ...(where.AND || []),
-          {
-            OR: [
-              { subscription: null },
-              { subscription: { plan: 'FREE' } },
-            ],
-          },
-        ];
+        whereConditions.push({
+          OR: [
+            { subscription: null },
+            { subscription: { plan: 'FREE' } },
+          ],
+        });
       } else {
-        if (where.AND) {
-          where.AND.push({ subscription: { plan: plan as any } });
-        } else {
-          where.subscription = { plan: plan as any };
-        }
+        whereConditions.push({
+          subscription: { plan: plan as any },
+        });
       }
     }
 
     if (status && ['ACTIVE', 'TRIALING', 'CANCELED', 'EXPIRED'].includes(status)) {
-      const statusConditions: Record<string, Prisma.SubscriptionWhereInput> = {
-        ACTIVE: { subscription: { status: 'ACTIVE' } },
-        TRIALING: { subscription: { status: 'TRIALING' } },
-        CANCELED: { subscription: { status: 'CANCELED' } },
-        EXPIRED: { subscription: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } } },
+      const statusMap: Record<string, string> = {
+        ACTIVE: 'ACTIVE',
+        TRIALING: 'TRIALING',
+        CANCELED: 'CANCELED',
+        EXPIRED: 'EXPIRED',
       };
-      if (statusConditions[status]) {
-        if (where.AND) {
-          where.AND.push(statusConditions[status]);
-        } else {
-          where.AND = [statusConditions[status]];
-        }
-      }
+      whereConditions.push({
+        subscription: {
+          status: status === 'EXPIRED'
+            ? { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] as any }
+            : (statusMap[status] as any),
+        },
+      });
     }
 
     if (country) {
-      where.country = country;
+      whereConditions.push({
+        country,
+      });
     }
+
+    const where: Prisma.UserWhereInput =
+      whereConditions.length === 0
+        ? {}
+        : whereConditions.length === 1
+          ? whereConditions[0]
+          : { AND: whereConditions };
 
     // Build orderBy
     const allowedSorts = ['createdAt', 'name', 'email', 'country'];
