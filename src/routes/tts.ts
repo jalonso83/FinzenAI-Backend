@@ -23,6 +23,10 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
     const { text } = req.body;
     const userId = req.user?.id;
 
+    if (!userId) {
+      return res.status(401).json({ error: 'No authenticated user' });
+    }
+
     if (!text || text.trim().length === 0) {
       return res.status(400).json({ error: 'Texto requerido' });
     }
