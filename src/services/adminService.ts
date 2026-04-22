@@ -754,15 +754,20 @@ export class AdminService {
     }
 
     if (status && ['ACTIVE', 'TRIALING', 'CANCELED', 'EXPIRED'].includes(status)) {
-      const subscriptionFilter: Prisma.SubscriptionWhereInput =
-        status === 'EXPIRED'
-          ? { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } }
-          : { status: status as any };
-
-      if (where.AND) {
-        (where.AND as any[]).push({ subscription: subscriptionFilter });
+      if (status === 'EXPIRED') {
+        const filter = { subscription: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } } };
+        if (where.AND) {
+          (where.AND as any[]).push(filter);
+        } else {
+          where.AND = [filter];
+        }
       } else {
-        where.subscription = subscriptionFilter;
+        const filter = { subscription: { status: status as any } };
+        if (where.AND) {
+          (where.AND as any[]).push(filter);
+        } else {
+          where.subscription = { status: status as any };
+        }
       }
     }
 
