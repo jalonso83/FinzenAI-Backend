@@ -12,9 +12,7 @@ const OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
 interface TTSOptions {
   text: string;
   voice?: string;
-  instructions?: string;
   currency?: string;
-  country?: string;
 }
 
 // Mapeo de monedas a sus abreviaturas y nombres en español
@@ -76,8 +74,6 @@ class OpenAiTtsService {
       text,
       voice = 'fable',
       currency = 'usd',
-      country = 'do',
-      instructions = 'Habla como un amigo cercano, tono cálido y motivador. Eres un copiloto financiero llamado Zenio. Pronuncia números y cantidades de dinero claramente.',
     } = options;
 
     if (!text || text.trim().length === 0) {
@@ -100,10 +96,9 @@ class OpenAiTtsService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini-tts',
+          model: 'tts-1',
           voice,
           input: cleanText,
-          instructions,
         }),
       });
 

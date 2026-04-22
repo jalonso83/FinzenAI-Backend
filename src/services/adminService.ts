@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { PLAN_PRICES } from '../config/adminConfig';
+import { getPlanFromPriceId, PLANS } from '../config/stripe';
 import { logger } from '../utils/logger';
 
 interface UsersListQuery {
@@ -413,6 +414,8 @@ export class AdminService {
       previousMrrByPlan,
       mrrTrendData,
       currentActiveSubs,
+      stripeRevenueTotal,
+      revenuecatRevenueTotal,
     ] = await Promise.all([
       // Subscriptions by status
       prisma.subscription.groupBy({
@@ -466,29 +469,19 @@ export class AdminService {
         _sum: { amount: true },
       }),
 
-      // Current MRR by plan (REAL dinero de pagos)
-      prisma.$queryRawUnsafe<{ plan: string; total: string }[]>(`
-        SELECT s.plan, COALESCE(SUM(p.amount), 0)::text as total
-        FROM subscriptions s
-        LEFT JOIN payments p ON s."userId" = p."userId"
-          AND p.status = 'SUCCEEDED'
-          AND p."createdAt" >= $1
-          AND p."createdAt" <= $2
-        WHERE s.status = 'ACTIVE'
-        GROUP BY s.plan
-      `, from, to),
+      // Current MRR by plan (basado en suscripciones activas y su tipo de facturación)
+      prisma.subscription.findMany({
+        where: { status: 'ACTIVE', plan: { not: 'FREE' } },
+        select: { plan: true, stripePriceId: true },
+      }),
 
-      // Previous MRR by plan (REAL dinero de pagos)
-      prisma.$queryRawUnsafe<{ plan: string; total: string }[]>(`
-        SELECT s.plan, COALESCE(SUM(p.amount), 0)::text as total
+      // Previous MRR by plan (basado en suscripciones activas al inicio del período anterior)
+      prisma.$queryRawUnsafe<{ plan: string; stripePriceId: string | null }[]>(`
+        SELECT DISTINCT s.plan, s."stripePriceId"
         FROM subscriptions s
-        LEFT JOIN payments p ON s."userId" = p."userId"
-          AND p.status = 'SUCCEEDED'
-          AND p."createdAt" >= $1
-          AND p."createdAt" <= $2
-        WHERE s.status = 'ACTIVE'
-        GROUP BY s.plan
-      `, prevFrom, prevTo),
+        WHERE s.status = 'ACTIVE' AND s.plan != 'FREE'
+          AND s."createdAt" < $1
+      `, prevTo),
 
       // MRR trend by month (REAL dinero de pagos)
       prisma.$queryRawUnsafe<{ month: string; premium: string; pro: string }[]>(`
@@ -516,20 +509,71 @@ export class AdminService {
       prisma.subscription.count({
         where: { status: 'ACTIVE', plan: { not: 'FREE' } },
       }),
+
+      // Revenue from Stripe (has stripePaymentIntentId)
+      prisma.payment.aggregate({
+        where: {
+          status: 'SUCCEEDED',
+          createdAt: { gte: from, lte: to },
+          stripePaymentIntentId: { not: null },
+        },
+        _sum: { amount: true },
+      }),
+
+      // Revenue from RevenueCat (no stripePaymentIntentId)
+      prisma.payment.aggregate({
+        where: {
+          status: 'SUCCEEDED',
+          createdAt: { gte: from, lte: to },
+          stripePaymentIntentId: null,
+        },
+        _sum: { amount: true },
+      }),
     ]);
 
-    // Calculate MRR from REAL payment data
-    const currentMrrObj: Record<string, number> = {};
-    currentMrrByPlan.forEach(p => {
-      currentMrrObj[p.plan] = Number(p.total) || 0;
-    });
-    const mrrCurrent = (currentMrrObj['PREMIUM'] || 0) + (currentMrrObj['PRO'] || 0);
+    // Calculate MRR from active subscriptions, normalized for billing period
+    let mrrCurrent = 0;
+    currentMrrByPlan.forEach(sub => {
+      const planConfig = PLANS[sub.plan as keyof typeof PLANS];
+      if (!planConfig) return;
 
-    const previousMrrObj: Record<string, number> = {};
-    previousMrrByPlan.forEach(p => {
-      previousMrrObj[p.plan] = Number(p.total) || 0;
+      // Determine billing period from price ID
+      let billingPeriod: 'monthly' | 'yearly' = 'monthly';
+      if (sub.stripePriceId) {
+        const priceInfo = getPlanFromPriceId(sub.stripePriceId);
+        if (priceInfo?.billingPeriod === 'yearly') {
+          billingPeriod = 'yearly';
+        }
+      }
+
+      // Calculate monthly contribution (yearly / 12)
+      const monthlyPrice = billingPeriod === 'yearly'
+        ? planConfig.price.yearly / 12
+        : planConfig.price.monthly;
+
+      mrrCurrent += monthlyPrice;
     });
-    const mrrPrevious = (previousMrrObj['PREMIUM'] || 0) + (previousMrrObj['PRO'] || 0);
+
+    // Calculate previous MRR similarly
+    let mrrPrevious = 0;
+    previousMrrByPlan.forEach(sub => {
+      const planConfig = PLANS[sub.plan as keyof typeof PLANS];
+      if (!planConfig) return;
+
+      let billingPeriod: 'monthly' | 'yearly' = 'monthly';
+      if (sub.stripePriceId) {
+        const priceInfo = getPlanFromPriceId(sub.stripePriceId);
+        if (priceInfo?.billingPeriod === 'yearly') {
+          billingPeriod = 'yearly';
+        }
+      }
+
+      const monthlyPrice = billingPeriod === 'yearly'
+        ? planConfig.price.yearly / 12
+        : planConfig.price.monthly;
+
+      mrrPrevious += monthlyPrice;
+    });
 
     // ARPU: dinero real / número de suscripciones pagadas
     const arpu = currentActiveSubs > 0 ? Math.round((mrrCurrent / currentActiveSubs) * 100) / 100 : 0;
@@ -568,6 +612,10 @@ export class AdminService {
         succeeded: paymentsSucceeded,
         failed: paymentsFailed,
         totalAmount: totalPaymentAmount._sum.amount || 0,
+      },
+      revenueByPlatform: {
+        stripe: Math.round((stripeRevenueTotal._sum.amount || 0) * 100) / 100,
+        revenuecat: Math.round((revenuecatRevenueTotal._sum.amount || 0) * 100) / 100,
       },
       period: { from, to },
     };
@@ -685,28 +733,23 @@ export class AdminService {
     }
 
     if (plan && ['FREE', 'PREMIUM', 'PRO'].includes(plan)) {
-      if (plan === 'FREE') {
-        where.subscription = { is: null };
-      } else {
-        where.subscription = { plan: plan as any };
-      }
+      where.subscription = { plan: plan as any };
     }
 
     if (status) {
-      const statusMap: Record<string, Prisma.UserWhereInput> = {
-        ACTIVE: { subscription: { status: 'ACTIVE', plan: { not: 'FREE' } } },
-        TRIALING: { subscription: { status: 'TRIALING' } },
-        CANCELED: { subscription: { status: 'CANCELED' } },
-        EXPIRED: { subscription: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } } },
+      const statusMap: Record<string, any> = {
+        ACTIVE: { status: 'ACTIVE' },
+        TRIALING: { status: 'TRIALING' },
+        CANCELED: { status: 'CANCELED' },
+        EXPIRED: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } },
       };
       if (statusMap[status]) {
-        // Merge with existing subscription filter if plan is also set
-        const existing = where.subscription as Prisma.SubscriptionNullableRelationFilter | undefined;
-        const statusFilter = statusMap[status].subscription as Prisma.SubscriptionNullableRelationFilter;
+        const existing = where.subscription as any;
         if (existing && typeof existing === 'object') {
-          where.subscription = { ...existing, ...statusFilter };
+          // Merge status filter with existing subscription filter
+          where.subscription = { ...existing, ...statusMap[status] };
         } else {
-          Object.assign(where, statusMap[status]);
+          where.subscription = statusMap[status];
         }
       }
     }
