@@ -1,5 +1,5 @@
 /**
- * Ruta de Text-to-Speech con OpenAI (gpt-4o-mini-tts, voz fable)
+ * Ruta de Text-to-Speech con OpenAI (tts-1, voz fable)
  * POST /api/tts/generate — genera audio a partir de texto
  */
 
@@ -21,11 +21,7 @@ const router: RouterType = Router();
 router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res: Response) => {
   try {
     const { text } = req.body;
-    const userId = req.user?.id;
-
-    if (!userId) {
-      return res.status(401).json({ error: 'No authenticated user' });
-    }
+    const userEmail = req.user?.email;
 
     if (!text || text.trim().length === 0) {
       return res.status(400).json({ error: 'Texto requerido' });
@@ -41,12 +37,11 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
 
     // Obtener moneda del usuario
     const user = await prisma.user.findUnique({
-      where: { id: userId },
+      where: { email: userEmail },
       select: { currency: true },
     });
 
     const currency = user?.currency || 'usd';
-
     const result = await openAiTtsService.generateSpeech({ text, currency });
 
     if (!result.success || !result.audio) {

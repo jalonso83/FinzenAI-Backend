@@ -96,7 +96,7 @@ class OpenAiTtsService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'tts-1',
+          model: 'gpt-4o-mini-tts',
           voice,
           input: cleanText,
         }),
