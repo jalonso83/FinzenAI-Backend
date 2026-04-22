@@ -38,13 +38,12 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
     // Obtener moneda del usuario
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { currency: true, country: true },
+      select: { currency: true },
     });
 
     const currency = user?.currency || 'usd';
-    const country = user?.country || 'do';
 
-    const result = await openAiTtsService.generateSpeech({ text, currency, country });
+    const result = await openAiTtsService.generateSpeech({ text, currency });
 
     if (!result.success || !result.audio) {
       return res.status(500).json({ error: result.error || 'Error generando audio' });
