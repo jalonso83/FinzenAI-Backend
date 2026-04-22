@@ -142,11 +142,17 @@ class OpenAiTtsService {
     const currencyFullName = currencyInfo.fullName;
     const currencyAbbr = currencyInfo.abbr;
 
-    // Expandir la moneda principal del usuario
-    clean = clean.replace(new RegExp(`\\b${currencyAbbr}\\b`, 'gi'), currencyFullName);
-    clean = clean.replace(new RegExp(`\\b${currencyAbbr}\\s*(\\d+)`, 'gi'), `${currencyFullName} $1`);
+    // Expandir la moneda principal del usuario (orden importa: específico primero)
+    // Formato: RD$2000 o RD$ 2000
+    clean = clean.replace(new RegExp(`${currencyAbbr}\\$\\s*(\\d+)`, 'gi'), `${currencyFullName} $1`);
+    // Formato: RD 2000 o RD2000
+    clean = clean.replace(new RegExp(`${currencyAbbr}\\s*(\\d+)`, 'gi'), `${currencyFullName} $1`);
+    // Formato: 2000 RD o 2000RD
     clean = clean.replace(new RegExp(`(\\d+)\\s*${currencyAbbr}\\b`, 'gi'), `$1 ${currencyFullName}`);
+    // Solo $ (sin moneda): $2000
     clean = clean.replace(new RegExp(`\\$\\s*(\\d+)`, 'gi'), `${currencyFullName} $1`);
+    // RD solo (sin número)
+    clean = clean.replace(new RegExp(`\\b${currencyAbbr}\\b`, 'gi'), currencyFullName);
 
     // Expandir otras monedas comunes internacionales
     clean = clean.replace(/\bUSD\b/gi, 'dólares estadounidenses');
