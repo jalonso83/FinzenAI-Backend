@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon src/app.ts",
     "build": "prisma generate && tsc",
+    "postinstall": "prisma db push --skip-generate --accept-data-loss || true",
     "start": "node dist/app.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",

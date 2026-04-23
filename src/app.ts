@@ -45,6 +45,7 @@ import oauthTestRoutes from './routes/oauthTest';
 import revenueCatRoutes from './routes/revenueCat';
 import adminRoutes from './routes/admin';
 import exchangeRateRoutes from './routes/exchangeRates';
+import openaiCostsRoutes from './routes/openaiCosts';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
@@ -167,6 +168,7 @@ app.use('/api/reminders', reminderRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/weekly-reports', weeklyReportRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/openai-costs', openaiCostsRoutes);
 app.use('/api/exchange-rates', exchangeRateRoutes);
 
 // Ruta de salud
