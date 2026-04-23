@@ -5,6 +5,8 @@ import { subscriptionService } from './subscriptionService';
 import crypto from 'crypto';
 
 import { logger } from '../utils/logger';
+import { OpenAiUsageService } from './openAiUsageService';
+import { calculateOpenAICost } from '../config/openaiPricing';
 
 // Configuración
 const TIP_COOLDOWN_HOURS = 72; // No enviar otro tip si recibió uno en las últimas 72 horas
@@ -322,6 +324,21 @@ REGLAS:
       });
 
       const content = response.choices[0]?.message?.content?.trim();
+
+      // Log OpenAI usage
+      const cost = calculateOpenAICost(
+        'gpt-5.4-mini',
+        response.usage?.prompt_tokens,
+        response.usage?.completion_tokens
+      );
+      OpenAiUsageService.logUsageAsync({
+        userId: context.userId,
+        feature: 'tip_engine',
+        model: 'gpt-5.4-mini',
+        inputTokens: response.usage?.prompt_tokens,
+        outputTokens: response.usage?.completion_tokens,
+        status: 'success',
+      });
 
       if (!content) {
         logger.error('[TipEngine] Respuesta vacía de OpenAI');

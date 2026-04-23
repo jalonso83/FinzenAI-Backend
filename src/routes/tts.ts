@@ -35,14 +35,14 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
       return res.status(503).json({ error: 'Servicio TTS no disponible' });
     }
 
-    // Obtener moneda del usuario
+    // Obtener moneda y userId del usuario
     const user = await prisma.user.findUnique({
       where: { email: userEmail },
-      select: { currency: true },
+      select: { id: true, currency: true },
     });
 
     const currency = user?.currency || 'usd';
-    const result = await openAiTtsService.generateSpeech({ text, currency });
+    const result = await openAiTtsService.generateSpeech({ text, currency, userId: user?.id });
 
     if (!result.success || !result.audio) {
       return res.status(500).json({ error: result.error || 'Error generando audio' });

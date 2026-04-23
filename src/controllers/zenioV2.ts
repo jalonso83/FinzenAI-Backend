@@ -16,6 +16,8 @@ import { logger } from '../utils/logger';
 import { ZENIO_SYSTEM_PROMPT, ZENIO_MODEL, ZENIO_TEMPERATURE, ZENIO_VECTOR_STORE_ID } from '../config/zenioPrompt';
 import { ZENIO_FUNCTION_TOOLS, ZENIO_ONBOARDING_V21_TOOLS } from '../config/zenioTools';
 import { ZENIO_ONBOARDING_V21_PROMPT } from '../config/zenioOnboardingV21';
+import { OpenAiUsageService } from '../services/openAiUsageService';
+import { calculateOpenAICost } from '../config/openaiPricing';
 
 // Importar lógica de negocio reutilizable del controlador original
 import { MappingSource } from '@prisma/client';
@@ -1145,6 +1147,24 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     }
 
     lastKnownResponseId = response.id;
+
+    // Log OpenAI usage - Responses API
+    if (response.usage) {
+      const cost = calculateOpenAICost(
+        ZENIO_MODEL,
+        response.usage.input_tokens,
+        response.usage.output_tokens
+      );
+      OpenAiUsageService.logUsageAsync({
+        userId,
+        feature: 'zenio_v2',
+        model: ZENIO_MODEL,
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        conversationId: response.id,
+        status: 'success',
+      });
+    }
 
     // LOG: qué devolvió el modelo
     logger.error(`[ZenioV2-DEBUG] Response ID: ${response.id}`);

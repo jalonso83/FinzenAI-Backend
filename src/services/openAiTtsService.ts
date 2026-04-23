@@ -6,6 +6,8 @@
 
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
+import { OpenAiUsageService } from './openAiUsageService';
+import { calculateOpenAICost } from '../config/openaiPricing';
 
 const OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
 
@@ -13,6 +15,7 @@ interface TTSOptions {
   text: string;
   voice?: string;
   currency?: string;
+  userId?: string; // Para logging de uso
 }
 
 // Mapeo de monedas a sus abreviaturas y nombres en español
@@ -74,6 +77,7 @@ class OpenAiTtsService {
       text,
       voice = 'fable',
       currency = 'usd',
+      userId,
     } = options;
 
     if (!text || text.trim().length === 0) {
@@ -115,6 +119,18 @@ class OpenAiTtsService {
       const audio = Buffer.from(arrayBuffer);
 
       logger.log(`[OpenAI TTS] Audio generado: ${audio.length} bytes`);
+
+      // Log OpenAI usage - TTS se cobra por caracteres
+      if (userId) {
+        const cost = calculateOpenAICost('gpt-4o-mini-tts', undefined, undefined, undefined, cleanText.length);
+        OpenAiUsageService.logUsageAsync({
+          userId,
+          feature: 'tts',
+          model: 'gpt-4o-mini-tts',
+          characters: cleanText.length,
+          status: 'success',
+        });
+      }
 
       return {
         success: true,

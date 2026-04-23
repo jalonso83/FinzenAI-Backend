@@ -3,6 +3,8 @@ import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { merchantMappingService } from './merchantMappingService';
 import { logger } from '../utils/logger';
+import { OpenAiUsageService } from './openAiUsageService';
+import { calculateOpenAICost } from '../config/openaiPricing';
 
 const openai = new OpenAI({
   apiKey: ENV.OPENAI_API_KEY
@@ -208,6 +210,23 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
       });
 
       const content = response.choices[0]?.message?.content;
+
+      // Log OpenAI usage
+      if (userId) {
+        const cost = calculateOpenAICost(
+          'gpt-5.4-mini',
+          response.usage?.prompt_tokens,
+          response.usage?.completion_tokens
+        );
+        OpenAiUsageService.logUsageAsync({
+          userId,
+          feature: 'email_parser',
+          model: 'gpt-5.4-mini',
+          inputTokens: response.usage?.prompt_tokens,
+          outputTokens: response.usage?.completion_tokens,
+          status: 'success',
+        });
+      }
 
       if (!content) {
         return { success: false, error: 'No response from AI' };

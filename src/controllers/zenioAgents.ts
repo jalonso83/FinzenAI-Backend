@@ -15,6 +15,8 @@ import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
 import { ZENIO_MODEL, ZENIO_TEMPERATURE } from '../config/zenioPrompt';
+import { OpenAiUsageService } from '../services/openAiUsageService';
+import { calculateOpenAICost } from '../config/openaiPricing';
 import {
   classifyIntent,
   ZENIO_ASISTENTE_PROMPT,
@@ -760,6 +762,24 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
     });
 
     let lastKnownResponseId = response.id;
+
+    // Log OpenAI usage - Responses API (Agents)
+    if (response.usage) {
+      const cost = calculateOpenAICost(
+        ZENIO_MODEL,
+        response.usage.input_tokens,
+        response.usage.output_tokens
+      );
+      OpenAiUsageService.logUsageAsync({
+        userId,
+        feature: 'zenio_agents',
+        model: ZENIO_MODEL,
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        conversationId: response.id,
+        status: 'success',
+      });
+    }
 
     // 10. Loop de tool calls (solo para Asistente)
     let executedActions: any[] = [];

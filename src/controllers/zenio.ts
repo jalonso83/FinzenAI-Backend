@@ -9,6 +9,8 @@ import { merchantMappingService } from '../services/merchantMappingService';
 import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
 import { logger } from '../utils/logger';
+import { OpenAiUsageService } from '../services/openAiUsageService';
+import { calculateOpenAICost } from '../config/openaiPricing';
 
 const API_KEY = ENV.OPENAI_API_KEY;
 const ASSISTANT_ID = ENV.OPENAI_ASSISTANT_ID;
@@ -3236,6 +3238,20 @@ export const transcribeAudio = async (req: Request, res: Response) => {
     fs.unlinkSync(req.file.path);
 
     const transcription = response.data.text || '';
+
+    // Log OpenAI usage - Whisper se cobra por duración (aproximadamente basado en archivo)
+    const userId = req.user?.id;
+    if (userId && req.file) {
+      // Estimar duración en minutos basado en tamaño del archivo (aproximación)
+      const estimatedDurationMinutes = Math.ceil(req.file.size / 16000); // ~16KB por segundo
+      OpenAiUsageService.logUsageAsync({
+        userId,
+        feature: 'zenio_transcription',
+        model: 'whisper-1',
+        durationMinutes: estimatedDurationMinutes,
+        status: 'success',
+      });
+    }
 
     return res.json({
       transcription,

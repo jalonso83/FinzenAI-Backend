@@ -1,6 +1,8 @@
 import { prisma } from '../lib/prisma';
 import { openai } from '../openaiClient';
 import { logger } from '../utils/logger';
+import { OpenAiUsageService } from './openAiUsageService';
+import { calculateOpenAICost } from '../config/openaiPricing';
 
 // Configuración por defecto
 const DEFAULT_CACHE_DAYS = 90; // 3 meses
@@ -167,6 +169,21 @@ IMPORTANTE:
     if (!content) {
       throw new Error('Respuesta vacía de AI');
     }
+
+    // Log OpenAI usage
+    const cost = calculateOpenAICost(
+      'gpt-5.4-mini',
+      response.usage?.prompt_tokens,
+      response.usage?.completion_tokens
+    );
+    OpenAiUsageService.logUsageAsync({
+      userId: 'system', // Sistema, no usuario específico
+      feature: 'reference_price_service',
+      model: 'gpt-5.4-mini',
+      inputTokens: response.usage?.prompt_tokens,
+      outputTokens: response.usage?.completion_tokens,
+      status: 'success',
+    });
 
     // Extraer JSON de la respuesta
     const jsonMatch = content.match(/\{[\s\S]*\}/);

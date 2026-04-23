@@ -4,6 +4,8 @@ import { subscriptionService } from './subscriptionService';
 import { logger } from '../utils/logger';
 import { Decimal } from '@prisma/client/runtime/library';
 import { DEFAULT_ANT_EXPENSE_CONFIG } from '../types/antExpense';
+import { OpenAiUsageService } from './openAiUsageService';
+import { calculateOpenAICost } from '../config/openaiPricing';
 
 // Configuración
 const MAX_REPORTS_PER_USER = 12; // Máximo 12 quincenas de historial (6 meses)
@@ -670,6 +672,21 @@ REGLAS:
       });
 
       const content = response.choices[0]?.message?.content?.trim();
+
+      // Log OpenAI usage
+      const cost = calculateOpenAICost(
+        'gpt-5.4-mini',
+        response.usage?.prompt_tokens,
+        response.usage?.completion_tokens
+      );
+      OpenAiUsageService.logUsageAsync({
+        userId: data.userId,
+        feature: 'weekly_report',
+        model: 'gpt-5.4-mini',
+        inputTokens: response.usage?.prompt_tokens,
+        outputTokens: response.usage?.completion_tokens,
+        status: 'success',
+      });
 
       if (!content) {
         throw new Error('Respuesta vacía de OpenAI');

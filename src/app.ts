@@ -14,6 +14,7 @@ import { ReferralScheduler } from './services/referralScheduler';
 import { BudgetReminderScheduler } from './services/budgetReminderScheduler';
 import { WeeklyReportScheduler } from './services/weeklyReportScheduler';
 import { ExchangeRateScheduler } from './services/exchangeRateScheduler';
+import startOpenAiUsageProcessor from './schedulers/openaiUsageProcessor';
 import { validateReferralConfig } from './config/referralConfig';
 import { initPrices } from './controllers/investment';
 
@@ -242,6 +243,9 @@ async function startServer() {
 
     // Iniciar scheduler de tasas de cambio (medianoche)
     ExchangeRateScheduler.startScheduler();
+
+    // Iniciar scheduler de procesamiento de uso de OpenAI (cada 5 minutos)
+    startOpenAiUsageProcessor();
 
     // Inicializar precios de referencia para calculadoras
     await initPrices();
