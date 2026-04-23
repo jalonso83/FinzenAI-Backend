@@ -142,7 +142,7 @@ export class WeeklyReportService {
       const reportData = await this.gatherWeeklyData(userId, weekStart, weekEnd, user.currency, antConfig);
 
       // 6. Generar análisis con IA
-      const aiResult = await this.generateAIAnalysis(reportData, user.name, user.currency);
+      const aiResult = await this.generateAIAnalysis(reportData, user.name, user.currency, userId);
 
       // 7. Crear el reporte en la base de datos
       const report = await prisma.weeklyReport.create({
@@ -637,7 +637,8 @@ export class WeeklyReportService {
   private static async generateAIAnalysis(
     data: BiweeklyReportData,
     userName: string,
-    currency: string
+    currency: string,
+    userId: string
   ): Promise<{ analysis: string; recommendations: string[] }> {
     try {
       const prompt = this.buildAIPrompt(data, userName, currency);
@@ -680,7 +681,7 @@ REGLAS:
         response.usage?.completion_tokens
       );
       OpenAiUsageService.logUsageAsync({
-        userId: data.userId,
+        userId,
         feature: 'weekly_report',
         model: 'gpt-5.4-mini',
         inputTokens: response.usage?.prompt_tokens,

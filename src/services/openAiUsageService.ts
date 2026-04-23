@@ -115,25 +115,6 @@ export class OpenAiUsageService {
           totalDuration: { increment: params.durationMinutes || 0 },
           totalCallCount: { increment: 1 },
           totalCost: { increment: new Decimal(params.cost) },
-          // Mergear JSON de breakdown
-          costByModel: {
-            set: (existing: any) => {
-              const current = existing || {};
-              return {
-                ...current,
-                [model]: (current[model] || 0) + params.cost,
-              };
-            },
-          },
-          costByFeature: {
-            set: (existing: any) => {
-              const current = existing || {};
-              return {
-                ...current,
-                [feature]: (current[feature] || 0) + params.cost,
-              };
-            },
-          },
         },
         create: {
           userId,

@@ -3,14 +3,14 @@
  * GET /api/admin/openai-costs - Dashboard metrics
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, type Router as ExpressRouter } from 'express';
 import { prisma } from '../lib/prisma';
 import { authenticateToken } from '../middlewares/auth';
 import { logger } from '../utils/logger';
 import { OpenAiUsageService } from '../services/openAiUsageService';
 import Decimal from 'decimal.js';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 /**
  * GET /api/admin/openai-costs
