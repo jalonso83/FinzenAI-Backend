@@ -17,18 +17,30 @@ export interface LogUsageParams {
 }
 
 export class OpenAiUsageService {
+  // Buffer en memoria para acumular logs
+  private static accumulatedLogs: (LogUsageParams & { cost: number })[] = [];
+
   /**
    * Log ASÍNCRONO e INMEDIATO (fire & forget - NO espera BD)
-   * Se acumula en memoria/logs y se procesa cada 5 minutos
+   * Se acumula en memoria y se procesa cada 5 minutos
    */
   static logUsageAsync(params: LogUsageParams): void {
-    // Log el evento para que sea procesado después
+    const cost = calculateOpenAICost(
+      params.model,
+      params.inputTokens,
+      params.outputTokens,
+      params.durationMinutes,
+      params.characters
+    );
+
+    // Acumular en buffer de memoria
+    this.accumulatedLogs.push({
+      ...params,
+      cost,
+    });
+
     logger.log(
-      `[OpenAI Usage] ${params.feature}/${params.model} | User: ${params.userId} | Status: ${params.status}`,
-      {
-        category: 'openai_usage',
-        ...params,
-      }
+      `[OpenAI Usage] ${params.feature}/${params.model} | User: ${params.userId} | Cost: $${cost.toFixed(6)} | Status: ${params.status}`
     );
   }
 
@@ -38,15 +50,27 @@ export class OpenAiUsageService {
    */
   static async processAccumulatedUsage(): Promise<void> {
     try {
-      // Por ahora, simplificamos: procesamos eventos desde el log
-      // En producción, tendrías un sistema más robusto (Redis, queue, etc)
+      if (this.accumulatedLogs.length === 0) {
+        logger.log('[OpenAI Usage] Sin logs acumulados para procesar');
+        return;
+      }
 
-      logger.log('[OpenAI Usage] Iniciando procesamiento de logs acumulados');
+      logger.log(`[OpenAI Usage] Procesando ${this.accumulatedLogs.length} logs acumulados`);
 
-      // Aquí irían los logs acumulados
-      // Por ahora lo dejamos como estructura para expandir
+      // Procesar todos los logs acumulados
+      const logsToProcess = [...this.accumulatedLogs];
+      this.accumulatedLogs = []; // Limpiar buffer
 
-      logger.log('[OpenAI Usage] ✅ Procesamiento completado exitosamente');
+      for (const log of logsToProcess) {
+        try {
+          await this.recordUsage(log);
+        } catch (error) {
+          logger.error(`[OpenAI Usage] Error procesando log individual:`, error);
+          // No re-throw para que continúe con los siguientes logs
+        }
+      }
+
+      logger.log(`[OpenAI Usage] ✅ Procesamiento completado: ${logsToProcess.length} eventos registrados`);
     } catch (error) {
       logger.error('[OpenAI Usage] Error procesando uso acumulado:', error);
       throw error;
