@@ -1,13 +1,21 @@
 /**
  * OpenAI Pricing Configuration
  * Precios actualizados a abril 2026
- * Referencia: https://openai.com/pricing
+ * Referencia: https://openai.com/pricing (2026-04-23)
  */
 
 export const OPENAI_PRICING = {
+  'gpt-5.4': {
+    inputTokens: 2.5 / 1_000_000,
+    outputTokens: 15 / 1_000_000,
+  },
   'gpt-5.4-mini': {
-    inputTokens: 0.75 / 1_000_000, // $0.75 por 1M tokens
-    outputTokens: 0.075 / 1_000_000, // $0.075 por 1M tokens
+    inputTokens: 0.75 / 1_000_000,
+    outputTokens: 4.5 / 1_000_000,
+  },
+  'gpt-5.4-nano': {
+    inputTokens: 0.2 / 1_000_000,
+    outputTokens: 1.25 / 1_000_000,
   },
   'gpt-4o-mini': {
     inputTokens: 0.15 / 1_000_000,
@@ -17,9 +25,9 @@ export const OPENAI_PRICING = {
     inputTokens: 2.5 / 1_000_000,
     outputTokens: 10 / 1_000_000,
   },
-  'whisper-1': {
-    // $0.02 por minuto de audio
-    perMinute: 0.02,
+  'gpt-4o-mini-transcribe': {
+    // $0.003 por minuto de audio (aproximadamente)
+    perMinute: 0.003,
   },
   'gpt-4o-mini-tts': {
     // $0.015 por 1000 caracteres
