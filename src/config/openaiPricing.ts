@@ -48,19 +48,22 @@ export function calculateOpenAICost(
 
   // Chat completions (gpt-5.4-mini, gpt-4o-mini, gpt-4o)
   if ('inputTokens' in pricing && 'outputTokens' in pricing) {
-    const inputCost = (inputTokens || 0) * pricing.inputTokens;
-    const outputCost = (outputTokens || 0) * pricing.outputTokens;
+    const p = pricing as { inputTokens: number; outputTokens: number };
+    const inputCost = (inputTokens || 0) * p.inputTokens;
+    const outputCost = (outputTokens || 0) * p.outputTokens;
     cost = inputCost + outputCost;
   }
 
   // Whisper (por minuto)
   if (model === 'whisper-1' && durationMinutes !== undefined) {
-    cost = durationMinutes * pricing.perMinute;
+    const p = pricing as { perMinute: number };
+    cost = durationMinutes * p.perMinute;
   }
 
   // TTS (por carácter)
   if (model === 'gpt-4o-mini-tts' && characters !== undefined) {
-    cost = characters * pricing.perCharacter;
+    const p = pricing as { perCharacter: number };
+    cost = characters * p.perCharacter;
   }
 
   // Redondear a 8 decimales (máxima precisión)
