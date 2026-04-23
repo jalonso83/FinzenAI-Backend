@@ -12,6 +12,22 @@ import Decimal from 'decimal.js';
 
 const router: ExpressRouter = Router();
 
+// Mapeo de nombres técnicos a nombres amigables para admin
+const FEATURE_DISPLAY_NAMES: Record<string, string> = {
+  'zenio_v2': 'Asistente Financiero',
+  'zenio_agents': 'Agentes Especializados',
+  'email_parser': 'Parser de Emails',
+  'weekly_report': 'Reporte Semanal',
+  'tts': 'Síntesis de Voz',
+  'tip_engine': 'Motor de Consejos',
+  'reference_price_service': 'Búsqueda de Precios',
+  'zenio_transcription': 'Transcripción de Audio',
+};
+
+function getDisplayName(technicalName: string): string {
+  return FEATURE_DISPLAY_NAMES[technicalName] || technicalName;
+}
+
 /**
  * GET /api/admin/openai-costs
  * Query params: from (YYYY-MM-DD), to (YYYY-MM-DD)
@@ -158,7 +174,7 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
             // 2x el promedio = anomalía
             const multiplier = decCost.dividedBy(avgCost).toNumber();
             anomalies.push({
-              feature,
+              feature: getDisplayName(feature),
               dailyCost: parseFloat(decCost.toString()),
               reason: `${multiplier.toFixed(1)}x el promedio de los últimos 7 días`,
             });
@@ -205,7 +221,10 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
       totalCost: parseFloat(breakdown.totalCost.toString()),
       costTrend,
       costByFeature: Object.fromEntries(
-        Object.entries(breakdown.byFeature).map(([key, val]) => [key, parseFloat(val.toString())])
+        Object.entries(breakdown.byFeature).map(([key, val]) => [
+          getDisplayName(key),
+          parseFloat(val.toString())
+        ])
       ),
       costByModel: Object.fromEntries(
         Object.entries(breakdown.byModel).map(([key, val]) => [key, parseFloat(val.toString())])
