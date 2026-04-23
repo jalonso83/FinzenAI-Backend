@@ -252,6 +252,9 @@ async function startServer() {
     // Inicializar precios de referencia para calculadoras
     await initPrices();
 
+    // OpenAI cost tracking: Feature display names mapped (2026-04-23)
+    logger.log('[APP] OpenAI cost tracking initialized with display names');
+
     // Iniciar servidor
     const server = app.listen(PORT, () => {
       logger.log(`🚀 FinZen AI Backend running on port ${PORT}`);
