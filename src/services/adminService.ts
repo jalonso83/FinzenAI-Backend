@@ -483,7 +483,7 @@ export class AdminService {
           AND s."createdAt" < $1
       `, prevTo),
 
-      // MRR trend by month (REAL dinero de pagos)
+      // MRR trend by month (normalizado: pagos anuales divididos entre 12)
       prisma.$queryRawUnsafe<{ month: string; premium: string; pro: string }[]>(`
         WITH months AS (
           SELECT generate_series(
@@ -494,13 +494,21 @@ export class AdminService {
         )
         SELECT
           m.month::text as month,
-          COALESCE(SUM(CASE WHEN s.plan = 'PREMIUM' THEN p.amount ELSE 0 END), 0)::text as premium,
-          COALESCE(SUM(CASE WHEN s.plan = 'PRO' THEN p.amount ELSE 0 END), 0)::text as pro
+          COALESCE(SUM(
+            CASE WHEN s.plan = 'PREMIUM' THEN
+              CASE WHEN p.description ILIKE '%annual%' THEN p.amount / 12.0 ELSE p.amount END
+            ELSE 0 END
+          ), 0)::text as premium,
+          COALESCE(SUM(
+            CASE WHEN s.plan = 'PRO' THEN
+              CASE WHEN p.description ILIKE '%annual%' THEN p.amount / 12.0 ELSE p.amount END
+            ELSE 0 END
+          ), 0)::text as pro
         FROM months m
-        LEFT JOIN subscriptions s ON s.status = 'ACTIVE'
-        LEFT JOIN payments p ON s."userId" = p."userId"
-          AND p.status = 'SUCCEEDED'
+        LEFT JOIN payments p ON p.status = 'SUCCEEDED'
           AND DATE_TRUNC('month', p."createdAt") = m.month
+        LEFT JOIN subscriptions s ON s."userId" = p."userId"
+          AND s.status IN ('ACTIVE', 'TRIALING')
         GROUP BY m.month
         ORDER BY m.month ASC
       `, from, to),
