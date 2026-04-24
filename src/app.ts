@@ -260,6 +260,7 @@ async function startServer() {
       logger.log(`🚀 FinZen AI Backend running on port ${PORT}`);
       logger.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+      logger.log('✅ User status filters: NO_VERIFICADO, SIN_ONBOARDING, EN_TRIAL, ACTIVO, CANCELADO');
     });
     server.setTimeout(120000); // 2 minutos máximo por request
   } catch (error) {
