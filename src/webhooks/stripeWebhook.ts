@@ -221,7 +221,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
       amount: invoice.amount_paid / 100, // Convertir de centavos a dólares
       currency: invoice.currency,
       status: 'SUCCEEDED',
-      stripePaymentIntentId: invoiceAny.payment_intent as string,
+      stripePaymentIntentId: invoiceAny.payment_intent || invoiceAny.id,
       stripeInvoiceId: invoice.id,
       description: `Payment for subscription`,
     });

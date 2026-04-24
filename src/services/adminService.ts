@@ -518,25 +518,27 @@ export class AdminService {
         where: { status: 'ACTIVE', plan: { not: 'FREE' } },
       }),
 
-      // Revenue from Stripe (has stripePaymentIntentId)
-      prisma.payment.aggregate({
-        where: {
-          status: 'SUCCEEDED',
-          createdAt: { gte: from, lte: to },
-          stripePaymentIntentId: { not: null },
-        },
-        _sum: { amount: true },
-      }),
+      // Revenue from Stripe (paymentProvider = STRIPE)
+      prisma.$queryRawUnsafe<{ total: string | null }[]>(`
+        SELECT SUM(p.amount) as total
+        FROM payments p
+        JOIN subscriptions s ON p."subscriptionId" = s.id
+        WHERE p.status = 'SUCCEEDED'
+          AND p."createdAt" >= $1
+          AND p."createdAt" <= $2
+          AND s."paymentProvider" = 'STRIPE'
+      `, from, to),
 
-      // Revenue from RevenueCat (no stripePaymentIntentId)
-      prisma.payment.aggregate({
-        where: {
-          status: 'SUCCEEDED',
-          createdAt: { gte: from, lte: to },
-          stripePaymentIntentId: null,
-        },
-        _sum: { amount: true },
-      }),
+      // Revenue from RevenueCat/Apple (paymentProvider = APPLE)
+      prisma.$queryRawUnsafe<{ total: string | null }[]>(`
+        SELECT SUM(p.amount) as total
+        FROM payments p
+        JOIN subscriptions s ON p."subscriptionId" = s.id
+        WHERE p.status = 'SUCCEEDED'
+          AND p."createdAt" >= $1
+          AND p."createdAt" <= $2
+          AND s."paymentProvider" = 'APPLE'
+      `, from, to),
     ]);
 
     // Calculate MRR from active subscriptions, normalized for billing period
@@ -627,8 +629,8 @@ export class AdminService {
         totalAmount: totalPaymentAmount._sum.amount || 0,
       },
       revenueByPlatform: {
-        stripe: Math.round((stripeRevenueTotal._sum.amount || 0) * 100) / 100,
-        revenuecat: Math.round((revenuecatRevenueTotal._sum.amount || 0) * 100) / 100,
+        stripe: Math.round((parseFloat(stripeRevenueTotal[0]?.total || '0')) * 100) / 100,
+        revenuecat: Math.round((parseFloat(revenuecatRevenueTotal[0]?.total || '0')) * 100) / 100,
       },
       period: { from, to },
     };
@@ -761,21 +763,44 @@ export class AdminService {
       }
     }
 
-    if (status && ['ACTIVE', 'TRIALING', 'CANCELED', 'EXPIRED'].includes(status)) {
-      if (status === 'EXPIRED') {
-        const filter: any = { subscription: { status: { in: ['PAST_DUE', 'UNPAID', 'INCOMPLETE_EXPIRED'] } } };
-        if (where.AND) {
-          (where.AND as any[]).push(filter);
-        } else {
-          where.AND = [filter];
-        }
+    if (status && ['NO_VERIFICADO', 'SIN_ONBOARDING', 'EN_TRIAL', 'ACTIVO', 'CANCELADO'].includes(status)) {
+      let filter: any;
+      const now = new Date();
+
+      if (status === 'NO_VERIFICADO') {
+        filter = { verified: false };
+      } else if (status === 'SIN_ONBOARDING') {
+        filter = { AND: [{ verified: true }, { onboardingCompleted: false }] };
+      } else if (status === 'EN_TRIAL') {
+        filter = { AND: [
+          { verified: true },
+          { subscription: {
+            AND: [
+              { trialEndsAt: { not: null } },
+              { trialEndsAt: { gt: now } }
+            ]
+          } }
+        ]};
+      } else if (status === 'ACTIVO') {
+        filter = { AND: [
+          { verified: true },
+          { onboardingCompleted: true },
+          { subscription: {
+            status: 'ACTIVE',
+            OR: [
+              { trialEndsAt: null },
+              { trialEndsAt: { lte: now } }
+            ]
+          } }
+        ]};
+      } else if (status === 'CANCELADO') {
+        filter = { subscription: { status: 'CANCELLED' } };
+      }
+
+      if (where.AND) {
+        (where.AND as any[]).push(filter);
       } else {
-        const filter: any = { subscription: { status: status as any } };
-        if (where.AND) {
-          (where.AND as any[]).push(filter);
-        } else {
-          where.subscription = { status: status as any };
-        }
+        Object.assign(where, filter);
       }
     }
 

@@ -59,24 +59,20 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
     // 1. Obtener breakdown completo de costos
     const breakdown = await OpenAiUsageService.getCostBreakdown(startDate, endDate);
 
-    // 2. Obtener tendencia diaria
-    const dailyUsage = await prisma.openAIDailyUsage.findMany({
-      where: {
-        date: {
-          gte: startDate,
-          lte: endDate,
-        },
-      },
-      orderBy: { date: 'asc' },
-      select: {
-        date: true,
-        totalCost: true,
-      },
-    });
+    // 2. Obtener tendencia diaria (suma por día)
+    const dailyUsageRaw = await prisma.$queryRaw<{ date: Date; total_cost: string }[]>`
+      SELECT
+        DATE(date) as date,
+        SUM(CAST("totalCost" AS NUMERIC)) as total_cost
+      FROM "OpenAIDailyUsage"
+      WHERE date >= ${startDate} AND date <= ${endDate}
+      GROUP BY DATE(date)
+      ORDER BY DATE(date) ASC
+    `;
 
-    const costTrend = dailyUsage.map((day) => ({
-      date: day.date.toISOString().split('T')[0],
-      cost: parseFloat(day.totalCost.toString()),
+    const costTrend = dailyUsageRaw.map((day) => ({
+      date: new Date(day.date).toISOString().split('T')[0],
+      cost: parseFloat(day.total_cost || '0'),
     }));
 
     // 3. Obtener top usuarios
