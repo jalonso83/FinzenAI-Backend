@@ -519,26 +519,26 @@ export class AdminService {
       }),
 
       // Revenue from Stripe (paymentProvider = STRIPE)
-      prisma.$queryRawUnsafe<{ total: string | null }[]>(`
-        SELECT SUM(p.amount) as total
+      prisma.$queryRaw<{ total: number | null }[]>`
+        SELECT COALESCE(SUM(p.amount), 0)::float as total
         FROM payments p
-        JOIN subscriptions s ON p."subscriptionId" = s.id
+        INNER JOIN subscriptions s ON p."subscriptionId" = s.id
         WHERE p.status = 'SUCCEEDED'
-          AND p."createdAt" >= $1
-          AND p."createdAt" <= $2
+          AND p."createdAt" >= ${from}
+          AND p."createdAt" <= ${to}
           AND s."paymentProvider" = 'STRIPE'
-      `, from, to),
+      `,
 
       // Revenue from RevenueCat/Apple (paymentProvider = APPLE)
-      prisma.$queryRawUnsafe<{ total: string | null }[]>(`
-        SELECT SUM(p.amount) as total
+      prisma.$queryRaw<{ total: number | null }[]>`
+        SELECT COALESCE(SUM(p.amount), 0)::float as total
         FROM payments p
-        JOIN subscriptions s ON p."subscriptionId" = s.id
+        INNER JOIN subscriptions s ON p."subscriptionId" = s.id
         WHERE p.status = 'SUCCEEDED'
-          AND p."createdAt" >= $1
-          AND p."createdAt" <= $2
+          AND p."createdAt" >= ${from}
+          AND p."createdAt" <= ${to}
           AND s."paymentProvider" = 'APPLE'
-      `, from, to),
+      `,
     ]);
 
     // Calculate MRR from active subscriptions, normalized for billing period
@@ -629,8 +629,8 @@ export class AdminService {
         totalAmount: totalPaymentAmount._sum.amount || 0,
       },
       revenueByPlatform: {
-        stripe: Math.round((parseFloat(stripeRevenueTotal[0]?.total || '0')) * 100) / 100,
-        revenuecat: Math.round((parseFloat(revenuecatRevenueTotal[0]?.total || '0')) * 100) / 100,
+        stripe: Math.round((stripeRevenueTotal[0]?.total || 0) * 100) / 100,
+        revenuecat: Math.round((revenuecatRevenueTotal[0]?.total || 0) * 100) / 100,
       },
       period: { from, to },
     };
@@ -775,6 +775,7 @@ export class AdminService {
         filter = { AND: [
           { verified: true },
           { subscription: {
+            status: 'TRIALING',
             AND: [
               { trialEndsAt: { not: null } },
               { trialEndsAt: { gt: now } }
