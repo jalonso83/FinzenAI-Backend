@@ -775,8 +775,8 @@ export class AdminService {
         filter = { AND: [
           { verified: true },
           { subscription: {
-            status: 'TRIALING',
             AND: [
+              { status: 'TRIALING' },
               { trialEndsAt: { not: null } },
               { trialEndsAt: { gt: now } }
             ]
