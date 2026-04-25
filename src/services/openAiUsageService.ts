@@ -123,34 +123,52 @@ export class OpenAiUsageService {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      const costByModel = { [model]: params.cost };
-      const costByFeature = { [feature]: params.cost };
+      await prisma.$transaction(async (tx) => {
+        const existing = await tx.openAIDailyUsage.findUnique({
+          where: { userId_date: { userId, date: today } },
+          select: { costByModel: true, costByFeature: true },
+        });
 
-      await prisma.openAIDailyUsage.upsert({
-        where: {
-          userId_date: {
-            userId,
-            date: today,
-          },
-        },
-        update: {
-          totalInputTokens: { increment: params.inputTokens || 0 },
-          totalOutputTokens: { increment: params.outputTokens || 0 },
-          totalDuration: { increment: params.durationMinutes || 0 },
-          totalCallCount: { increment: 1 },
-          totalCost: { increment: new Decimal(params.cost) },
-        },
-        create: {
-          userId,
-          date: today,
-          totalInputTokens: params.inputTokens || 0,
-          totalOutputTokens: params.outputTokens || 0,
-          totalDuration: params.durationMinutes || 0,
-          totalCallCount: 1,
-          totalCost: new Decimal(params.cost),
-          costByModel,
-          costByFeature,
-        },
+        if (existing) {
+          const currentByModel = (existing.costByModel as Record<string, number> | null) || {};
+          const currentByFeature = (existing.costByFeature as Record<string, number> | null) || {};
+
+          const newCostByModel = {
+            ...currentByModel,
+            [model]: new Decimal(currentByModel[model] || 0).plus(params.cost).toNumber(),
+          };
+          const newCostByFeature = {
+            ...currentByFeature,
+            [feature]: new Decimal(currentByFeature[feature] || 0).plus(params.cost).toNumber(),
+          };
+
+          await tx.openAIDailyUsage.update({
+            where: { userId_date: { userId, date: today } },
+            data: {
+              totalInputTokens: { increment: params.inputTokens || 0 },
+              totalOutputTokens: { increment: params.outputTokens || 0 },
+              totalDuration: { increment: params.durationMinutes || 0 },
+              totalCallCount: { increment: 1 },
+              totalCost: { increment: new Decimal(params.cost) },
+              costByModel: newCostByModel,
+              costByFeature: newCostByFeature,
+            },
+          });
+        } else {
+          await tx.openAIDailyUsage.create({
+            data: {
+              userId,
+              date: today,
+              totalInputTokens: params.inputTokens || 0,
+              totalOutputTokens: params.outputTokens || 0,
+              totalDuration: params.durationMinutes || 0,
+              totalCallCount: 1,
+              totalCost: new Decimal(params.cost),
+              costByModel: { [model]: params.cost },
+              costByFeature: { [feature]: params.cost },
+            },
+          });
+        }
       });
     } catch (error) {
       logger.error('[OpenAI Usage] Error registrando uso:', error);
