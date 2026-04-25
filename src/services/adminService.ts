@@ -518,9 +518,9 @@ export class AdminService {
         where: { status: 'ACTIVE', plan: { not: 'FREE' } },
       }),
 
-      // Revenue from Stripe (paymentProvider = STRIPE)
-      prisma.$queryRaw<{ total: number | null }[]>`
-        SELECT COALESCE(SUM(p.amount), 0)::float as total
+      // Revenue from Stripe
+      prisma.$queryRaw`
+        SELECT COALESCE(SUM(p.amount), 0) as total
         FROM payments p
         INNER JOIN subscriptions s ON p."subscriptionId" = s.id
         WHERE p.status = 'SUCCEEDED'
@@ -529,9 +529,9 @@ export class AdminService {
           AND s."paymentProvider" = 'STRIPE'
       `,
 
-      // Revenue from RevenueCat/Apple (paymentProvider = APPLE)
-      prisma.$queryRaw<{ total: number | null }[]>`
-        SELECT COALESCE(SUM(p.amount), 0)::float as total
+      // Revenue from RevenueCat/Apple
+      prisma.$queryRaw`
+        SELECT COALESCE(SUM(p.amount), 0) as total
         FROM payments p
         INNER JOIN subscriptions s ON p."subscriptionId" = s.id
         WHERE p.status = 'SUCCEEDED'
