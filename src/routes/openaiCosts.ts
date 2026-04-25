@@ -64,7 +64,7 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
       SELECT
         DATE(date) as date,
         SUM(CAST("totalCost" AS NUMERIC)) as total_cost
-      FROM "OpenAIDailyUsage"
+      FROM "openai_daily_usage"
       WHERE date >= ${startDate} AND date <= ${endDate}
       GROUP BY DATE(date)
       ORDER BY DATE(date) ASC

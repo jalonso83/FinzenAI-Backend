@@ -449,31 +449,31 @@ export const sendTestNotification = async (req: AuthRequest, res: Response) => {
 export const sendTestTip = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    console.log(`[TEST-TIP] ========== INICIO ==========`);
-    console.log(`[TEST-TIP] userId: ${userId}`);
+    logger.log(`[TEST-TIP] ========== INICIO ==========`);
+    logger.log(`[TEST-TIP] userId: ${userId}`);
 
     if (!userId) {
-      console.log(`[TEST-TIP] ERROR: No userId`);
+      logger.log(`[TEST-TIP] ERROR: No userId`);
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    console.log(`[TEST-TIP] Paso 1: Generando tip con IA...`);
+    logger.log(`[TEST-TIP] Paso 1: Generando tip con IA...`);
 
     // Generar tip con IA
     const testResult = await TipEngineService.testForUser(userId);
 
-    console.log(`[TEST-TIP] Paso 2: Resultado de TipEngine:`);
-    console.log(`[TEST-TIP] - tip: ${testResult.tip ? JSON.stringify(testResult.tip) : 'NULL'}`);
+    logger.log(`[TEST-TIP] Paso 2: Resultado de TipEngine:`);
+    logger.log(`[TEST-TIP] - tip: ${testResult.tip ? JSON.stringify(testResult.tip) : 'NULL'}`);
 
     if (!testResult.tip) {
-      console.log(`[TEST-TIP] ERROR: No se generó el tip`);
+      logger.log(`[TEST-TIP] ERROR: No se generó el tip`);
       return res.status(500).json({
         success: false,
         error: 'No se pudo generar el tip'
       });
     }
 
-    console.log(`[TEST-TIP] Paso 3: Enviando notificación directa...`);
+    logger.log(`[TEST-TIP] Paso 3: Enviando notificación directa...`);
 
     // Enviar notificación DIRECTAMENTE (sin verificar preferencias)
     const notificationResult = await NotificationService.sendDirectNotification(
@@ -488,11 +488,11 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
       }
     );
 
-    console.log(`[TEST-TIP] Paso 4: Resultado de notificación:`);
-    console.log(`[TEST-TIP] - success: ${notificationResult.success}`);
-    console.log(`[TEST-TIP] - successCount: ${notificationResult.successCount}`);
-    console.log(`[TEST-TIP] - failureCount: ${notificationResult.failureCount}`);
-    console.log(`[TEST-TIP] - errors: ${JSON.stringify(notificationResult.errors)}`);
+    logger.log(`[TEST-TIP] Paso 4: Resultado de notificación:`);
+    logger.log(`[TEST-TIP] - success: ${notificationResult.success}`);
+    logger.log(`[TEST-TIP] - successCount: ${notificationResult.successCount}`);
+    logger.log(`[TEST-TIP] - failureCount: ${notificationResult.failureCount}`);
+    logger.log(`[TEST-TIP] - errors: ${JSON.stringify(notificationResult.errors)}`);
 
     // Paso 5: Guardar en historial de tips (userTipHistory)
     if (notificationResult.success) {
@@ -510,10 +510,10 @@ export const sendTestTip = async (req: AuthRequest, res: Response) => {
           category: testResult.tip.category
         }
       });
-      console.log(`[TEST-TIP] Paso 5: Guardado en userTipHistory`);
+      logger.log(`[TEST-TIP] Paso 5: Guardado en userTipHistory`);
     }
 
-    console.log(`[TEST-TIP] ========== FIN ==========`);
+    logger.log(`[TEST-TIP] ========== FIN ==========`);
 
     return res.status(200).json({
       success: notificationResult.success,

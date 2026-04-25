@@ -4,6 +4,8 @@
  * Referencia: https://openai.com/pricing (2026-04-23)
  */
 
+import { logger } from '../utils/logger';
+
 export const OPENAI_PRICING = {
   'gpt-5.4': {
     inputTokens: 2.5 / 1_000_000,
@@ -48,7 +50,7 @@ export function calculateOpenAICost(
   const pricing = OPENAI_PRICING[model as keyof typeof OPENAI_PRICING];
 
   if (!pricing) {
-    console.warn(`[OpenAI Pricing] Modelo desconocido: ${model}`);
+    logger.warn(`[OpenAI Pricing] Modelo desconocido: ${model}`);
     return 0;
   }
 
