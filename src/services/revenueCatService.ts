@@ -221,7 +221,7 @@ export class RevenueCatService {
       },
       update: {
         plan: SubscriptionPlan.FREE,
-        status: SubscriptionStatus.CANCELED,
+        status: SubscriptionStatus.ACTIVE,
         currentPeriodStart: null,
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,

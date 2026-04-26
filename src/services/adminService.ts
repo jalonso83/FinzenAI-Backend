@@ -84,10 +84,13 @@ export class AdminService {
         where: { createdAt: { gte: prevFrom, lte: prevTo } },
       }),
 
-      // Activated users (onboarding completed)
-      prisma.user.count({
-        where: { onboardingCompleted: true },
-      }),
+      // Activated users in period: cohort with ≥1 transaction.
+      // Definition aligned with funnel "Activación" stage in getUsersAnalytics.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
+        JOIN transactions t ON t."userId" = u.id
+        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
+      `, from, to),
 
       // Plan distribution
       prisma.subscription.groupBy({
@@ -101,44 +104,57 @@ export class AdminService {
         where: { status: 'TRIALING' },
       }),
 
-      // Churn: subscriptions canceled in period
-      prisma.subscription.count({
-        where: {
-          status: 'CANCELED',
-          updatedAt: { gte: from, lte: to },
-          plan: { not: 'FREE' },
-        },
-      }),
+      // Churn (revenue-based): users that paid in the previous period of the
+      // same length, but did NOT pay in the current period. This is independent
+      // of subscription.status — true churn is when money stops coming in.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT prev."userId")::bigint as cnt
+        FROM payments prev
+        WHERE prev.status = 'SUCCEEDED'
+          AND prev."createdAt" >= $1 AND prev."createdAt" <= $2
+          AND NOT EXISTS (
+            SELECT 1 FROM payments curr
+            WHERE curr."userId" = prev."userId"
+              AND curr.status = 'SUCCEEDED'
+              AND curr."createdAt" >= $3 AND curr."createdAt" <= $4
+          )
+      `, prevFrom, prevTo, from, to),
 
-      // Active paid subs at start of period (for churn rate denominator)
-      prisma.subscription.count({
-        where: {
-          plan: { not: 'FREE' },
-          status: { in: ['ACTIVE', 'TRIALING'] },
-          createdAt: { lt: from },
-        },
-      }),
+      // Churn denominator: users that paid in the previous period (the base
+      // we measure attrition against).
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT "userId")::bigint as cnt
+        FROM payments
+        WHERE status = 'SUCCEEDED'
+          AND "createdAt" >= $1 AND "createdAt" <= $2
+      `, prevFrom, prevTo),
 
-      // DAU: distinct users with gamification events in the last 7 days
-      // (fixed window — independent of selected range)
+      // DAU: distinct users with HUMAN gamification events in the last 7 days.
+      // Excludes system-generated events (scheduler bonuses, meta-events) so we
+      // only count real activity, not background jobs.
       prisma.gamificationEvent.findMany({
         where: {
           createdAt: {
             gte: new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000),
             lte: to,
           },
+          eventType: {
+            notIn: ['email_sync_daily', 'email_tx_imported', 'points_awarded', 'streak_break'],
+          },
         },
         distinct: ['userId'],
         select: { userId: true, createdAt: true },
       }),
 
-      // MAU: distinct users with gamification events in the last 30 days
-      // (fixed window — independent of selected range)
+      // MAU: distinct users with HUMAN gamification events in the last 30 days.
       prisma.gamificationEvent.findMany({
         where: {
           createdAt: {
             gte: new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000),
             lte: to,
+          },
+          eventType: {
+            notIn: ['email_sync_daily', 'email_tx_imported', 'points_awarded', 'streak_break'],
           },
         },
         distinct: ['userId'],
@@ -229,8 +245,10 @@ export class AdminService {
     const dauAvg = Math.round(dauTotal / 7);
     const mau = mauRaw.length;
 
-    const churnRate = activeStartOfPeriod > 0
-      ? Math.round((churnedCount / activeStartOfPeriod) * 10000) / 100
+    const churnedCountNum = Number(churnedCount[0]?.cnt ?? 0);
+    const activeStartOfPeriodNum = Number(activeStartOfPeriod[0]?.cnt ?? 0);
+    const churnRate = activeStartOfPeriodNum > 0
+      ? Math.round((churnedCountNum / activeStartOfPeriodNum) * 10000) / 100
       : 0;
 
     const freeToPaidRate = totalFreeUsers > 0
@@ -251,7 +269,7 @@ export class AdminService {
       totalUsers,
       newRegistrations,
       registrationChange: pctChange(newRegistrations, prevRegistrations),
-      activatedUsers,
+      activatedUsers: Number(activatedUsers[0]?.cnt ?? 0),
       planDistribution: planCounts,
       churnRate,
       trialsActive,
@@ -306,39 +324,43 @@ export class AdminService {
         WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
       `, from, to),
 
-      // Funnel: D1 retained
+      // Funnel: D1 retained — cohort that had any event on day 1 or after.
+      // Restrict cohort to users old enough to be evaluable (≥1 day since registration).
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
         SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
         JOIN gamification_events ge ON ge."userId" = u.id
-        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
+        WHERE u."createdAt" >= $1
+          AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '1 day')
           AND ge."createdAt" >= u."createdAt" + interval '1 day'
-          AND ge."createdAt" < u."createdAt" + interval '2 days'
       `, from, to),
 
-      // Funnel: D7 retained
+      // Funnel: D7 retained — same fix.
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
         SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
         JOIN gamification_events ge ON ge."userId" = u.id
-        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
+        WHERE u."createdAt" >= $1
+          AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '7 days')
           AND ge."createdAt" >= u."createdAt" + interval '7 days'
-          AND ge."createdAt" < u."createdAt" + interval '8 days'
       `, from, to),
 
-      // Funnel: started trial
-      prisma.subscription.count({
-        where: {
-          trialStartedAt: { gte: from, lte: to },
-        },
-      }),
+      // Funnel: cohort users that started a trial (any time after registration).
+      // Filter by USER's createdAt, not trialStartedAt — must belong to the cohort.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
+        JOIN subscriptions s ON s."userId" = u.id
+        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
+          AND s."trialStartedAt" IS NOT NULL
+      `, from, to),
 
-      // Funnel: converted to paid
-      prisma.subscription.count({
-        where: {
-          plan: { not: 'FREE' },
-          status: 'ACTIVE',
-          createdAt: { gte: from, lte: to },
-        },
-      }),
+      // Funnel: cohort users that converted to paid (≥1 successful payment).
+      // Filter by USER's createdAt; do NOT filter by current subscription status —
+      // a user that paid then canceled still counts as a conversion.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
+        JOIN payments p ON p."userId" = u.id
+        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
+          AND p.status = 'SUCCEEDED'
+      `, from, to),
     ]);
 
     // Cohort analysis: weekly retention
@@ -385,8 +407,8 @@ export class AdminService {
         activated: Number(totalActivated[0]?.cnt ?? 0),
         retainedD1: activated,
         retainedD7: retainedD7[0] ? Number(retainedD7[0].cnt) : 0,
-        trialStarted: totalTrialStarted,
-        paid: totalPaid,
+        trialStarted: Number(totalTrialStarted[0]?.cnt ?? 0),
+        paid: Number(totalPaid[0]?.cnt ?? 0),
       },
       cohorts: cohorts.map(c => ({
         week: c.cohort_week,
@@ -431,14 +453,21 @@ export class AdminService {
         where: { status: 'TRIALING' },
       }),
 
-      // Cancellations in last 30 days
-      prisma.subscription.count({
-        where: {
-          status: 'CANCELED',
-          updatedAt: { gte: thirtyDaysAgo, lte: to },
-          plan: { not: 'FREE' },
-        },
-      }),
+      // Cancellations (revenue-based, last 30 days):
+      // users that paid in [thirtyDaysAgo - 30d, thirtyDaysAgo] but did NOT pay in
+      // [thirtyDaysAgo, to]. Status-independent; reflects real attrition.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT prev."userId")::bigint as cnt
+        FROM payments prev
+        WHERE prev.status = 'SUCCEEDED'
+          AND prev."createdAt" >= $1 AND prev."createdAt" < $2
+          AND NOT EXISTS (
+            SELECT 1 FROM payments curr
+            WHERE curr."userId" = prev."userId"
+              AND curr.status = 'SUCCEEDED'
+              AND curr."createdAt" >= $2 AND curr."createdAt" <= $3
+          )
+      `, new Date(thirtyDaysAgo.getTime() - 30 * 24 * 60 * 60 * 1000), thirtyDaysAgo, to),
 
       // Payments succeeded in period
       prisma.payment.count({
@@ -531,6 +560,7 @@ export class AdminService {
     // Calculate MRR from active subscriptions, normalized for billing period
     let mrrCurrent = 0;
     const currentMrrObj: Record<string, number> = { PREMIUM: 0, PRO: 0 };
+    const subscribersByPlan: Record<string, number> = { PREMIUM: 0, PRO: 0 };
 
     currentMrrByPlan.forEach(sub => {
       const planConfig = PLANS[sub.plan as keyof typeof PLANS];
@@ -553,6 +583,7 @@ export class AdminService {
       mrrCurrent += monthlyPrice;
       if (sub.plan in currentMrrObj) {
         currentMrrObj[sub.plan] += monthlyPrice;
+        subscribersByPlan[sub.plan] += 1;
       }
     });
 
@@ -597,8 +628,9 @@ export class AdminService {
       arpu,
       subscriptionsByStatus: statusDist,
       revenueByPlan,
+      subscribersByPlan: { PREMIUM: subscribersByPlan.PREMIUM, PRO: subscribersByPlan.PRO },
       trialsActive,
-      cancellations30d,
+      cancellations30d: Number(cancellations30d[0]?.cnt ?? 0),
       mrrTrend: mrrTrendData.map(m => ({
         month: m.month,
         mrr: Math.round((Number(m.premium) + Number(m.pro)) * 100) / 100,

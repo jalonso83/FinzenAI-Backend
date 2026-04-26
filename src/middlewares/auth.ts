@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
+import { GamificationService } from '../services/gamificationService';
+import { logger } from '../utils/logger';
 
 // Extender la interfaz Request para incluir el usuario
 declare global {
@@ -14,6 +16,11 @@ declare global {
     }
   }
 }
+
+// Tracks which users have already had `daily_open` dispatched today (UTC).
+// Bounds memory to ~unique-active-users-per-day; the handler does a DB-level
+// dedup as a second safety net (server restart / multi-instance).
+const dailyOpenSeen = new Map<string, string>();
 
 export const authenticateToken = async (
   req: Request,
@@ -57,6 +64,16 @@ export const authenticateToken = async (
       id: user.id,
       email: user.email
     };
+
+    // Mark user as active today (DAU/MAU). Fire-and-forget — never block the request.
+    const todayKey = new Date().toISOString().slice(0, 10);
+    if (dailyOpenSeen.get(user.id) !== todayKey) {
+      dailyOpenSeen.set(user.id, todayKey);
+      GamificationService.dispatchEvent({
+        userId: user.id,
+        eventType: 'daily_open',
+      }).catch(err => logger.error('[Auth] daily_open dispatch failed', err));
+    }
 
     return next();
   } catch (error) {

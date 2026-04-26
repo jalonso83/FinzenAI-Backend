@@ -152,7 +152,22 @@ export class GamificationService {
   }
 
   private static async handleDailyOpen(event: any): Promise<void> {
-    const points = 3; // Puntos por abrir la app diariamente
+    // Dedup: only award once per UTC day, even if dispatched multiple times
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const existing = await prisma.gamificationEvent.findFirst({
+      where: {
+        userId: event.userId,
+        eventType: 'daily_open',
+        createdAt: { gte: today },
+        NOT: { id: event.id },
+      },
+    });
+
+    if (existing) return;
+
+    const points = 1; // Apertura diaria — pequeño, su valor real es marcar DAU/MAU
     await this.awardPoints(event.userId, points, 'Apertura diaria');
   }
 
