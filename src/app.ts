@@ -1,3 +1,4 @@
+// Deploy trigger: dashboard analytics overhaul (funnel cohorte, retención, churn por payments, daily_open)
 import express, { Application } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
