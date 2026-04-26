@@ -65,8 +65,6 @@ export class AdminService {
       activeStartOfPeriod,
       dauRaw,
       mauRaw,
-      trialToPaidCount,
-      totalTrialEnded,
       freeToPaidCount,
       totalFreeUsers,
       retentionD1Data,
@@ -121,14 +119,21 @@ export class AdminService {
         },
       }),
 
-      // DAU: distinct users with gamification events today
+      // DAU: distinct users with gamification events in the last 7 days
+      // (fixed window — independent of selected range)
       prisma.gamificationEvent.findMany({
-        where: { createdAt: { gte: from, lte: to } },
+        where: {
+          createdAt: {
+            gte: new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000),
+            lte: to,
+          },
+        },
         distinct: ['userId'],
         select: { userId: true, createdAt: true },
       }),
 
-      // MAU: distinct users with gamification events last 30 days
+      // MAU: distinct users with gamification events in the last 30 days
+      // (fixed window — independent of selected range)
       prisma.gamificationEvent.findMany({
         where: {
           createdAt: {
@@ -138,22 +143,6 @@ export class AdminService {
         },
         distinct: ['userId'],
         select: { userId: true },
-      }),
-
-      // Trial to paid conversions in period
-      prisma.subscription.count({
-        where: {
-          plan: { not: 'FREE' },
-          status: 'ACTIVE',
-          trialEndsAt: { not: null, gte: from, lte: to },
-        },
-      }),
-
-      // Total trials that ended in period
-      prisma.subscription.count({
-        where: {
-          trialEndsAt: { gte: from, lte: to },
-        },
       }),
 
       // Free to paid conversions
@@ -169,31 +158,47 @@ export class AdminService {
         where: { plan: 'FREE', status: 'ACTIVE' },
       }),
 
-      // Retention D1: users who had activity 1 day after registration
-      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
-        JOIN gamification_events ge ON ge."userId" = u.id
-        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
-          AND ge."createdAt" >= u."createdAt" + interval '1 day'
-          AND ge."createdAt" < u."createdAt" + interval '2 days'
+      // Retention D1: cohort = registered in period AND ≥1 day old.
+      // Retained = at least one event on or after day 1.
+      prisma.$queryRawUnsafe<{ cohort: bigint; retained: bigint }[]>(`
+        SELECT
+          COUNT(DISTINCT u.id)::bigint as cohort,
+          COUNT(DISTINCT u.id) FILTER (WHERE EXISTS (
+            SELECT 1 FROM gamification_events ge
+            WHERE ge."userId" = u.id
+              AND ge."createdAt" >= u."createdAt" + interval '1 day'
+          ))::bigint as retained
+        FROM users u
+        WHERE u."createdAt" >= $1
+          AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '1 day')
       `, from, to),
 
       // Retention D7
-      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
-        JOIN gamification_events ge ON ge."userId" = u.id
-        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
-          AND ge."createdAt" >= u."createdAt" + interval '7 days'
-          AND ge."createdAt" < u."createdAt" + interval '8 days'
+      prisma.$queryRawUnsafe<{ cohort: bigint; retained: bigint }[]>(`
+        SELECT
+          COUNT(DISTINCT u.id)::bigint as cohort,
+          COUNT(DISTINCT u.id) FILTER (WHERE EXISTS (
+            SELECT 1 FROM gamification_events ge
+            WHERE ge."userId" = u.id
+              AND ge."createdAt" >= u."createdAt" + interval '7 days'
+          ))::bigint as retained
+        FROM users u
+        WHERE u."createdAt" >= $1
+          AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '7 days')
       `, from, to),
 
       // Retention D30
-      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
-        JOIN gamification_events ge ON ge."userId" = u.id
-        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
-          AND ge."createdAt" >= u."createdAt" + interval '30 days'
-          AND ge."createdAt" < u."createdAt" + interval '31 days'
+      prisma.$queryRawUnsafe<{ cohort: bigint; retained: bigint }[]>(`
+        SELECT
+          COUNT(DISTINCT u.id)::bigint as cohort,
+          COUNT(DISTINCT u.id) FILTER (WHERE EXISTS (
+            SELECT 1 FROM gamification_events ge
+            WHERE ge."userId" = u.id
+              AND ge."createdAt" >= u."createdAt" + interval '30 days'
+          ))::bigint as retained
+        FROM users u
+        WHERE u."createdAt" >= $1
+          AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '30 days')
       `, from, to),
     ]);
 
@@ -212,34 +217,35 @@ export class AdminService {
       activePremium * PLAN_PRICES.PREMIUM +
       activePro * PLAN_PRICES.PRO;
 
-    // DAU: compute average daily unique users
+    // DAU: average unique users per day over the last 7 days (fixed window).
+    // Divide by 7 (not by days-with-activity) so silent days drag the average down.
     const dauByDay = new Map<string, Set<string>>();
     dauRaw.forEach(e => {
       const day = e.createdAt.toISOString().slice(0, 10);
       if (!dauByDay.has(day)) dauByDay.set(day, new Set());
       dauByDay.get(day)!.add(e.userId);
     });
-    const dauValues = Array.from(dauByDay.values()).map(s => s.size);
-    const dauAvg = dauValues.length > 0
-      ? Math.round(dauValues.reduce((a, b) => a + b, 0) / dauValues.length)
-      : 0;
+    const dauTotal = Array.from(dauByDay.values()).reduce((sum, s) => sum + s.size, 0);
+    const dauAvg = Math.round(dauTotal / 7);
     const mau = mauRaw.length;
 
     const churnRate = activeStartOfPeriod > 0
       ? Math.round((churnedCount / activeStartOfPeriod) * 10000) / 100
       : 0;
 
-    const trialToPaidRate = totalTrialEnded > 0
-      ? Math.round((trialToPaidCount / totalTrialEnded) * 10000) / 100
-      : 0;
-
     const freeToPaidRate = totalFreeUsers > 0
       ? Math.round((freeToPaidCount / totalFreeUsers) * 10000) / 100
       : 0;
 
-    const d1 = retentionD1Data[0] ? Number(retentionD1Data[0].cnt) : 0;
-    const d7 = retentionD7Data[0] ? Number(retentionD7Data[0].cnt) : 0;
-    const d30 = retentionD30Data[0] ? Number(retentionD30Data[0].cnt) : 0;
+    const retentionPct = (row?: { cohort: bigint; retained: bigint }) => {
+      if (!row) return 0;
+      const cohort = Number(row.cohort);
+      const retained = Number(row.retained);
+      return cohort > 0 ? Math.round((retained / cohort) * 10000) / 100 : 0;
+    };
+    const retentionD1 = retentionPct(retentionD1Data[0]);
+    const retentionD7 = retentionPct(retentionD7Data[0]);
+    const retentionD30 = retentionPct(retentionD30Data[0]);
 
     return {
       totalUsers,
@@ -252,11 +258,10 @@ export class AdminService {
       mrrEstimated: Math.round(mrrEstimated * 100) / 100,
       dau: dauAvg,
       mau,
-      trialToPaidRate,
       freeToPaidRate,
-      retentionD1: newRegistrations > 0 ? Math.round((d1 / newRegistrations) * 10000) / 100 : 0,
-      retentionD7: newRegistrations > 0 ? Math.round((d7 / newRegistrations) * 10000) / 100 : 0,
-      retentionD30: newRegistrations > 0 ? Math.round((d30 / newRegistrations) * 10000) / 100 : 0,
+      retentionD1,
+      retentionD7,
+      retentionD30,
       period: { from, to },
     };
   }
@@ -354,13 +359,13 @@ export class AdminService {
         c.cohort_week::text as cohort_week,
         COUNT(DISTINCT c.id)::bigint as cohort_size,
         COUNT(DISTINCT CASE WHEN ge."createdAt" >= c.cohort_week + interval '1 day'
-          AND ge."createdAt" < c.cohort_week + interval '2 days' THEN c.id END)::bigint as d1,
+          THEN c.id END)::bigint as d1,
         COUNT(DISTINCT CASE WHEN ge."createdAt" >= c.cohort_week + interval '7 days'
-          AND ge."createdAt" < c.cohort_week + interval '8 days' THEN c.id END)::bigint as d7,
+          THEN c.id END)::bigint as d7,
         COUNT(DISTINCT CASE WHEN ge."createdAt" >= c.cohort_week + interval '14 days'
-          AND ge."createdAt" < c.cohort_week + interval '15 days' THEN c.id END)::bigint as d14,
+          THEN c.id END)::bigint as d14,
         COUNT(DISTINCT CASE WHEN ge."createdAt" >= c.cohort_week + interval '30 days'
-          AND ge."createdAt" < c.cohort_week + interval '31 days' THEN c.id END)::bigint as d30
+          THEN c.id END)::bigint as d30
       FROM cohort c
       LEFT JOIN gamification_events ge ON ge."userId" = c.id
       GROUP BY c.cohort_week
@@ -405,8 +410,6 @@ export class AdminService {
       subscriptionsByStatus,
       trialsActive,
       cancellations30d,
-      trialToPaidCount,
-      totalTrialEnded,
       paymentsSucceeded,
       paymentsFailed,
       totalPaymentAmount,
@@ -434,22 +437,6 @@ export class AdminService {
           status: 'CANCELED',
           updatedAt: { gte: thirtyDaysAgo, lte: to },
           plan: { not: 'FREE' },
-        },
-      }),
-
-      // Trial to paid conversions
-      prisma.subscription.count({
-        where: {
-          plan: { not: 'FREE' },
-          status: 'ACTIVE',
-          trialEndsAt: { not: null, gte: from, lte: to },
-        },
-      }),
-
-      // Total trials ended in period
-      prisma.subscription.count({
-        where: {
-          trialEndsAt: { gte: from, lte: to },
         },
       }),
 
@@ -593,10 +580,6 @@ export class AdminService {
     // ARPU: dinero real / número de suscripciones pagadas
     const arpu = currentActiveSubs > 0 ? Math.round((mrrCurrent / currentActiveSubs) * 100) / 100 : 0;
 
-    const trialToPaidRate = totalTrialEnded > 0
-      ? Math.round((trialToPaidCount / totalTrialEnded) * 10000) / 100
-      : 0;
-
     // Revenue by plan (REAL dinero)
     const revenueByPlan = {
       PREMIUM: Math.round((currentMrrObj['PREMIUM'] || 0) * 100) / 100,
@@ -616,7 +599,6 @@ export class AdminService {
       revenueByPlan,
       trialsActive,
       cancellations30d,
-      trialToPaidRate,
       mrrTrend: mrrTrendData.map(m => ({
         month: m.month,
         mrr: Math.round((Number(m.premium) + Number(m.pro)) * 100) / 100,
