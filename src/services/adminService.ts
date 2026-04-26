@@ -659,10 +659,12 @@ export class AdminService {
       activeUsersWithTx,
       totalOnboarded,
       totalUsers,
-      zenioSessions,
+      zenioActiveUsersData,
       referralsMade,
-      referralsConverted,
+      referralsConvertedFromCohort,
       registrationsByChannel,
+      streakActiveUsersData,
+      timeToFirstTxData,
     ] = await Promise.all([
       // Total transactions in period
       prisma.transaction.count({
@@ -686,19 +688,28 @@ export class AdminService {
         where: { createdAt: { gte: from, lte: to } },
       }),
 
-      // Zenio sessions (sum of zenioQueriesUsed)
-      prisma.subscription.aggregate({
-        _sum: { zenioQueriesUsed: true },
-      }),
+      // Zenio active users in period: distinct users that incurred any Zenio
+      // OpenAI cost during the date range (proxy for "talked to Zenio").
+      // Source: openAIDailyUsage.costByFeature['zenio'] > 0.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT "userId")::bigint as cnt
+        FROM openai_daily_usage
+        WHERE "date" >= $1 AND "date" <= $2
+          AND COALESCE(("costByFeature" ->> 'zenio')::float, 0) > 0
+      `, from, to),
 
-      // Referrals made in period
+      // Referrals made in period (cohort base)
       prisma.referral.count({
         where: { createdAt: { gte: from, lte: to } },
       }),
 
-      // Referrals converted in period
+      // Referrals from THIS cohort that ended up converting (any time after).
+      // Same cohort as referralsMade so the ratio is meaningful.
       prisma.referral.count({
-        where: { status: 'CONVERTED', convertedAt: { gte: from, lte: to } },
+        where: {
+          createdAt: { gte: from, lte: to },
+          status: 'CONVERTED',
+        },
       }),
 
       // Registrations by country (as channel proxy)
@@ -709,6 +720,48 @@ export class AdminService {
         orderBy: { _count: { country: 'desc' } },
         take: 10,
       }),
+
+      // Users with active daily streak in period.
+      // Active = currentStreak > 0 AND lastActivityDate touched the period.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT "userId")::bigint as cnt
+        FROM user_streaks
+        WHERE "currentStreak" > 0
+          AND "lastActivityDate" >= $1
+          AND "lastActivityDate" <= $2
+      `, from, to),
+
+      // Time-to-first-transaction (median hours) and first-tx adoption rate
+      // for the cohort of users registered in the period.
+      // Cohort eligibility: registered at least 1 hour ago (otherwise no fair
+      // chance to have made a tx yet).
+      prisma.$queryRawUnsafe<{
+        cohort_size: bigint;
+        with_first_tx: bigint;
+        median_hours: number | null;
+      }[]>(`
+        WITH cohort AS (
+          SELECT id, "createdAt"
+          FROM users
+          WHERE "createdAt" >= $1
+            AND "createdAt" <= LEAST($2::timestamp, NOW() - interval '1 hour')
+        ),
+        first_tx AS (
+          SELECT t."userId", MIN(t."createdAt") as first_tx_at
+          FROM transactions t
+          INNER JOIN cohort c ON c.id = t."userId"
+          GROUP BY t."userId"
+        )
+        SELECT
+          (SELECT COUNT(*) FROM cohort)::bigint as cohort_size,
+          (SELECT COUNT(*) FROM first_tx)::bigint as with_first_tx,
+          PERCENTILE_CONT(0.5) WITHIN GROUP (
+            ORDER BY EXTRACT(EPOCH FROM (ft.first_tx_at - c."createdAt")) / 3600
+          ) as median_hours
+        FROM cohort c
+        LEFT JOIN first_tx ft ON ft."userId" = c.id
+        WHERE ft.first_tx_at IS NOT NULL
+      `, from, to),
     ]);
 
     const activeUsers = Number(activeUsersWithTx[0]?.cnt ?? 0);
@@ -720,15 +773,51 @@ export class AdminService {
       ? Math.round((totalOnboarded / totalUsers) * 10000) / 100
       : 0;
 
+    const zenioActiveUsers = Number(zenioActiveUsersData[0]?.cnt ?? 0);
+    const referralConversionRate = referralsMade > 0
+      ? Math.round((referralsConvertedFromCohort / referralsMade) * 10000) / 100
+      : 0;
+
+    // % Adopción Zenio: cap at 100 to handle edge case of Zenio users without tx
+    const zenioAdoptionRate = activeUsers > 0
+      ? Math.min(Math.round((zenioActiveUsers / activeUsers) * 10000) / 100, 100)
+      : 0;
+
+    // % Racha Activa
+    const streakActiveUsers = Number(streakActiveUsersData[0]?.cnt ?? 0);
+    const streakActiveRate = activeUsers > 0
+      ? Math.round((streakActiveUsers / activeUsers) * 10000) / 100
+      : 0;
+
+    // Time-to-first-transaction
+    const ttftRow = timeToFirstTxData[0];
+    const cohortSize = Number(ttftRow?.cohort_size ?? 0);
+    const withFirstTx = Number(ttftRow?.with_first_tx ?? 0);
+    const medianHoursRaw = ttftRow?.median_hours;
+    const timeToFirstTx = {
+      medianHours: medianHoursRaw !== null && medianHoursRaw !== undefined
+        ? Math.round(Number(medianHoursRaw) * 10) / 10
+        : null,
+      firstTxRate: cohortSize > 0
+        ? Math.round((withFirstTx / cohortSize) * 10000) / 100
+        : 0,
+      cohortSize,
+    };
+
     return {
       transactionsPerActiveUser,
       totalTransactions,
       activeUsers,
       onboardingRate,
-      zenioTotalQueries: zenioSessions._sum.zenioQueriesUsed || 0,
+      zenioActiveUsers,
+      zenioAdoptionRate,
+      streakActiveUsers,
+      streakActiveRate,
+      timeToFirstTx,
       referrals: {
         total: referralsMade,
-        converted: referralsConverted,
+        converted: referralsConvertedFromCohort,
+        conversionRate: referralConversionRate,
       },
       registrationsByChannel: registrationsByChannel.map(r => ({
         country: r.country,

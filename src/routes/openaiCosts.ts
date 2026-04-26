@@ -12,17 +12,25 @@ import Decimal from 'decimal.js';
 
 const router: ExpressRouter = Router();
 
-// Mapeo de nombres técnicos a nombres amigables para admin
+// Mapeo de nombres técnicos a nombres amigables para admin.
+// El orden de las keys define el orden mostrado cuando los costos son iguales (ej. todos en $0).
 const FEATURE_DISPLAY_NAMES: Record<string, string> = {
   'zenio_v2': 'Asistente Financiero',
   'zenio_agents': 'Agentes Especializados',
-  'email_parser': 'Parser de Emails',
-  'weekly_report': 'Reporte Semanal',
-  'tts': 'Síntesis de Voz',
-  'tip_engine': 'Motor de Consejos',
-  'reference_price_service': 'Búsqueda de Precios',
   'zenio_transcription': 'Transcripción de Audio',
+  'tts': 'Síntesis de Voz',
+  'email_parser': 'Parser de Emails',
+  'tip_engine': 'Motor de Consejos',
+  'weekly_report': 'Reporte Semanal',
+  'reference_price_service': 'Búsqueda de Precios',
 };
+
+// Modelos canónicos. Se muestran siempre, aunque tengan costo $0.
+const KNOWN_MODELS = [
+  'gpt-5.4-mini',
+  'whisper-1',
+  'gpt-4o-mini-tts',
+];
 
 function getDisplayName(technicalName: string): string {
   return FEATURE_DISPLAY_NAMES[technicalName] || technicalName;
@@ -212,19 +220,29 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
       costByPlan[plan] = (costByPlan[plan] || 0) + parseFloat(userCost.toString());
     }
 
-    // 6. Armar respuesta
+    // 6. Armar respuesta — pad features y modelos canónicos con $0
+    // para que el directivo SIEMPRE vea la lista completa, no solo lo que tuvo costo.
+    const costByFeaturePadded: Record<string, number> = {};
+    Object.keys(FEATURE_DISPLAY_NAMES).forEach((key) => {
+      costByFeaturePadded[getDisplayName(key)] = 0;
+    });
+    Object.entries(breakdown.byFeature).forEach(([key, val]) => {
+      costByFeaturePadded[getDisplayName(key)] = parseFloat(val.toString());
+    });
+
+    const costByModelPadded: Record<string, number> = {};
+    KNOWN_MODELS.forEach((model) => {
+      costByModelPadded[model] = 0;
+    });
+    Object.entries(breakdown.byModel).forEach(([key, val]) => {
+      costByModelPadded[key] = parseFloat(val.toString());
+    });
+
     const response = {
       totalCost: parseFloat(breakdown.totalCost.toString()),
       costTrend,
-      costByFeature: Object.fromEntries(
-        Object.entries(breakdown.byFeature).map(([key, val]) => [
-          getDisplayName(key),
-          parseFloat(val.toString())
-        ])
-      ),
-      costByModel: Object.fromEntries(
-        Object.entries(breakdown.byModel).map(([key, val]) => [key, parseFloat(val.toString())])
-      ),
+      costByFeature: costByFeaturePadded,
+      costByModel: costByModelPadded,
       costByPlan,
       topUsers: topUsersData,
       anomalies,
