@@ -6,6 +6,7 @@ import {
   FIXED_OPERATING_COSTS,
   TOTAL_FIXED_MONTHLY,
   PAYMENT_FEES,
+  FINANCIAL_TRACKING_START,
 } from '../config/operatingCosts';
 import { logger } from '../utils/logger';
 
@@ -693,14 +694,19 @@ export class AdminService {
         where: { createdAt: { gte: from, lte: to } },
       }),
 
-      // Zenio active users in period: distinct users that incurred any Zenio
-      // OpenAI cost during the date range (proxy for "talked to Zenio").
-      // Source: openAIDailyUsage.costByFeature['zenio'] > 0.
+      // Zenio active users in period: distinct users with cost > 0 in any of
+      // the zenio_* features (zenio_v2 = chat principal, zenio_agents = agentes
+      // especializados, zenio_transcription = whisper). El nombre genérico
+      // 'zenio' NO existe en costByFeature — son sub-features distintas.
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
         SELECT COUNT(DISTINCT "userId")::bigint as cnt
         FROM openai_daily_usage
         WHERE "date" >= $1 AND "date" <= $2
-          AND COALESCE(("costByFeature" ->> 'zenio')::float, 0) > 0
+          AND (
+            COALESCE(("costByFeature" ->> 'zenio_v2')::float, 0) > 0
+            OR COALESCE(("costByFeature" ->> 'zenio_agents')::float, 0) > 0
+            OR COALESCE(("costByFeature" ->> 'zenio_transcription')::float, 0) > 0
+          )
       `, from, to),
 
       // Referrals made in period (cohort base)
@@ -1066,6 +1072,121 @@ export class AdminService {
       // Tabla de desglose
       breakdown,
       period: { from, to, days: periodDays },
+    };
+  }
+
+  // ─── FINANCIAL HEALTH ────────────────────────────────────
+  // Independiente del selector de período: siempre mira "mes actual" calendario
+  // y "bruto acumulado desde lanzamiento" (FINANCIAL_TRACKING_START).
+  static async getFinancialHealth() {
+    const now = new Date();
+    const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+    const endOfMonth = now; // hasta este momento
+
+    const [
+      grossTotalAgg,
+      incomeThisMonthAgg,
+      openAIThisMonthAgg,
+      stripePaymentsThisMonth,
+      rcPaymentsThisMonth,
+    ] = await Promise.all([
+      // 1) Ingreso Bruto Total (todos los pagos exitosos desde tracking start)
+      prisma.payment.aggregate({
+        where: {
+          status: 'SUCCEEDED',
+          createdAt: { gte: FINANCIAL_TRACKING_START },
+        },
+        _sum: { amount: true },
+      }),
+
+      // 2) Ingresos del mes actual
+      prisma.payment.aggregate({
+        where: {
+          status: 'SUCCEEDED',
+          createdAt: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { amount: true },
+      }),
+
+      // 3) Costo OpenAI del mes actual
+      prisma.openAIDailyUsage.aggregate({
+        where: { date: { gte: startOfMonth, lte: endOfMonth } },
+        _sum: { totalCost: true },
+      }),
+
+      // 4) Stripe payments del mes (para fees)
+      prisma.$queryRawUnsafe<{ amount: number }[]>(`
+        SELECT p.amount
+        FROM payments p
+        INNER JOIN subscriptions s ON s.id = p."subscriptionId"
+        WHERE p.status = 'SUCCEEDED'
+          AND p."createdAt" >= $1 AND p."createdAt" <= $2
+          AND s."paymentProvider" = 'STRIPE'
+      `, startOfMonth, endOfMonth),
+
+      // 5) RevenueCat payments del mes (para fees)
+      prisma.$queryRawUnsafe<{ amount: number }[]>(`
+        SELECT p.amount
+        FROM payments p
+        INNER JOIN subscriptions s ON s.id = p."subscriptionId"
+        WHERE p.status = 'SUCCEEDED'
+          AND p."createdAt" >= $1 AND p."createdAt" <= $2
+          AND s."paymentProvider" = 'APPLE'
+      `, startOfMonth, endOfMonth),
+    ]);
+
+    const grossIncomeTotal = Number(grossTotalAgg._sum.amount ?? 0);
+    const incomeThisMonth = Number(incomeThisMonthAgg._sum.amount ?? 0);
+    const openAIThisMonth = Number(openAIThisMonthAgg._sum.totalCost ?? 0);
+
+    const stripeFeesThisMonth = stripePaymentsThisMonth.reduce(
+      (sum, p) => sum + (p.amount * PAYMENT_FEES.stripe.percentage + PAYMENT_FEES.stripe.fixed),
+      0
+    );
+    const rcFeesThisMonth = rcPaymentsThisMonth.reduce(
+      (sum, p) => sum + p.amount * (PAYMENT_FEES.revenueCat.apple + PAYMENT_FEES.revenueCat.revenueCat),
+      0
+    );
+    const variableExpensesThisMonth = openAIThisMonth + stripeFeesThisMonth + rcFeesThisMonth;
+    const fixedExpensesThisMonth = TOTAL_FIXED_MONTHLY;
+    const totalExpensesThisMonth = fixedExpensesThisMonth + variableExpensesThisMonth;
+
+    // Cash flow: positivo = profit, negativo = burn
+    const cashFlowThisMonth = incomeThisMonth - totalExpensesThisMonth;
+    // Burn rate: positivo = pérdida mensual neta, negativo = ganancia mensual
+    const burnRate = -cashFlowThisMonth;
+
+    // Runway: cuántos meses dura el bruto acumulado al ritmo de burn actual
+    // Si no hay burn (cashFlow ≥ 0) → infinito (representado como null)
+    const runway = burnRate > 0
+      ? Math.round((grossIncomeTotal / burnRate) * 10) / 10
+      : null;
+
+    // Estado: clasificación cualitativa
+    let estado: 'Sostenible' | 'Precaución' | 'Crítico';
+    if (cashFlowThisMonth >= 0) {
+      estado = 'Sostenible';
+    } else if (runway !== null && runway >= 6) {
+      estado = 'Precaución';
+    } else {
+      estado = 'Crítico';
+    }
+
+    return {
+      grossIncomeTotal: Math.round(grossIncomeTotal * 100) / 100,
+      incomeThisMonth: Math.round(incomeThisMonth * 100) / 100,
+      expensesThisMonth: Math.round(totalExpensesThisMonth * 100) / 100,
+      fixedExpensesThisMonth: Math.round(fixedExpensesThisMonth * 100) / 100,
+      variableExpensesThisMonth: Math.round(variableExpensesThisMonth * 100) / 100,
+      cashFlowThisMonth: Math.round(cashFlowThisMonth * 100) / 100,
+      burnRate: Math.round(burnRate * 100) / 100,
+      runway, // meses, o null si no hay burn
+      estado,
+      trackingStartDate: FINANCIAL_TRACKING_START.toISOString().split('T')[0],
+      currentMonth: {
+        from: startOfMonth.toISOString().split('T')[0],
+        to: endOfMonth.toISOString().split('T')[0],
+      },
     };
   }
 

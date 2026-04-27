@@ -53,3 +53,7 @@ export const PAYMENT_FEES = {
     // Total efectivo sobre gross: 31%
   },
 };
+
+// ── Tracking financiero ──────────────────────────────────────────────
+// Fecha desde la que contamos ingresos brutos acumulados (lanzamiento monetización).
+export const FINANCIAL_TRACKING_START = new Date('2026-04-01T00:00:00Z');

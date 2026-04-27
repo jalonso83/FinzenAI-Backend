@@ -56,6 +56,15 @@ export const getUnitEconomics = async (req: Request, res: Response) => {
   }
 };
 
+export const getFinancialHealth = async (_req: Request, res: Response) => {
+  try {
+    const data = await AdminService.getFinancialHealth();
+    return res.json({ message: 'Financial health retrieved', data });
+  } catch (error) {
+    return handleError(res, 'financial health', error);
+  }
+};
+
 export const getUsersList = async (req: Request, res: Response) => {
   try {
     const data = await AdminService.getUsersList(req.query as any);
