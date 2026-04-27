@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
+import { promises as dns } from 'dns';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
@@ -10,6 +11,29 @@ import { ReferralService } from '../services/referralService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
 
 import { logger } from '../utils/logger';
+
+/**
+ * Valida que el dominio del email tenga MX records configurados.
+ * Bloquea typos como gmail.con, gmail.comr, dominios falsos, etc.
+ * Tiene timeout de 3 segundos para no bloquear el register en caso de DNS lento.
+ */
+async function isValidEmailDomain(email: string): Promise<boolean> {
+  const domain = email.split('@')[1];
+  if (!domain) return false;
+
+  try {
+    const records = await Promise.race([
+      dns.resolveMx(domain),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('DNS timeout')), 3000)
+      ),
+    ]);
+    return Array.isArray(records) && records.length > 0;
+  } catch (err) {
+    logger.warn(`[Auth] Email domain validation failed for ${domain}:`, err);
+    return false;
+  }
+}
 
 // Constantes
 const MIN_PASSWORD_LENGTH = 12;
@@ -266,6 +290,14 @@ export const register = async (req: Request, res: Response) => {
     const validation = validateRegistrationData({ ...registerData, email });
     if (!validation.valid) {
       return res.status(400).json({ error: 'Validation error', message: validation.error });
+    }
+
+    // 1.5. Validar que el dominio del email sea real (bloquea gmail.con, etc.)
+    if (!(await isValidEmailDomain(email))) {
+      return res.status(400).json({
+        error: 'Invalid email domain',
+        message: 'El dominio del correo no parece válido. Verifica que esté escrito correctamente.'
+      });
     }
 
     // 2. Verificar si el usuario ya existe
