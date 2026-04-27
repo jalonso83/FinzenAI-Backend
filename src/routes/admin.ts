@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
 import { authenticateAdmin } from '../middlewares/adminAuth';
 import { strictApiLimiter } from '../config/rateLimiter';
-import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUsersList, getDistinctCountries } from '../controllers/admin';
+import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getUsersList, getDistinctCountries } from '../controllers/admin';
 
 const router: ExpressRouter = Router();
 
@@ -16,5 +16,6 @@ router.get('/users/countries', getDistinctCountries);
 router.get('/users', getUsersAnalytics);
 router.get('/revenue', getRevenueAnalytics);
 router.get('/engagement', getEngagement);
+router.get('/unit-economics', getUnitEconomics);
 
 export default router;

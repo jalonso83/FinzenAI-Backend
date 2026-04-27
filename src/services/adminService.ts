@@ -2,6 +2,11 @@ import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { PLAN_PRICES } from '../config/adminConfig';
 import { getPlanFromPriceId, PLANS } from '../config/stripe';
+import {
+  FIXED_OPERATING_COSTS,
+  TOTAL_FIXED_MONTHLY,
+  PAYMENT_FEES,
+} from '../config/operatingCosts';
 import { logger } from '../utils/logger';
 
 interface UsersListQuery {
@@ -824,6 +829,203 @@ export class AdminService {
         count: r._count.country,
       })),
       period: { from, to },
+    };
+  }
+
+  // ─── UNIT ECONOMICS ──────────────────────────────────────
+  static async getUnitEconomics(query: { from?: string; to?: string }) {
+    const { from, to } = parseDateRange(query);
+
+    // Days in selected period (used to scale variable costs to monthly).
+    const periodDays = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000));
+    const monthlyScale = 30 / periodDays;
+
+    const [
+      activeUsersWithTx,
+      totalActiveSubs,
+      currentMrrByPlan,
+      openAICostInPeriod,
+      stripePayments,
+      revenueCatPayments,
+    ] = await Promise.all([
+      // Users with ≥1 tx in period (active users denominator)
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT "userId")::bigint as cnt
+        FROM transactions
+        WHERE date >= $1 AND date <= $2
+      `, from, to),
+
+      // Active paid subscriptions (for ARPU)
+      prisma.subscription.count({
+        where: { status: 'ACTIVE', plan: { not: 'FREE' } },
+      }),
+
+      // Active subs with priceId (for MRR calc)
+      prisma.subscription.findMany({
+        where: { status: 'ACTIVE', plan: { not: 'FREE' } },
+        select: { plan: true, stripePriceId: true },
+      }),
+
+      // OpenAI cost in period
+      prisma.openAIDailyUsage.aggregate({
+        where: { date: { gte: from, lte: to } },
+        _sum: { totalCost: true },
+      }),
+
+      // Stripe payments in period (for fees calc)
+      prisma.$queryRawUnsafe<{ amount: number }[]>(`
+        SELECT p.amount
+        FROM payments p
+        INNER JOIN subscriptions s ON s.id = p."subscriptionId"
+        WHERE p.status = 'SUCCEEDED'
+          AND p."createdAt" >= $1 AND p."createdAt" <= $2
+          AND s."paymentProvider" = 'STRIPE'
+      `, from, to),
+
+      // RevenueCat (Apple) payments in period
+      prisma.$queryRawUnsafe<{ amount: number }[]>(`
+        SELECT p.amount
+        FROM payments p
+        INNER JOIN subscriptions s ON s.id = p."subscriptionId"
+        WHERE p.status = 'SUCCEEDED'
+          AND p."createdAt" >= $1 AND p."createdAt" <= $2
+          AND s."paymentProvider" = 'APPLE'
+      `, from, to),
+    ]);
+
+    // ── MRR del período (mensual recurrente actual) ────────────────
+    let mrrCurrent = 0;
+    currentMrrByPlan.forEach(sub => {
+      const planConfig = PLANS[sub.plan as keyof typeof PLANS];
+      if (!planConfig) return;
+      let billingPeriod: 'monthly' | 'yearly' = 'monthly';
+      if (sub.stripePriceId) {
+        const priceInfo = getPlanFromPriceId(sub.stripePriceId);
+        if (priceInfo?.billingPeriod === 'yearly') billingPeriod = 'yearly';
+      }
+      mrrCurrent += billingPeriod === 'yearly'
+        ? planConfig.price.yearly / 12
+        : planConfig.price.monthly;
+    });
+
+    // ── Variable costs (cash basis del período, escalados a mensual) ─
+    const openAICostPeriod = Number(openAICostInPeriod._sum.totalCost ?? 0);
+    const openAICostMonthly = openAICostPeriod * monthlyScale;
+
+    // Stripe fees: 2.9% × amount + $0.30 por payment
+    const stripeFeesPeriod = stripePayments.reduce(
+      (sum, p) => sum + (p.amount * PAYMENT_FEES.stripe.percentage + PAYMENT_FEES.stripe.fixed),
+      0
+    );
+    const stripeFeesMonthly = stripeFeesPeriod * monthlyScale;
+
+    // RevenueCat fees: 30% Apple + 1% RC = 31% del gross
+    const rcFeesPeriod = revenueCatPayments.reduce(
+      (sum, p) => sum + p.amount * (PAYMENT_FEES.revenueCat.apple + PAYMENT_FEES.revenueCat.revenueCat),
+      0
+    );
+    const rcFeesMonthly = rcFeesPeriod * monthlyScale;
+
+    const totalVariableMonthly = openAICostMonthly + stripeFeesMonthly + rcFeesMonthly;
+
+    // ── Costo total mensual ────────────────────────────────────────
+    const totalCostMonthly = TOTAL_FIXED_MONTHLY + totalVariableMonthly;
+
+    // ── Métricas derivadas ─────────────────────────────────────────
+    const activeUsers = Number(activeUsersWithTx[0]?.cnt ?? 0);
+    const arpu = totalActiveSubs > 0 ? mrrCurrent / totalActiveSubs : 0;
+
+    const costPerUser = activeUsers > 0 ? totalCostMonthly / activeUsers : 0;
+    const costAIPerUser = activeUsers > 0 ? openAICostMonthly / activeUsers : 0;
+    const costInfraPerUser = activeUsers > 0 ? TOTAL_FIXED_MONTHLY / activeUsers : 0;
+
+    // Margen Bruto = (MRR - costos variables) / MRR × 100.
+    // Solo variable costs porque margen bruto excluye fijos por convención SaaS.
+    const grossMargin = mrrCurrent > 0
+      ? ((mrrCurrent - totalVariableMonthly) / mrrCurrent) * 100
+      : 0;
+
+    // Break-Even users: costos fijos mensuales / contribución por user
+    // Contribución por user = ARPU − (costo variable promedio por user pagador)
+    const variableCostPerPayingUser = totalActiveSubs > 0
+      ? totalVariableMonthly / totalActiveSubs
+      : 0;
+    const contribPerUser = arpu - variableCostPerPayingUser;
+    const breakEvenUsers = contribPerUser > 0
+      ? Math.ceil(TOTAL_FIXED_MONTHLY / contribPerUser)
+      : null; // null = imposible con margen actual
+
+    const progressBreakEven = breakEvenUsers && breakEvenUsers > 0
+      ? Math.min(100, Math.round((totalActiveSubs / breakEvenUsers) * 100))
+      : 0;
+
+    // ── Cost breakdown para tabla (todos los conceptos) ────────────
+    const breakdownItems = [
+      ...FIXED_OPERATING_COSTS.map(c => ({
+        concepto: c.name,
+        category: c.category,
+        costo: Math.round(c.monthlyAmount * 100) / 100,
+        type: 'fixed' as const,
+      })),
+      {
+        concepto: 'OpenAI API',
+        category: 'variable' as const,
+        costo: Math.round(openAICostMonthly * 100) / 100,
+        type: 'variable' as const,
+      },
+      {
+        concepto: 'Stripe fees',
+        category: 'variable' as const,
+        costo: Math.round(stripeFeesMonthly * 100) / 100,
+        type: 'variable' as const,
+      },
+      {
+        concepto: 'RevenueCat + Apple fees',
+        category: 'variable' as const,
+        costo: Math.round(rcFeesMonthly * 100) / 100,
+        type: 'variable' as const,
+      },
+    ];
+
+    const totalForPct = breakdownItems.reduce((s, i) => s + i.costo, 0);
+    const breakdown = breakdownItems
+      .map(i => ({
+        ...i,
+        porcentaje: totalForPct > 0 ? Math.round((i.costo / totalForPct) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.costo - a.costo);
+
+    return {
+      // Costos fijos
+      fixedCosts: {
+        items: FIXED_OPERATING_COSTS,
+        total: Math.round(TOTAL_FIXED_MONTHLY * 100) / 100,
+      },
+      // Costos variables (escalados a equivalente mensual)
+      variableCosts: {
+        openAI: Math.round(openAICostMonthly * 100) / 100,
+        stripeFees: Math.round(stripeFeesMonthly * 100) / 100,
+        revenueCatFees: Math.round(rcFeesMonthly * 100) / 100,
+        total: Math.round(totalVariableMonthly * 100) / 100,
+      },
+      totalCostMonthly: Math.round(totalCostMonthly * 100) / 100,
+      // Métricas por usuario
+      costPerUser: Math.round(costPerUser * 100) / 100,
+      costAIPerUser: Math.round(costAIPerUser * 100) / 100,
+      costInfraPerUser: Math.round(costInfraPerUser * 100) / 100,
+      // Margen y break-even
+      grossMargin: Math.round(grossMargin * 100) / 100,
+      breakEven: {
+        usersNeeded: breakEvenUsers,
+        currentPayingUsers: totalActiveSubs,
+        progressPct: progressBreakEven,
+      },
+      mrrCurrent: Math.round(mrrCurrent * 100) / 100,
+      arpu: Math.round(arpu * 100) / 100,
+      activeUsers,
+      // Tabla de desglose
+      breakdown,
+      period: { from, to, days: periodDays },
     };
   }
 

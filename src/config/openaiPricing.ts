@@ -31,6 +31,10 @@ export const OPENAI_PRICING = {
     // $0.003 por minuto de audio (aproximadamente)
     perMinute: 0.003,
   },
+  'whisper-1': {
+    // $0.006 por minuto (pricing oficial de OpenAI Whisper)
+    perMinute: 0.006,
+  },
   'gpt-4o-mini-tts': {
     // $0.015 por 1000 caracteres
     perCharacter: 0.015 / 1_000,
