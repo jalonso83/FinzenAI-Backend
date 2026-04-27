@@ -289,7 +289,18 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 // =============================================
 
 async function executeOnboardingV21(args: any, userId: string, userName: string): Promise<any> {
-  const isCompleted = args.estado_onboarding === 'completado';
+  // Auto-detect: el AI a veces omite o marca mal `estado_onboarding`.
+  // Si tiene todos los campos required (meta + desafío + fondo emergencia)
+  // y NO está explícitamente marcado como abandonado, considerarlo completo.
+  // Esto evita que users que terminaron la conversación queden con onboardingCompleted=false.
+  const hasAllRequired = !!(
+    args.meta_financiera &&
+    args.desafio_financiero &&
+    args.fondo_emergencia
+  );
+  const isCompleted =
+    args.estado_onboarding === 'completado' ||
+    (hasAllRequired && args.estado_onboarding !== 'abandonado');
 
   await prisma.onboarding.upsert({
     where: { userId },
