@@ -842,6 +842,7 @@ export class AdminService {
 
     const [
       activeUsersWithTx,
+      totalRegisteredUsers,
       totalActiveSubs,
       currentMrrByPlan,
       openAICostInPeriod,
@@ -854,6 +855,9 @@ export class AdminService {
         FROM transactions
         WHERE date >= $1 AND date <= $2
       `, from, to),
+
+      // Total users registered ever (for per-total-user metrics)
+      prisma.user.count(),
 
       // Active paid subscriptions (for ARPU)
       prisma.subscription.count({
@@ -933,11 +937,22 @@ export class AdminService {
 
     // ── Métricas derivadas ─────────────────────────────────────────
     const activeUsers = Number(activeUsersWithTx[0]?.cnt ?? 0);
+    const totalUsers = totalRegisteredUsers;
     const arpu = totalActiveSubs > 0 ? mrrCurrent / totalActiveSubs : 0;
 
+    // Por usuario activo (los que generan carga real este período)
     const costPerUser = activeUsers > 0 ? totalCostMonthly / activeUsers : 0;
     const costAIPerUser = activeUsers > 0 ? openAICostMonthly / activeUsers : 0;
     const costInfraPerUser = activeUsers > 0 ? TOTAL_FIXED_MONTHLY / activeUsers : 0;
+
+    // Por usuario total (incluye dormidos — vista alternativa más conservadora)
+    const costPerTotalUser = totalUsers > 0 ? totalCostMonthly / totalUsers : 0;
+    const costAIPerTotalUser = totalUsers > 0 ? openAICostMonthly / totalUsers : 0;
+    const costInfraPerTotalUser = totalUsers > 0 ? TOTAL_FIXED_MONTHLY / totalUsers : 0;
+
+    // Cash flow mensual: MRR menos costo total
+    // Negativo = pérdida (burn), positivo = ganancia
+    const cashFlowMonthly = mrrCurrent - totalCostMonthly;
 
     // Margen Bruto = (MRR - costos variables) / MRR × 100.
     // Solo variable costs porque margen bruto excluye fijos por convención SaaS.
@@ -945,15 +960,33 @@ export class AdminService {
       ? ((mrrCurrent - totalVariableMonthly) / mrrCurrent) * 100
       : 0;
 
-    // Break-Even users: costos fijos mensuales / contribución por user
-    // Contribución por user = ARPU − (costo variable promedio por user pagador)
-    const variableCostPerPayingUser = totalActiveSubs > 0
-      ? totalVariableMonthly / totalActiveSubs
-      : 0;
+    // Break-Even users: costos fijos mensuales / contribución por user.
+    // La "contribución" es lo que cada paying user aporta a cubrir costos fijos
+    // DESPUÉS de cubrir su propio costo variable.
+    //
+    // Costo variable POR PAYING USER ADICIONAL:
+    //   1) Su cuota proporcional de OpenAI (asumimos uso similar al activo promedio)
+    //   2) Sus fees de pago (calculados como tasa blended observada × ARPU)
+    //
+    // NOTA: la fórmula anterior dividía TODO el costo variable entre paying users,
+    // lo cual era incorrecto porque OpenAI lo consumen también los free users.
+    const openAIPerActiveUser = activeUsers > 0 ? openAICostMonthly / activeUsers : 0;
+
+    // Tasa de fees observada (Stripe ~3%, Apple+RC ~31%) ponderada por revenue real
+    const totalRevenuePeriod =
+      stripePayments.reduce((s, p) => s + p.amount, 0) +
+      revenueCatPayments.reduce((s, p) => s + p.amount, 0);
+    const totalFeesPeriod = stripeFeesPeriod + rcFeesPeriod;
+    const blendedFeeRate = totalRevenuePeriod > 0
+      ? totalFeesPeriod / totalRevenuePeriod
+      : PAYMENT_FEES.stripe.percentage; // fallback: solo Stripe %
+    const paymentFeePerPayingUser = arpu * blendedFeeRate;
+
+    const variableCostPerPayingUser = openAIPerActiveUser + paymentFeePerPayingUser;
     const contribPerUser = arpu - variableCostPerPayingUser;
     const breakEvenUsers = contribPerUser > 0
       ? Math.ceil(TOTAL_FIXED_MONTHLY / contribPerUser)
-      : null; // null = imposible con margen actual
+      : null; // null = imposible (ARPU no cubre ni los costos variables — revisar pricing)
 
     const progressBreakEven = breakEvenUsers && breakEvenUsers > 0
       ? Math.min(100, Math.round((totalActiveSubs / breakEvenUsers) * 100))
@@ -1009,10 +1042,16 @@ export class AdminService {
         total: Math.round(totalVariableMonthly * 100) / 100,
       },
       totalCostMonthly: Math.round(totalCostMonthly * 100) / 100,
-      // Métricas por usuario
+      // Cash flow mensual: positivo=profit, negativo=burn
+      cashFlowMonthly: Math.round(cashFlowMonthly * 100) / 100,
+      // Métricas por usuario activo (con tx en período)
       costPerUser: Math.round(costPerUser * 100) / 100,
       costAIPerUser: Math.round(costAIPerUser * 100) / 100,
       costInfraPerUser: Math.round(costInfraPerUser * 100) / 100,
+      // Métricas por usuario total (incluye dormidos)
+      costPerTotalUser: Math.round(costPerTotalUser * 100) / 100,
+      costAIPerTotalUser: Math.round(costAIPerTotalUser * 100) / 100,
+      costInfraPerTotalUser: Math.round(costInfraPerTotalUser * 100) / 100,
       // Margen y break-even
       grossMargin: Math.round(grossMargin * 100) / 100,
       breakEven: {
@@ -1023,6 +1062,7 @@ export class AdminService {
       mrrCurrent: Math.round(mrrCurrent * 100) / 100,
       arpu: Math.round(arpu * 100) / 100,
       activeUsers,
+      totalUsers,
       // Tabla de desglose
       breakdown,
       period: { from, to, days: periodDays },
