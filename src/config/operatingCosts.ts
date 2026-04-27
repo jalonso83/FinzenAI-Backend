@@ -33,7 +33,7 @@ export const FIXED_OPERATING_COSTS: FixedCost[] = [
   { name: 'Claude (dev)', category: 'tools', monthlyAmount: 200.00 },
 
   // ── Marketing ────────────────────────────────────────────────────
-  { name: 'Marketing', category: 'marketing', monthlyAmount: 100.00 },
+  { name: 'Marketing', category: 'marketing', monthlyAmount: 175.00 },
 ];
 
 export const TOTAL_FIXED_MONTHLY = FIXED_OPERATING_COSTS.reduce(
@@ -54,6 +54,3 @@ export const PAYMENT_FEES = {
   },
 };
 
-// ── Tracking financiero ──────────────────────────────────────────────
-// Fecha desde la que contamos ingresos brutos acumulados (lanzamiento monetización).
-export const FINANCIAL_TRACKING_START = new Date('2026-04-01T00:00:00Z');

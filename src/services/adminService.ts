@@ -6,7 +6,6 @@ import {
   FIXED_OPERATING_COSTS,
   TOTAL_FIXED_MONTHLY,
   PAYMENT_FEES,
-  FINANCIAL_TRACKING_START,
 } from '../config/operatingCosts';
 import { logger } from '../utils/logger';
 
@@ -1090,12 +1089,10 @@ export class AdminService {
       stripePaymentsThisMonth,
       rcPaymentsThisMonth,
     ] = await Promise.all([
-      // 1) Ingreso Bruto Total (todos los pagos exitosos desde tracking start)
+      // 1) Ingreso Bruto Total: TODOS los pagos exitosos sin filtro de fecha.
+      // Es el dinero total que ha entrado a la empresa desde su existencia.
       prisma.payment.aggregate({
-        where: {
-          status: 'SUCCEEDED',
-          createdAt: { gte: FINANCIAL_TRACKING_START },
-        },
+        where: { status: 'SUCCEEDED' },
         _sum: { amount: true },
       }),
 
@@ -1182,7 +1179,6 @@ export class AdminService {
       burnRate: Math.round(burnRate * 100) / 100,
       runway, // meses, o null si no hay burn
       estado,
-      trackingStartDate: FINANCIAL_TRACKING_START.toISOString().split('T')[0],
       currentMonth: {
         from: startOfMonth.toISOString().split('T')[0],
         to: endOfMonth.toISOString().split('T')[0],
