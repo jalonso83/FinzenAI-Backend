@@ -108,15 +108,18 @@ function validateRegistrationData(data: RegisterRequest): { valid: boolean; erro
 }
 
 /**
- * Envía email de verificación sin bloquear el registro
- * Genera token HMAC firmado con expiración de 24h
+ * Envía email de verificación sin bloquear el registro.
+ * Genera token HMAC firmado con expiración de 24h.
+ * Retorna true si se envió OK, false si hubo error (sin throwear).
  */
-async function sendVerificationEmailSafe(email: string, userId: string, name: string): Promise<void> {
+export async function sendVerificationEmailSafe(email: string, userId: string, name: string): Promise<boolean> {
   try {
     const token = generateVerificationToken(userId);
     await sendVerificationEmail(email, token, name);
+    return true;
   } catch (emailError) {
     logger.error('❌ Error enviando email de verificación:', emailError);
+    return false;
   }
 }
 
