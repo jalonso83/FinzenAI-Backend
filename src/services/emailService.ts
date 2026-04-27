@@ -118,20 +118,17 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
         .social-icons {
             display: flex;
             justify-content: center;
-            gap: 15px;
             margin-top: 15px;
         }
         .social-icon {
-            width: 40px;
-            height: 40px;
+            display: inline-block;
+            padding: 10px 20px;
             background-color: #204274;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            border-radius: 8px;
             text-decoration: none;
             color: white;
             font-weight: bold;
+            font-size: 14px;
             transition: background-color 0.3s;
         }
         .social-icon:hover {
@@ -174,7 +171,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
     <div class="email-container">
         <!-- Header -->
         <div class="header">
-            <img src="https://i.imgur.com/N1mxVXn.png" width="150"
+            <img src="https://finzenai.com/logo_email.png" alt="FinZen AI" width="150"
     style="display: block; margin: 0 auto 20px; border: none; outline: none; text-decoration: none;"
   />
             <p>Tu copiloto financiero</p>
@@ -228,17 +225,12 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
 
         <!-- Social Section -->
         <div class="social-section">
-            <h4>Mantente conectado con nosotros</h4>
-            <p>Síguenos en nuestras redes sociales para tips, estrategias y contenido exclusivo sobre finanzas inteligentes:</p>
-            
+            <h4>Síguenos en Instagram</h4>
+            <p>Tips, estrategias y contenido exclusivo sobre finanzas inteligentes:</p>
+
             <div class="social-icons">
-                <a href="#" class="social-icon" title="Instagram">📷</a>
-                <a href="#" class="social-icon" title="X (Twitter)">X</a>
+                <a href="https://www.instagram.com/finzenaiapp" target="_blank" rel="noopener" class="social-icon" title="@finzenaiapp en Instagram">@finzenaiapp</a>
             </div>
-            
-            <p style="font-size: 14px; margin-top: 15px; opacity: 0.9;">
-                <em>Próximamente: contenido exclusivo y estrategias avanzadas</em>
-            </p>
         </div>
 
         <!-- Footer -->
@@ -278,13 +270,19 @@ export const sendVerificationEmail = async (email: string, token: string, name: 
     const htmlContent = getEmailTemplate(name, token, email);
 
     logger.log('📤 Enviando email a:', email);
-    logger.log('📤 Desde: noreply@finzenai.com');
+    logger.log('📤 Desde: info@finzenai.com');
+
+    const unsubscribeUrl = `https://finzenai.com/unsubscribe?email=${encodeURIComponent(email)}`;
 
     const { data, error } = await resend.emails.send({
-      from: 'FinZen AI <noreply@finzenai.com>',
+      from: 'FinZen AI <info@finzenai.com>',
       to: email,
       subject: '¡Bienvenido a FinZen AI! - Confirma tu cuenta',
-      html: htmlContent
+      html: htmlContent,
+      headers: {
+        'List-Unsubscribe': `<${unsubscribeUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
     });
 
     if (error) {
@@ -417,8 +415,9 @@ const getPasswordResetTemplate = (name: string, resetCode: string) => {
     <div class="email-container">
         <!-- Header -->
         <div class="header">
-            <h1>🔐 Recupera tu contraseña</h1>
-            <p>FinZen AI - Tu copiloto financiero</p>
+            <img src="https://finzenai.com/logo_email.png" alt="FinZen AI" width="150"
+              style="display: block; margin: 0 auto 20px; border: none; outline: none; text-decoration: none;" />
+            <p>Recuperación de contraseña</p>
         </div>
 
         <!-- Content -->
@@ -490,11 +489,17 @@ export const sendPasswordResetEmail = async (email: string, resetCode: string, n
 
     logger.log('📤 Enviando email de reset a:', email);
 
+    const unsubscribeUrl = `https://finzenai.com/unsubscribe?email=${encodeURIComponent(email)}`;
+
     const { data, error } = await resend.emails.send({
-      from: 'FinZen AI <noreply@finzenai.com>',
+      from: 'FinZen AI <info@finzenai.com>',
       to: email,
-      subject: '🔐 Código de recuperación - FinZen AI',
-      html: htmlContent
+      subject: 'Tu código de acceso para FinZen',
+      html: htmlContent,
+      headers: {
+        'List-Unsubscribe': `<${unsubscribeUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
     });
 
     if (error) {
