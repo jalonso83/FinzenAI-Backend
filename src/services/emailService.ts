@@ -244,7 +244,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
                 © 2026 FinZen AI. Todos los derechos reservados.<br>
                 <a href="https://finzenai.com/privacy">Política de Privacidad</a> | 
                 <a href="https://finzenai.com/terms">Términos de Servicio</a> | 
-                <a href="https://finzenai.com/unsubscribe?email=${email}">Cancelar suscripción</a>
+                <a href="https://finzenai.com/delete-account">Eliminar cuenta</a>
             </p>
         </div>
     </div>
@@ -272,16 +272,17 @@ export const sendVerificationEmail = async (email: string, token: string, name: 
     logger.log('📤 Enviando email a:', email);
     logger.log('📤 Desde: info@finzenai.com');
 
-    const unsubscribeUrl = `https://finzenai.com/unsubscribe?email=${encodeURIComponent(email)}`;
-
+    // List-Unsubscribe: usamos mailto (manejado manualmente vía info@) +
+    // URL informativa que explica cómo darse de baja desde la app.
+    // NO incluimos List-Unsubscribe-Post (one-click) porque no tenemos un
+    // endpoint POST real de auto-baja.
     const { data, error } = await resend.emails.send({
       from: 'FinZen AI <info@finzenai.com>',
       to: email,
       subject: '¡Bienvenido a FinZen AI! - Confirma tu cuenta',
       html: htmlContent,
       headers: {
-        'List-Unsubscribe': `<${unsubscribeUrl}>`,
-        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        'List-Unsubscribe': `<mailto:info@finzenai.com?subject=Baja%20de%20emails>, <https://finzenai.com/delete-account>`,
       },
     });
 
@@ -489,16 +490,15 @@ export const sendPasswordResetEmail = async (email: string, resetCode: string, n
 
     logger.log('📤 Enviando email de reset a:', email);
 
-    const unsubscribeUrl = `https://finzenai.com/unsubscribe?email=${encodeURIComponent(email)}`;
-
+    // List-Unsubscribe: mailto manejado manualmente + URL informativa.
+    // No incluimos List-Unsubscribe-Post porque no tenemos endpoint POST real.
     const { data, error } = await resend.emails.send({
       from: 'FinZen AI <info@finzenai.com>',
       to: email,
       subject: 'Tu código de acceso para FinZen',
       html: htmlContent,
       headers: {
-        'List-Unsubscribe': `<${unsubscribeUrl}>`,
-        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        'List-Unsubscribe': `<mailto:info@finzenai.com?subject=Baja%20de%20emails>, <https://finzenai.com/delete-account>`,
       },
     });
 
