@@ -628,7 +628,7 @@ function getVerificationResultHtml(success: boolean, message: string, detail: st
     <div class="email-container">
         <!-- Header -->
         <div class="header">
-            <img src="https://i.imgur.com/N1mxVXn.png" width="150"
+            <img src="https://finzenai.com/logo_email.png" alt="FinZen AI" width="150"
                 style="display: block; margin: 0 auto 20px; border: none; outline: none; text-decoration: none;" />
             <p>Tu copiloto financiero</p>
         </div>

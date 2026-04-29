@@ -8,10 +8,10 @@ datasource db {
 }
 
 model User {
-  id                  String        @id @default(cuid())
+  id                  String    @id @default(cuid())
   name                String
   lastName            String
-  email               String        @unique
+  email               String    @unique
   password            String
   phone               String?
   birthDate           DateTime?
@@ -22,66 +22,70 @@ model User {
   preferredLanguage   String
   occupation          String?
   company             String?
-  verified            Boolean       @default(false)
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
-  onboarding          Boolean       @default(false)
-  onboardingCompleted Boolean       @default(false)
+  verified            Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  onboarding          Boolean   @default(false)
+  onboardingCompleted Boolean   @default(false)
 
   // Trial tracking
-  hasUsedTrial        Boolean       @default(false)
+  hasUsedTrial Boolean @default(false)
 
   // Password Reset Fields
-  resetCode           String?
-  resetCodeExpires    DateTime?
-  onboardingData      Onboarding?
-  budgets             Budget[]
-  transactions        Transaction[]
-  goals               Goal[]
-  
+  resetCode        String?
+  resetCodeExpires DateTime?
+  onboardingData   Onboarding?
+  budgets          Budget[]
+  transactions     Transaction[]
+  goals            Goal[]
+
   // Gamificación
-  gamificationEvents  GamificationEvent[]
-  finScoreHistory     FinScoreHistory[]
-  userStreak          UserStreak?
-  userBadges          UserBadge[]
+  gamificationEvents    GamificationEvent[]
+  finScoreHistory       FinScoreHistory[]
+  userStreak            UserStreak?
+  userBadges            UserBadge[]
   challengeParticipants ChallengeParticipant[]
 
   // Suscripciones y Pagos
-  subscription        Subscription?
-  payments            Payment[]
-  stripeCustomerId    String?       @unique
+  subscription     Subscription?
+  payments         Payment[]
+  stripeCustomerId String?       @unique
 
   // Email Sync
-  emailConnections    EmailConnection[]
+  emailConnections EmailConnection[]
 
   // Notificaciones Push (FCM)
-  devices                   UserDevice[]
-  notificationPreferences   NotificationPreferences?
+  devices                 UserDevice[]
+  notificationPreferences NotificationPreferences?
 
   // Recordatorios de Pago
-  paymentReminders          PaymentReminder[]
+  paymentReminders PaymentReminder[]
 
   // Sistema de Referidos
-  referralCode              ReferralCode?
-  referralsMade             Referral[]        @relation("ReferralsMade")
-  referralsReceived         Referral?         @relation("ReferralsReceived")
-  referralRewards           ReferralReward[]
+  referralCode      ReferralCode?
+  referralsMade     Referral[]       @relation("ReferralsMade")
+  referralsReceived Referral?        @relation("ReferralsReceived")
+  referralRewards   ReferralReward[]
 
   // Tips Financieros
-  tipHistory                UserTipHistory[]
+  tipHistory UserTipHistory[]
 
   // Reportes Semanales PRO
-  weeklyReports             WeeklyReport[]
+  weeklyReports WeeklyReport[]
 
   // Logs de notificaciones
-  notificationLogs          NotificationLog[]
+  notificationLogs NotificationLog[]
 
   // Mapeos de comercios personalizados
-  merchantMappings          MerchantCategoryMapping[]
+  merchantMappings MerchantCategoryMapping[]
 
   // Tracking de costos OpenAI
-  userModelUsage            UserModelUsage[]
-  openAIDailyUsage          OpenAIDailyUsage[]
+  userModelUsage   UserModelUsage[]
+  openAIDailyUsage OpenAIDailyUsage[]
+
+  // Marketing Attribution (tablas separadas, no agrega columnas a users)
+  attribution       UserAttribution?
+  attributionEvents AttributionEvent[]
 
   @@map("users")
 }
@@ -123,33 +127,33 @@ model Budget {
 }
 
 model Onboarding {
-  id                 String   @id @default(cuid())
-  userId             String   @unique
-  mainGoals          Json
-  mainChallenge      String
-  mainChallengeOther String?
-  savingHabit        String
-  emergencyFund      String
-  financialFeeling   String
-  incomeRange             String?
-  activationDescription   String?
-  onboardingStatus        String?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  mainGoals             Json
+  mainChallenge         String
+  mainChallengeOther    String?
+  savingHabit           String
+  emergencyFund         String
+  financialFeeling      String
+  incomeRange           String?
+  activationDescription String?
+  onboardingStatus      String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Category {
-  id           String          @id @default(cuid())
-  name         String
-  type         TransactionType
-  icon         String
-  isDefault    Boolean         @default(true)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  budgets      Budget[]
-  transactions Transaction[]
-  goals        Goal[]
+  id               String                    @id @default(cuid())
+  name             String
+  type             TransactionType
+  icon             String
+  isDefault        Boolean                   @default(true)
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  budgets          Budget[]
+  transactions     Transaction[]
+  goals            Goal[]
   merchantMappings MerchantCategoryMapping[]
 
   @@map("categories")
@@ -192,30 +196,30 @@ enum TransactionType {
 model GamificationEvent {
   id            String   @id @default(cuid())
   userId        String
-  eventType     String   // 'add_tx', 'goal_complete', 'budget_overspend', etc.
-  eventData     Json?    // Datos específicos del evento
+  eventType     String // 'add_tx', 'goal_complete', 'budget_overspend', etc.
+  eventData     Json? // Datos específicos del evento
   pointsAwarded Int      @default(0)
   createdAt     DateTime @default(now())
-  
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@map("gamification_events")
+
   @@index([userId, eventType])
   @@index([createdAt])
+  @@map("gamification_events")
 }
 
 // FinScore Histórico  
 model FinScoreHistory {
   id           String   @id @default(cuid())
   userId       String
-  score        Int      // 0-100
-  breakdown    Json     // {savings: 25, budget: 20, streak: 15, debt: 10}
+  score        Int // 0-100
+  breakdown    Json // {savings: 25, budget: 20, streak: 15, debt: 10}
   calculatedAt DateTime @default(now())
-  
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@map("finscore_history")
+
   @@index([userId, calculatedAt])
+  @@map("finscore_history")
 }
 
 // Sistema de Rachas
@@ -229,25 +233,25 @@ model UserStreak {
   salvividasUsedThisMonth Boolean   @default(false)
   lastSalvividasDate      DateTime?
   updatedAt               DateTime  @updatedAt
-  
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   @@map("user_streaks")
 }
 
 // Sistema de Badges
 model UserBadge {
-  id        String   @id @default(cuid())
-  userId    String
-  badgeId   String   // 'primer_paso', 'planificador', etc.
-  earnedAt  DateTime @default(now())
-  isFeatured Boolean @default(false)
-  
+  id         String   @id @default(cuid())
+  userId     String
+  badgeId    String // 'primer_paso', 'planificador', etc.
+  earnedAt   DateTime @default(now())
+  isFeatured Boolean  @default(false)
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   @@unique([userId, badgeId])
-  @@map("user_badges")
   @@index([userId])
+  @@map("user_badges")
 }
 
 // Desafíos Mensuales
@@ -257,35 +261,35 @@ model MonthlyChallenge {
   description   String
   startDate     DateTime
   endDate       DateTime
-  criteria      Json     // Criterios específicos del desafío
+  criteria      Json // Criterios específicos del desafío
   rewardBadgeId String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
-  
+
   participants ChallengeParticipant[]
-  
-  @@map("monthly_challenges")
+
   @@index([isActive, startDate, endDate])
+  @@map("monthly_challenges")
 }
 
 // Participación en Desafíos
 model ChallengeParticipant {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   userId      String
   challengeId String
-  joinedAt    DateTime @default(now())
-  progress    Json     @default("{}")
-  completed   Boolean  @default(false)
-  rank        Int?     // Para rankings
+  joinedAt    DateTime  @default(now())
+  progress    Json      @default("{}")
+  completed   Boolean   @default(false)
+  rank        Int? // Para rankings
   completedAt DateTime?
-  
+
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   challenge MonthlyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
-  
+
   @@unique([userId, challengeId])
-  @@map("challenge_participants")
   @@index([challengeId, completed])
   @@index([userId])
+  @@map("challenge_participants")
 }
 
 // Enums para Gamificación
@@ -322,36 +326,36 @@ enum BadgeType {
 // =============================================
 
 model Subscription {
-  id                   String             @id @default(cuid())
-  userId               String             @unique
-  plan                 SubscriptionPlan   @default(FREE)
-  status               SubscriptionStatus @default(ACTIVE)
-  stripeCustomerId     String?            @unique
-  stripeSubscriptionId String?            @unique
-  stripePriceId        String?
-  currentPeriodStart   DateTime?
-  currentPeriodEnd     DateTime?
-  cancelAtPeriodEnd    Boolean            @default(false)
-  trialEndsAt          DateTime?
-  trialStartedAt       DateTime?
-  trialNotificationsSent Json?            @default("[]") // Array of sent notification types: ["TRIAL_WELCOME", "TRIAL_DAY_3", etc.]
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  id                     String             @id @default(cuid())
+  userId                 String             @unique
+  plan                   SubscriptionPlan   @default(FREE)
+  status                 SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId       String?            @unique
+  stripeSubscriptionId   String?            @unique
+  stripePriceId          String?
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  cancelAtPeriodEnd      Boolean            @default(false)
+  trialEndsAt            DateTime?
+  trialStartedAt         DateTime?
+  trialNotificationsSent Json?              @default("[]") // Array of sent notification types: ["TRIAL_WELCOME", "TRIAL_DAY_3", etc.]
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 
   // Contador de consultas de Zenio AI
-  zenioQueriesUsed     Int                @default(0)
-  zenioQueriesResetAt  DateTime           @default(now())
+  zenioQueriesUsed    Int      @default(0)
+  zenioQueriesResetAt DateTime @default(now())
 
   // RevenueCat (In-App Purchases)
-  paymentProvider        PaymentProvider    @default(STRIPE)
-  revenueCatAppUserId    String?
-  originalTransactionId  String?
+  paymentProvider       PaymentProvider @default(STRIPE)
+  revenueCatAppUserId   String?
+  originalTransactionId String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("subscriptions")
   @@index([userId])
   @@index([status])
+  @@map("subscriptions")
 }
 
 model Payment {
@@ -368,9 +372,9 @@ model Payment {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("payments")
   @@index([userId])
   @@index([status])
+  @@map("payments")
 }
 
 enum SubscriptionPlan {
@@ -405,17 +409,17 @@ enum PaymentProvider {
 
 // Registro de dispositivos que ya usaron trial (anti-abuso)
 model TrialDeviceRegistry {
-  id              String   @id @default(cuid())
-  deviceId        String   @unique  // Identificador único del dispositivo
-  platform        String?           // ios, android
-  deviceName      String?           // "iPhone 15", "Samsung Galaxy S24"
-  usedByUserId    String            // Usuario que usó el trial
-  usedByEmail     String            // Email con el que se registró
-  usedAt          DateTime @default(now())
+  id           String   @id @default(cuid())
+  deviceId     String   @unique // Identificador único del dispositivo
+  platform     String? // ios, android
+  deviceName   String? // "iPhone 15", "Samsung Galaxy S24"
+  usedByUserId String // Usuario que usó el trial
+  usedByEmail  String // Email con el que se registró
+  usedAt       DateTime @default(now())
 
-  @@map("trial_device_registry")
   @@index([deviceId])
   @@index([usedByUserId])
+  @@map("trial_device_registry")
 }
 
 // =============================================
@@ -424,52 +428,52 @@ model TrialDeviceRegistry {
 
 // Conexion de email del usuario
 model EmailConnection {
-  id                  String              @id @default(cuid())
-  userId              String
-  provider            EmailProvider       @default(GMAIL)
-  email               String
-  accessToken         String
-  refreshToken        String?
-  tokenExpiresAt      DateTime?
-  isActive            Boolean             @default(true)
-  lastSyncAt          DateTime?
-  lastSyncStatus      EmailSyncStatus     @default(PENDING)
-  lastSyncError       String?
-  syncFrequencyHours  Int                 @default(1)
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  id                 String          @id @default(cuid())
+  userId             String
+  provider           EmailProvider   @default(GMAIL)
+  email              String
+  accessToken        String
+  refreshToken       String?
+  tokenExpiresAt     DateTime?
+  isActive           Boolean         @default(true)
+  lastSyncAt         DateTime?
+  lastSyncStatus     EmailSyncStatus @default(PENDING)
+  lastSyncError      String?
+  syncFrequencyHours Int             @default(1)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
-  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bankFilters         BankEmailFilter[]
-  importedEmails      ImportedBankEmail[]
-  syncLogs            EmailSyncLog[]
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bankFilters    BankEmailFilter[]
+  importedEmails ImportedBankEmail[]
+  syncLogs       EmailSyncLog[]
 
   @@unique([userId, provider])
-  @@map("email_connections")
   @@index([userId])
   @@index([isActive, lastSyncAt])
+  @@map("email_connections")
 }
 
 // Filtros de bancos configurados
 model BankEmailFilter {
-  id                String          @id @default(cuid())
+  id                String   @id @default(cuid())
   emailConnectionId String
   bankName          String
   senderEmails      String[]
   subjectKeywords   String[]
-  isActive          Boolean         @default(true)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  emailConnection   EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
+  emailConnection EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
 
-  @@map("bank_email_filters")
   @@index([emailConnectionId])
+  @@map("bank_email_filters")
 }
 
 // Emails bancarios importados
 model ImportedBankEmail {
-  id                String                @id @default(cuid())
+  id                String              @id @default(cuid())
   emailConnectionId String
   gmailMessageId    String
   subject           String
@@ -477,18 +481,18 @@ model ImportedBankEmail {
   receivedAt        DateTime
   rawContent        String?
   parsedData        Json?
-  status            ImportedEmailStatus   @default(PENDING)
+  status            ImportedEmailStatus @default(PENDING)
   errorMessage      String?
   transactionId     String?
-  createdAt         DateTime              @default(now())
+  createdAt         DateTime            @default(now())
   processedAt       DateTime?
 
-  emailConnection   EmailConnection       @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
+  emailConnection EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
 
   @@unique([emailConnectionId, gmailMessageId])
-  @@map("imported_bank_emails")
   @@index([emailConnectionId, status])
   @@index([gmailMessageId])
+  @@map("imported_bank_emails")
 }
 
 // Log de sincronizaciones
@@ -504,27 +508,27 @@ model EmailSyncLog {
   transactionsCreated Int             @default(0)
   errorMessage        String?
 
-  emailConnection     EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
+  emailConnection EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
 
-  @@map("email_sync_logs")
   @@index([emailConnectionId, startedAt])
+  @@map("email_sync_logs")
 }
 
 // Bancos soportados
 model SupportedBank {
-  id              String    @id @default(cuid())
-  name            String    @unique
-  country         String    @default("DO")
+  id              String   @id @default(cuid())
+  name            String   @unique
+  country         String   @default("DO")
   senderEmails    String[]
   subjectPatterns String[]
   parserTemplate  String?
-  isActive        Boolean   @default(true)
+  isActive        Boolean  @default(true)
   logoUrl         String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  @@map("supported_banks")
   @@index([country, isActive])
+  @@map("supported_banks")
 }
 
 enum EmailProvider {
@@ -555,14 +559,14 @@ enum ImportedEmailStatus {
 // =============================================
 
 model ExchangeRate {
-  id           String   @id @default(cuid())
-  currency     String   // Código ISO: EUR, USD, GBP, etc.
-  rateToDop    Float    // 1 unidad de esta moneda = X DOP
-  rateToUsd    Float    // 1 unidad de esta moneda = X USD (para cross-rates)
-  source       String   @default("ExchangeRate-API")
-  date         DateTime // Fecha de la tasa
+  id        String   @id @default(cuid())
+  currency  String // Código ISO: EUR, USD, GBP, etc.
+  rateToDop Float // 1 unidad de esta moneda = X DOP
+  rateToUsd Float // 1 unidad de esta moneda = X USD (para cross-rates)
+  source    String   @default("ExchangeRate-API")
+  date      DateTime // Fecha de la tasa
 
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([currency, date])
   @@index([currency])
@@ -576,58 +580,58 @@ model ExchangeRate {
 
 // Dispositivos del usuario para notificaciones push
 model UserDevice {
-  id          String   @id @default(cuid())
-  userId      String
-  fcmToken    String   @unique
-  platform    DevicePlatform
-  deviceName  String?
-  appVersion  String?
-  isActive    Boolean  @default(true)
-  lastUsedAt  DateTime @default(now())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String         @id @default(cuid())
+  userId     String
+  fcmToken   String         @unique
+  platform   DevicePlatform
+  deviceName String?
+  appVersion String?
+  isActive   Boolean        @default(true)
+  lastUsedAt DateTime       @default(now())
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("user_devices")
   @@index([userId, isActive])
   @@index([fcmToken])
+  @@map("user_devices")
 }
 
 // Preferencias de notificación del usuario
 model NotificationPreferences {
-  id                    String   @id @default(cuid())
-  userId                String   @unique
+  id     String @id @default(cuid())
+  userId String @unique
 
   // Tipos de notificaciones habilitadas
-  emailSyncEnabled      Boolean  @default(true)
-  budgetAlertsEnabled   Boolean  @default(true)
-  goalRemindersEnabled  Boolean  @default(true)
-  weeklyReportEnabled   Boolean  @default(true)
-  tipsEnabled           Boolean  @default(true)
-  paymentRemindersEnabled Boolean @default(true)
-  antExpenseAlertsEnabled Boolean @default(true)
+  emailSyncEnabled          Boolean @default(true)
+  budgetAlertsEnabled       Boolean @default(true)
+  goalRemindersEnabled      Boolean @default(true)
+  weeklyReportEnabled       Boolean @default(true)
+  tipsEnabled               Boolean @default(true)
+  paymentRemindersEnabled   Boolean @default(true)
+  antExpenseAlertsEnabled   Boolean @default(true)
   trialNotificationsEnabled Boolean @default(true)
 
   // Umbral de alerta de presupuesto (porcentaje)
-  budgetAlertThreshold  Int      @default(80)
+  budgetAlertThreshold Int @default(80)
 
   // Umbral de alerta de gastos hormiga (porcentaje del gasto total)
-  antExpenseAlertThreshold Int   @default(20)
+  antExpenseAlertThreshold Int @default(20)
 
   // Configuración de detección de gastos hormiga (PRO)
-  antExpenseAmountThreshold Int  @default(500)  // Monto máximo para considerar gasto hormiga
-  antExpenseMinFrequency    Int  @default(3)    // Frecuencia mínima de repeticiones
+  antExpenseAmountThreshold Int @default(500) // Monto máximo para considerar gasto hormiga
+  antExpenseMinFrequency    Int @default(3) // Frecuencia mínima de repeticiones
 
   // Frecuencia de recordatorio de metas (días sin contribuir: 0=nunca, 3, 7, 14, 30)
-  goalReminderFrequency    Int   @default(7)
+  goalReminderFrequency Int @default(7)
 
   // Horario de notificaciones (para evitar molestias)
-  quietHoursStart       Int?     // Hora en formato 24h (ej: 22 = 10pm)
-  quietHoursEnd         Int?     // Hora en formato 24h (ej: 8 = 8am)
+  quietHoursStart Int? // Hora en formato 24h (ej: 22 = 10pm)
+  quietHoursEnd   Int? // Hora en formato 24h (ej: 8 = 8am)
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -636,23 +640,23 @@ model NotificationPreferences {
 
 // Historial de notificaciones enviadas
 model NotificationLog {
-  id          String             @id @default(cuid())
-  userId      String
-  type        NotificationType
-  title       String
-  body        String
-  data        Json?
-  status      NotificationStatus @default(PENDING)
-  sentAt      DateTime?
-  readAt      DateTime?
+  id           String             @id @default(cuid())
+  userId       String
+  type         NotificationType
+  title        String
+  body         String
+  data         Json?
+  status       NotificationStatus @default(PENDING)
+  sentAt       DateTime?
+  readAt       DateTime?
   errorMessage String?
-  createdAt   DateTime           @default(now())
+  createdAt    DateTime           @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("notification_logs")
   @@index([userId, createdAt])
   @@index([type, status])
+  @@map("notification_logs")
 }
 
 enum DevicePlatform {
@@ -689,19 +693,19 @@ enum NotificationStatus {
 
 // Historial de tips financieros enviados (para evitar repetición)
 model UserTipHistory {
-  id        String   @id @default(cuid())
-  userId    String
-  tipHash   String   // Hash del contenido para detectar duplicados
-  title     String
-  content   String   @db.Text
-  category  String?  // spending, savings, goals, budget, seasonal, etc.
-  sentAt    DateTime @default(now())
+  id       String   @id @default(cuid())
+  userId   String
+  tipHash  String // Hash del contenido para detectar duplicados
+  title    String
+  content  String   @db.Text
+  category String? // spending, savings, goals, budget, seasonal, etc.
+  sentAt   DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("user_tip_history")
   @@index([userId, sentAt])
   @@index([userId, tipHash])
+  @@map("user_tip_history")
 }
 
 // =============================================
@@ -709,58 +713,58 @@ model UserTipHistory {
 // =============================================
 
 model PaymentReminder {
-  id              String          @id @default(cuid())
-  userId          String
+  id     String @id @default(cuid())
+  userId String
 
   // Información del pago
-  name            String          // "Visa Banco Popular", "Préstamo Auto"
-  type            PaymentType     @default(CREDIT_CARD)
+  name String // "Visa Banco Popular", "Préstamo Auto"
+  type PaymentType @default(CREDIT_CARD)
 
   // Fechas importantes
-  dueDay          Int             // Día de pago (1-31)
-  cutoffDay       Int?            // Día de corte (solo para tarjetas de crédito)
+  dueDay    Int // Día de pago (1-31)
+  cutoffDay Int? // Día de corte (solo para tarjetas de crédito)
 
   // Monto (opcional)
-  amount          Decimal?        @db.Decimal(12, 2)
-  currency        String          @default("DOP")
+  amount   Decimal? @db.Decimal(12, 2)
+  currency String   @default("DOP")
 
   // Límites de tarjeta de crédito (solo para CREDIT_CARD)
-  creditLimit     Decimal?        @db.Decimal(12, 2)  // Límite en moneda local
-  isDualCurrency  Boolean         @default(false)     // Si es tarjeta de doble saldo
-  creditLimitUSD  Decimal?        @db.Decimal(12, 2)  // Límite en USD (si es doble saldo)
+  creditLimit    Decimal? @db.Decimal(12, 2) // Límite en moneda local
+  isDualCurrency Boolean  @default(false) // Si es tarjeta de doble saldo
+  creditLimitUSD Decimal? @db.Decimal(12, 2) // Límite en USD (si es doble saldo)
 
   // Configuración de notificaciones
-  reminderDays    Int[]           @default([3, 1, 0]) // Días antes para notificar
-  notifyOnCutoff  Boolean         @default(false)     // Notificar en día de corte
+  reminderDays   Int[]   @default([3, 1, 0]) // Días antes para notificar
+  notifyOnCutoff Boolean @default(false) // Notificar en día de corte
 
   // Estado
-  isActive        Boolean         @default(true)
+  isActive Boolean @default(true)
 
   // Tracking de notificaciones
-  lastNotifiedAt  DateTime?
-  lastDueDate     DateTime?       // Última fecha de vencimiento calculada
+  lastNotifiedAt DateTime?
+  lastDueDate    DateTime? // Última fecha de vencimiento calculada
 
   // Notas adicionales
-  notes           String?
+  notes String?
 
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("payment_reminders")
   @@index([userId, isActive])
   @@index([dueDay])
+  @@map("payment_reminders")
 }
 
 enum PaymentType {
-  CREDIT_CARD   // Tarjeta de crédito
-  LOAN          // Préstamo
-  MORTGAGE      // Hipoteca
-  UTILITY       // Servicios (agua, luz, internet)
-  INSURANCE     // Seguros
-  SUBSCRIPTION  // Suscripciones
-  OTHER         // Otros
+  CREDIT_CARD // Tarjeta de crédito
+  LOAN // Préstamo
+  MORTGAGE // Hipoteca
+  UTILITY // Servicios (agua, luz, internet)
+  INSURANCE // Seguros
+  SUBSCRIPTION // Suscripciones
+  OTHER // Otros
 }
 
 // =============================================
@@ -769,37 +773,37 @@ enum PaymentType {
 
 // Mapeo de comercios a categorías (sistema de aprendizaje)
 model MerchantCategoryMapping {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Usuario (null = mapeo global)
-  userId          String?
+  userId String?
 
   // Nombre del comercio normalizado (uppercase, sin espacios extra)
-  merchantName    String
+  merchantName String
 
   // Patrón alternativo para variantes (ej: "FARM*" matchea "FARMACIA CAROL", "FARM RD", etc.)
   merchantPattern String?
 
   // Categoría asignada
-  categoryId      String
+  categoryId String
 
   // Estadísticas de uso
-  timesUsed       Int      @default(1)
+  timesUsed Int @default(1)
 
   // Para mapeos globales: cuántos usuarios diferentes lo confirmaron
-  confirmedByUsers Int     @default(1)
+  confirmedByUsers Int @default(1)
 
   // Origen del mapeo
-  source          MappingSource @default(USER_CORRECTION)
+  source MappingSource @default(USER_CORRECTION)
 
   // Confianza del mapeo (0-100) - para mapeos globales
-  confidence      Int      @default(100)
+  confidence Int @default(100)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  category        Category @relation(fields: [categoryId], references: [id])
-  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id])
+  user     User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Índices para búsqueda eficiente
   @@unique([userId, merchantName])
@@ -810,10 +814,10 @@ model MerchantCategoryMapping {
 }
 
 enum MappingSource {
-  USER_CORRECTION    // Usuario corrigió manualmente
-  ZENIO_CORRECTION   // Usuario corrigió via Zenio
-  AI_CONFIRMED       // IA categorizó y usuario no corrigió (alta confianza)
-  SYSTEM_DEFAULT     // Mapeo por defecto del sistema
+  USER_CORRECTION // Usuario corrigió manualmente
+  ZENIO_CORRECTION // Usuario corrigió via Zenio
+  AI_CONFIRMED // IA categorizó y usuario no corrigió (alta confianza)
+  SYSTEM_DEFAULT // Mapeo por defecto del sistema
 }
 
 // =============================================
@@ -822,68 +826,68 @@ enum MappingSource {
 
 // Código de referido único por usuario
 model ReferralCode {
-  id            String   @id @default(cuid())
-  userId        String   @unique
-  code          String   @unique  // FINZEN-JUAN-X7K9
-  isActive      Boolean  @default(true)
-  usageCount    Int      @default(0)
-  maxUsages     Int?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  code       String   @unique // FINZEN-JUAN-X7K9
+  isActive   Boolean  @default(true)
+  usageCount Int      @default(0)
+  maxUsages  Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  referrals     Referral[]
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referrals Referral[]
 
-  @@map("referral_codes")
   @@index([code])
+  @@map("referral_codes")
 }
 
 // Tracking de referido: referrer -> referee
 model Referral {
-  id              String         @id @default(cuid())
-  referralCodeId  String
-  referrerId      String
-  refereeId       String         @unique  // Solo puede ser referido una vez
-  refereeEmail    String
-  status          ReferralStatus @default(PENDING)
+  id             String         @id @default(cuid())
+  referralCodeId String
+  referrerId     String
+  refereeId      String         @unique // Solo puede ser referido una vez
+  refereeEmail   String
+  status         ReferralStatus @default(PENDING)
 
-  createdAt       DateTime       @default(now())
+  createdAt       DateTime  @default(now())
   convertedAt     DateTime?
   rewardedAt      DateTime?
   expiredAt       DateTime?
   stripeInvoiceId String?
 
-  referralCode    ReferralCode   @relation(fields: [referralCodeId], references: [id])
-  referrer        User           @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
-  referee         User           @relation("ReferralsReceived", fields: [refereeId], references: [id], onDelete: Cascade)
-  rewards         ReferralReward[]
+  referralCode ReferralCode     @relation(fields: [referralCodeId], references: [id])
+  referrer     User             @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
+  referee      User             @relation("ReferralsReceived", fields: [refereeId], references: [id], onDelete: Cascade)
+  rewards      ReferralReward[]
 
-  @@map("referrals")
   @@index([referrerId])
   @@index([status])
+  @@map("referrals")
 }
 
 // Tracking de recompensas ganadas/usadas
 model ReferralReward {
-  id            String       @id @default(cuid())
-  userId        String
-  referralId    String
-  type          RewardType
-  status        RewardStatus @default(PENDING)
-  value         Float
-  description   String
+  id          String       @id @default(cuid())
+  userId      String
+  referralId  String
+  type        RewardType
+  status      RewardStatus @default(PENDING)
+  value       Float
+  description String
 
-  stripeCouponId    String?
-  createdAt         DateTime  @default(now())
-  appliedAt         DateTime?
-  expiresAt         DateTime?
+  stripeCouponId String?
+  createdAt      DateTime  @default(now())
+  appliedAt      DateTime?
+  expiresAt      DateTime?
 
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  referral      Referral @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referral Referral @relation(fields: [referralId], references: [id], onDelete: Cascade)
 
-  @@map("referral_rewards")
   @@index([userId])
   @@index([status])
+  @@map("referral_rewards")
 }
 
 enum ReferralStatus {
@@ -913,11 +917,11 @@ enum RewardStatus {
 // Cache de precios de referencia para calculadoras
 model ReferencePrice {
   id          String   @id @default(cuid())
-  category    String   // 'housing', 'vehicle', 'business'
-  key         String   // 'apartment_economic', 'car_used', etc.
-  description String   // 'Apartamento económico (Sto. Dgo. Norte)'
-  amount      Int      // 3500000
-  source      String?  // 'AI Search - SuperCasas, Corotos'
+  category    String // 'housing', 'vehicle', 'business'
+  key         String // 'apartment_economic', 'car_used', etc.
+  description String // 'Apartamento económico (Sto. Dgo. Norte)'
+  amount      Int // 3500000
+  source      String? // 'AI Search - SuperCasas, Corotos'
   country     String   @default("DO") // País de referencia
   updatedAt   DateTime @updatedAt
   createdAt   DateTime @default(now())
@@ -930,13 +934,13 @@ model ReferencePrice {
 
 // Configuración del sistema de precios
 model ReferencePriceConfig {
-  id              String   @id @default(cuid())
-  country         String   @unique // 'DO', 'MX', etc.
-  cacheDays       Int      @default(90) // Días de validez del cache (3 meses)
-  lastFullUpdate  DateTime?
-  isUpdating      Boolean  @default(false)
-  updatedAt       DateTime @updatedAt
-  createdAt       DateTime @default(now())
+  id             String    @id @default(cuid())
+  country        String    @unique // 'DO', 'MX', etc.
+  cacheDays      Int       @default(90) // Días de validez del cache (3 meses)
+  lastFullUpdate DateTime?
+  isUpdating     Boolean   @default(false)
+  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime  @default(now())
 
   @@map("reference_price_configs")
 }
@@ -947,40 +951,40 @@ model ReferencePriceConfig {
 
 // Reportes semanales generados con IA para usuarios PRO
 model WeeklyReport {
-  id              String   @id @default(cuid())
-  userId          String
+  id     String @id @default(cuid())
+  userId String
 
   // Período del reporte
-  weekStart       DateTime // Fecha inicio de la semana (lunes)
-  weekEnd         DateTime // Fecha fin de la semana (domingo)
+  weekStart DateTime // Fecha inicio de la semana (lunes)
+  weekEnd   DateTime // Fecha fin de la semana (domingo)
 
   // Resumen financiero
-  totalIncome     Decimal  @db.Decimal(12, 2)
-  totalExpenses   Decimal  @db.Decimal(12, 2)
-  savingsRate     Float    // Porcentaje de ahorro
-  financialScore  Int      // Score 0-100
+  totalIncome    Decimal @db.Decimal(12, 2)
+  totalExpenses  Decimal @db.Decimal(12, 2)
+  savingsRate    Float // Porcentaje de ahorro
+  financialScore Int // Score 0-100
 
   // Datos detallados (JSON)
-  topCategories   Json     // Array de {category, amount, percentage}
-  budgetsStatus   Json     // Array de {name, spent, limit, percentage}
-  goalsProgress   Json     // Array de {name, current, target, percentage}
-  antExpenses     Json     // {total, percentage, topItems}
-  predictions     Json     // {endOfMonthSavings, budgetWarnings, etc}
+  topCategories Json // Array de {category, amount, percentage}
+  budgetsStatus Json // Array de {name, spent, limit, percentage}
+  goalsProgress Json // Array de {name, current, target, percentage}
+  antExpenses   Json // {total, percentage, topItems}
+  predictions   Json // {endOfMonthSavings, budgetWarnings, etc}
 
   // Análisis de IA
-  aiAnalysis      String   @db.Text // Texto largo del análisis de Zenio
-  recommendations Json     // Array de strings con recomendaciones
+  aiAnalysis      String @db.Text // Texto largo del análisis de Zenio
+  recommendations Json // Array de strings con recomendaciones
 
   // Comparativa con semana anterior
-  vsLastWeek      Json?    // {incomeChange, expensesChange, scoreChange}
+  vsLastWeek Json? // {incomeChange, expensesChange, scoreChange}
 
   // Tracking de visualización
-  viewedAt        DateTime? // null = no visto, fecha = visto
-  notifiedAt      DateTime? // Cuando se envió la notificación
+  viewedAt   DateTime? // null = no visto, fecha = visto
+  notifiedAt DateTime? // Cuando se envió la notificación
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, weekStart]) // Solo un reporte por semana por usuario
   @@index([userId, createdAt])
@@ -994,21 +998,21 @@ model WeeklyReport {
 
 // Sumatorias acumuladas de consumo por usuario-modelo-feature
 model UserModelUsage {
-  id String @id @default(cuid())
-  userId String
-  model String // "gpt-5.4-mini", "whisper-1", "gpt-4o-mini-tts"
+  id      String @id @default(cuid())
+  userId  String
+  model   String // "gpt-5.4-mini", "whisper-1", "gpt-4o-mini-tts"
   feature String // "zenio", "email_parser", "tip_engine", "weekly_report", "tts"
 
   // Contadores acumulados (se van sumando cada vez que se usa)
-  totalInputTokens Int @default(0)
-  totalOutputTokens Int @default(0)
-  totalDuration Int @default(0) // para Whisper/TTS en minutos
-  totalCallCount Int @default(0)
-  totalCost Decimal @db.Decimal(12, 8) // USD con 8 decimales de precisión
+  totalInputTokens  Int     @default(0)
+  totalOutputTokens Int     @default(0)
+  totalDuration     Int     @default(0) // para Whisper/TTS en minutos
+  totalCallCount    Int     @default(0)
+  totalCost         Decimal @db.Decimal(12, 8) // USD con 8 decimales de precisión
 
   lastUsedAt DateTime
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1019,19 +1023,19 @@ model UserModelUsage {
 
 // Agregados diarios para ver tendencias temporales
 model OpenAIDailyUsage {
-  id String @id @default(cuid())
+  id     String   @id @default(cuid())
   userId String
-  date DateTime @db.Date // Solo la fecha (sin hora)
+  date   DateTime @db.Date // Solo la fecha (sin hora)
 
   // Totales del día
-  totalInputTokens Int @default(0)
-  totalOutputTokens Int @default(0)
-  totalCallCount Int @default(0)
-  totalDuration Int @default(0) // minutos
-  totalCost Decimal @db.Decimal(12, 8)
+  totalInputTokens  Int     @default(0)
+  totalOutputTokens Int     @default(0)
+  totalCallCount    Int     @default(0)
+  totalDuration     Int     @default(0) // minutos
+  totalCost         Decimal @db.Decimal(12, 8)
 
   // Breakdown detallado (JSON)
-  costByModel Json? // { "gpt-5.4-mini": 2.50, "whisper-1": 0.80 }
+  costByModel   Json? // { "gpt-5.4-mini": 2.50, "whisper-1": 0.80 }
   costByFeature Json? // { "zenio": 2.00, "email_parser": 1.30 }
 
   createdAt DateTime @default(now())
@@ -1043,4 +1047,95 @@ model OpenAIDailyUsage {
   @@index([userId, date])
   @@index([date])
   @@map("openai_daily_usage")
+}
+
+// ─── Marketing Attribution ────────────────────────────────────────────
+// Tabla 1:1 con User. NO modifica la tabla users — relación por FK.
+// Solo se crea fila si el usuario llega con UTM/click_id.
+model UserAttribution {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // First-touch: cómo descubrió FinZen (cookie 90 días)
+  firstTouchSource      String?
+  firstTouchMedium      String?
+  firstTouchCampaign    String?
+  firstTouchTerm        String?
+  firstTouchContent     String?
+  firstTouchLandingPage String?
+  firstTouchAt          DateTime?
+
+  // Last-touch: qué canal lo convirtió en el signup (sessionStorage)
+  lastTouchSource   String?
+  lastTouchMedium   String?
+  lastTouchCampaign String?
+  lastTouchAt       DateTime?
+
+  // Click IDs para deduplicación con Conversion API
+  signupFbclid String?
+  signupTtclid String?
+  signupGclid  String?
+
+  // Para hash en Conversion API (Meta/TikTok los exigen)
+  signupIpAddress String?
+  signupUserAgent String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([firstTouchSource, firstTouchCampaign])
+  @@index([lastTouchSource])
+  @@index([signupFbclid])
+  @@index([signupTtclid])
+  @@map("user_attributions")
+}
+
+// Log granular de eventos de tracking. Soporta visitantes anónimos (anonymousId)
+// y se "stitchea" al userId cuando el usuario se registra.
+model AttributionEvent {
+  id String @id @default(cuid())
+
+  // Quién: userId si está autenticado, anonymousId para visitantes web
+  userId      String?
+  user        User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  anonymousId String?
+
+  // Evento
+  eventName String // "PageView", "Lead", "InitiateCheckout", "Subscribe", "Purchase"
+  eventId   String   @unique // UUID — clave de deduplicación Pixel↔CAPI
+  eventTime DateTime @default(now())
+
+  // Contexto
+  source      String?
+  medium      String?
+  campaign    String?
+  fbclid      String?
+  ttclid      String?
+  gclid       String?
+  pageUrl     String?
+  referrerUrl String?
+
+  // Para Conversion API server-side
+  ipAddress String?
+  userAgent String?
+
+  // Estado de envío (retry + debugging)
+  sentToMeta     Boolean @default(false)
+  sentToTiktok   Boolean @default(false)
+  metaResponse   Json?
+  tiktokResponse Json?
+
+  // Solo eventos transaccionales
+  value    Float?
+  currency String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, eventTime])
+  @@index([anonymousId, eventTime])
+  @@index([eventName, eventTime])
+  @@index([sentToMeta, eventTime])
+  @@index([sentToTiktok, eventTime])
+  @@map("attribution_events")
 }

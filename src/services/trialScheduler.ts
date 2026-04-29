@@ -113,36 +113,43 @@ export class TrialScheduler {
         try {
           const { user } = subscription;
 
-          // Verificar que el usuario tiene dispositivos activos
-          if (!user.devices || user.devices.length === 0) {
-            skipped++;
-            continue;
-          }
-
-          // Verificar preferencias de notificación
-          if (user.notificationPreferences && !user.notificationPreferences.trialNotificationsEnabled) {
-            skipped++;
-            continue;
-          }
-
-          // Calcular día del trial
-          const trialStartedAt = subscription.trialStartedAt!;
-          const trialEndsAt = subscription.trialEndsAt!;
-          const dayOfTrial = this.calculateDayOfTrial(trialStartedAt);
-          const daysRemaining = this.calculateDaysRemaining(trialEndsAt);
-
-          // Obtener notificaciones ya enviadas
+          const trialStartedAt = subscription.trialStartedAt;
+          const trialEndsAt = subscription.trialEndsAt;
           const sentNotifications = (subscription.trialNotificationsSent as string[]) || [];
 
-          // Verificar si el trial terminó
-          if (daysRemaining < 0) {
-            // Trial terminó - enviar notificación de fin y actualizar estado
+          // Defensive: la query filtra `not: null` pero por si acaso un row corrupto
+          // entra (manual edit en DB, etc.), saltamos en vez de crashear.
+          if (!trialStartedAt || !trialEndsAt) {
+            logger.warn(`[TrialScheduler] Suscripción ${subscription.id} en TRIALING sin trialStartedAt/trialEndsAt. Saltando.`);
+            skipped++;
+            continue;
+          }
+
+          // STEP 0 — Expiración SIEMPRE primero, sin importar devices ni notif preferences.
+          // Esto previene users stuck en TRIALING porque desinstalaron la app o
+          // desactivaron notifs (Bugs #1 y #2). Comparación directa de timestamps
+          // evita el bug de Math.ceil con valores negativos pequeños (Bug #4).
+          if (now.getTime() > trialEndsAt.getTime()) {
             if (!sentNotifications.includes('TRIAL_ENDED')) {
               await this.handleTrialEnded(subscription.id, user.id);
               trialsEnded++;
             }
             continue;
           }
+
+          // STEP 1 — Notificaciones diarias: SÍ requieren devices y preferences habilitadas
+          if (!user.devices || user.devices.length === 0) {
+            skipped++;
+            continue;
+          }
+
+          if (user.notificationPreferences && !user.notificationPreferences.trialNotificationsEnabled) {
+            skipped++;
+            continue;
+          }
+
+          // Calcular día del trial
+          const dayOfTrial = this.calculateDayOfTrial(trialStartedAt);
 
           // Buscar la notificación correspondiente al día actual
           const notificationToSend = TRIAL_NOTIFICATIONS.find(n => n.day === dayOfTrial);
@@ -186,15 +193,6 @@ export class TrialScheduler {
     const diffTime = now.getTime() - trialStartedAt.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return Math.max(1, Math.min(diffDays, 8)); // Entre 1 y 8
-  }
-
-  /**
-   * Calcula días restantes del trial
-   */
-  private static calculateDaysRemaining(trialEndsAt: Date): number {
-    const now = new Date();
-    const diffTime = trialEndsAt.getTime() - now.getTime();
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   }
 
   /**
@@ -280,11 +278,46 @@ export class TrialScheduler {
         return;
       }
 
-      // Es un trial real (sin pago) — proceder con downgrade
-      // Enviar notificación de trial terminado
-      await NotificationService.notifyTrialEnded(userId);
+      // GOOGLE Play (paralelo a APPLE): hoy no hay path activo de IAP Google,
+      // pero el schema admite el valor — guardamos por si entra una suscripción real.
+      if (subscription.paymentProvider === 'GOOGLE' && subscription.revenueCatAppUserId) {
+        logger.warn(`[TrialScheduler] ⚠️ Suscripción ${subscriptionId} tiene compra Google/RevenueCat. NO se degrada usuario ${userId}.`);
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: { status: 'ACTIVE', trialStartedAt: null, trialEndsAt: null }
+        });
+        return;
+      }
 
-      // Eliminar conexiones de email (email sync es exclusivo PRO)
+      // Es un trial real (sin pago) — proceder con downgrade
+      logger.log(`[TrialScheduler] ⏰ Trial expirado de usuario ${userId} (sub ${subscriptionId}). Degradando a FREE.`);
+      const sentNotifications = (subscription.trialNotificationsSent as string[]) || [];
+
+      // CRÍTICO: el update de la suscripción va PRIMERO. Si las operaciones de
+      // best-effort de abajo (notificación, cleanup de email) fallan, el cambio
+      // de status ya quedó persistido y el user no se queda stuck en TRIALING.
+      await prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: {
+          status: 'ACTIVE',
+          plan: 'FREE',
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialNotificationsSent: [...sentNotifications, 'TRIAL_ENDED']
+        }
+      });
+
+      logger.log(`[TrialScheduler] 🔄 Trial terminado para usuario ${userId} - Cambiado a plan FREE`);
+
+      // Notificación: best-effort. Si falla (FCM caído, token inválido, etc.)
+      // logueamos y seguimos — el trial ya terminó correctamente en DB.
+      try {
+        await NotificationService.notifyTrialEnded(userId);
+      } catch (notifError) {
+        logger.warn(`[TrialScheduler] Notif TRIAL_ENDED falló para user ${userId} (sub ${subscriptionId}) — trial ya terminado en DB:`, notifError);
+      }
+
+      // Eliminar conexiones de email (email sync es exclusivo PRO): best-effort
       try {
         const deletedConnections = await EmailSyncService.deleteAllUserEmailConnections(userId);
         if (deletedConnections > 0) {
@@ -293,20 +326,6 @@ export class TrialScheduler {
       } catch (emailError) {
         logger.warn(`[TrialScheduler] Error eliminando conexiones de email:`, emailError);
       }
-
-      const sentNotifications = (subscription.trialNotificationsSent as string[]) || [];
-
-      // Actualizar suscripción: cambiar estado a ACTIVE con plan FREE
-      await prisma.subscription.update({
-        where: { id: subscriptionId },
-        data: {
-          status: 'ACTIVE',
-          plan: 'FREE',
-          trialNotificationsSent: [...sentNotifications, 'TRIAL_ENDED']
-        }
-      });
-
-      logger.log(`[TrialScheduler] 🔄 Trial terminado para usuario ${userId} - Cambiado a plan FREE`);
     } catch (error) {
       logger.error(`[TrialScheduler] Error manejando fin de trial:`, error);
     }
