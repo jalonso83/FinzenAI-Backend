@@ -15,6 +15,7 @@ import { ReferralScheduler } from './services/referralScheduler';
 import { BudgetReminderScheduler } from './services/budgetReminderScheduler';
 import { WeeklyReportScheduler } from './services/weeklyReportScheduler';
 import { ExchangeRateScheduler } from './services/exchangeRateScheduler';
+import { AttributionRetryScheduler } from './services/attributionRetryScheduler';
 import startOpenAiUsageProcessor from './schedulers/openaiUsageProcessor';
 import { validateReferralConfig } from './config/referralConfig';
 import { initPrices } from './controllers/investment';
@@ -47,6 +48,7 @@ import revenueCatRoutes from './routes/revenueCat';
 import adminRoutes from './routes/admin';
 import exchangeRateRoutes from './routes/exchangeRates';
 import openaiCostsRoutes from './routes/openaiCosts';
+import eventsRoutes from './routes/events';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
@@ -171,6 +173,7 @@ app.use('/api/weekly-reports', weeklyReportRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/openai-costs', openaiCostsRoutes);
 app.use('/api/exchange-rates', exchangeRateRoutes);
+app.use('/api/events', eventsRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
@@ -247,6 +250,9 @@ async function startServer() {
     // Iniciar scheduler de tasas de cambio (medianoche)
     ExchangeRateScheduler.startScheduler();
 
+    // Iniciar scheduler de retry de eventos de attribution (cada 5 min)
+    AttributionRetryScheduler.startScheduler();
+
     // Iniciar scheduler de procesamiento de uso de OpenAI (cada 5 minutos)
     startOpenAiUsageProcessor();
 
@@ -284,6 +290,7 @@ process.on('SIGINT', async () => {
   ReferralScheduler.stopScheduler();
   WeeklyReportScheduler.stopScheduler();
   ExchangeRateScheduler.stopScheduler();
+  AttributionRetryScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });
@@ -301,6 +308,7 @@ process.on('SIGTERM', async () => {
   ReferralScheduler.stopScheduler();
   WeeklyReportScheduler.stopScheduler();
   ExchangeRateScheduler.stopScheduler();
+  AttributionRetryScheduler.stopScheduler();
   await prisma.$disconnect();
   process.exit(0);
 });

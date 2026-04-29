@@ -8,6 +8,7 @@ import { ENV } from '../config/env';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/emailService';
 import { TrialScheduler } from '../services/trialScheduler';
 import { ReferralService } from '../services/referralService';
+import { ingestAttributionEvent } from '../services/attributionEventService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
 
 import { logger } from '../utils/logger';
@@ -335,6 +336,34 @@ export const register = async (req: Request, res: Response) => {
     const referralResult = (referralCode && REFERRAL_CONFIG.ENABLED)
       ? await processReferralCode(user.id, email, referralCode)
       : { applied: false, discount: null, reason: undefined };
+
+    // Disparar evento CompleteRegistration a Meta CAPI + TikTok Events API
+    // (fire-and-forget — NO debe bloquear la respuesta del register si Meta/TikTok lentean).
+    // event_id determinístico desde user.id para sobrevivir re-tries.
+    const completeRegEventId = crypto.createHash('sha256')
+      .update(`register:${user.id}`).digest('hex');
+    const deterministicId = [
+      completeRegEventId.slice(0, 8),
+      completeRegEventId.slice(8, 12),
+      '4' + completeRegEventId.slice(13, 16),
+      ((parseInt(completeRegEventId[16], 16) & 0x3) | 0x8).toString(16) + completeRegEventId.slice(17, 20),
+      completeRegEventId.slice(20, 32),
+    ].join('-');
+    const ipForAttribution = req.ip ?? null;
+    const userAgentForAttribution = req.get('user-agent') ?? null;
+    void ingestAttributionEvent({
+      eventName: 'CompleteRegistration',
+      eventId: deterministicId,
+      userId: user.id,
+      email: user.email,
+      phone: phone ?? null,
+      ipAddress: ipForAttribution,
+      userAgent: userAgentForAttribution,
+      actionSource: 'app',
+      customData: { country, devicePlatform: devicePlatform ?? null },
+    }).catch((attributionError) => {
+      logger.warn('No se pudo disparar evento CompleteRegistration:', attributionError);
+    });
 
     // 5. Respuesta exitosa
     return res.status(201).json({

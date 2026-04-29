@@ -1,10 +1,12 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import { stripe, STRIPE_WEBHOOK_SECRET, PLANS } from '../config/stripe';
 import { subscriptionService } from '../services/subscriptionService';
 import { EmailSyncService } from '../services/emailSyncService';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
 import { getPlanFromPriceId } from '../config/stripe';
 import { ReferralService } from '../services/referralService';
+import { ingestAttributionEvent } from '../services/attributionEventService';
 import Stripe from 'stripe';
 import { prisma } from '../lib/prisma';
 
@@ -255,6 +257,48 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
     logger.error('⚠️  Warning: Error processing referral conversion:', referralError);
     // No fallar el webhook por error de referido
   }
+
+  // Disparar evento Subscribe a Meta CAPI + TikTok Events API (best-effort, fire-and-forget)
+  // event_id determinístico (UUID v5 derivado de invoice.id) — si Stripe re-entrega
+  // el webhook, generamos el MISMO event_id y Meta/TikTok dedupean correctamente.
+  void (async () => {
+    try {
+      const userForAttribution = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, phone: true },
+      });
+      const deterministicEventId = deriveEventId('stripe-subscribe', invoice.id ?? '');
+      await ingestAttributionEvent({
+        eventName: 'Subscribe',
+        eventId: deterministicEventId,
+        userId,
+        email: userForAttribution?.email ?? null,
+        phone: userForAttribution?.phone ?? null,
+        value: invoice.amount_paid / 100,
+        currency: invoice.currency?.toUpperCase() ?? 'USD',
+        actionSource: 'website',
+        customData: { provider: 'stripe', stripeInvoiceId: invoice.id ?? '' },
+      });
+    } catch (attributionError) {
+      logger.warn('[StripeWebhook] No se pudo disparar evento Subscribe:', attributionError);
+    }
+  })();
+}
+
+/**
+ * Genera un UUID v5-style determinístico desde un string (ej. invoice.id).
+ * Si el webhook se re-entrega, generamos el MISMO UUID → Meta/TikTok dedupean.
+ */
+function deriveEventId(scope: string, key: string): string {
+  const hash = crypto.createHash('sha256').update(`${scope}:${key}`).digest('hex');
+  // Formato UUID v4-like (no es v5 estricto, pero pasa la regex y es determinístico)
+  return [
+    hash.slice(0, 8),
+    hash.slice(8, 12),
+    '4' + hash.slice(13, 16),
+    ((parseInt(hash[16], 16) & 0x3) | 0x8).toString(16) + hash.slice(17, 20),
+    hash.slice(20, 32),
+  ].join('-');
 }
 
 /**

@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import { prisma } from '../lib/prisma';
 import { SubscriptionStatus } from '@prisma/client';
 import { revenueCatService } from '../services/revenueCatService';
 import { subscriptionService } from '../services/subscriptionService';
+import { ingestAttributionEvent } from '../services/attributionEventService';
 import { REVENUECAT_WEBHOOK_AUTH, RC_WEBHOOK_EVENTS, PRODUCT_TO_PLAN } from '../config/revenueCat';
 import { revenueCatLogger as logger } from '../utils/logger';
 
@@ -114,6 +116,42 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
         }
 
         logger.log(`✅ ${eventType} procesado para usuario ${userId}`);
+
+        // Disparar evento Subscribe a Meta CAPI + TikTok Events API solo en INITIAL_PURCHASE
+        // (no en RENEWAL — esos los trackeamos diferente para no inflar conversiones)
+        // event_id determinístico desde transactionId — si RC re-entrega, dedupea correctamente.
+        if (eventType === RC_WEBHOOK_EVENTS.INITIAL_PURCHASE) {
+          void (async () => {
+            try {
+              const userForAttribution = await prisma.user.findUnique({
+                where: { id: userId },
+                select: { email: true, phone: true },
+              });
+              const deterministicEventId = deriveEventId(
+                'rc-subscribe',
+                transactionId || `${userId}:${Date.now()}`,
+              );
+              await ingestAttributionEvent({
+                eventName: 'Subscribe',
+                eventId: deterministicEventId,
+                userId,
+                email: userForAttribution?.email ?? null,
+                phone: userForAttribution?.phone ?? null,
+                value: amount,
+                currency: 'USD',
+                actionSource: 'app', // Apple/Google IAP = mobile app
+                customData: {
+                  provider: 'revenuecat',
+                  plan,
+                  period,
+                  ...(transactionId ? { transactionId } : {}),
+                },
+              });
+            } catch (attributionError) {
+              logger.warn('No se pudo disparar evento Subscribe (RC):', attributionError);
+            }
+          })();
+        }
         break;
       }
 
@@ -164,3 +202,18 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
     });
   }
 };
+
+/**
+ * Genera un UUID determinístico (v4-like) desde un string. Mismo input → mismo UUID.
+ * Usado para que webhook re-deliveries no creen eventos duplicados en Meta/TikTok.
+ */
+function deriveEventId(scope: string, key: string): string {
+  const hash = crypto.createHash('sha256').update(`${scope}:${key}`).digest('hex');
+  return [
+    hash.slice(0, 8),
+    hash.slice(8, 12),
+    '4' + hash.slice(13, 16),
+    ((parseInt(hash[16], 16) & 0x3) | 0x8).toString(16) + hash.slice(17, 20),
+    hash.slice(20, 32),
+  ].join('-');
+}
