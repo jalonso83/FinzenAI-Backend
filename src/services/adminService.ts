@@ -1288,43 +1288,56 @@ export class AdminService {
     // Filtro por cohort (debe agregarse al where ANTES del findMany).
     // Lógica:
     //   'Histórico'  → createdAt < trackingStartDate (o todos si no hay tracking)
-    //   'Directo'    → createdAt >= trackingStartDate Y NO tiene attribution.firstTouchSource
-    //   'Atribuido'  → createdAt >= trackingStartDate Y SÍ tiene attribution.firstTouchSource
+    //   'Directo'    → createdAt >= trackingStartDate Y (sin fila attribution O firstTouchSource null/'')
+    //   'Atribuido'  → createdAt >= trackingStartDate Y attribution.firstTouchSource no-null Y no-''
+    //
+    // CRÍTICO: en Prisma, `attribution: { firstTouchSource: null }` SOLO matchea users
+    // que TIENEN fila de attribution con source null. Para users SIN fila usar
+    // `attribution: { is: null }`. Por eso 'Directo' debe incluir AMBOS casos via OR.
     const cohortFilter = query.cohort?.trim();
     if (cohortFilter && ['Histórico', 'Directo', 'Atribuido'].includes(cohortFilter)) {
-      const cohortWhere: Prisma.UserWhereInput = {};
+      let cohortClause: Prisma.UserWhereInput | null = null;
+
       if (cohortFilter === 'Histórico') {
-        cohortWhere.createdAt = trackingStartDate
-          ? { lt: trackingStartDate }
-          : undefined; // Si no hay tracking, todos son históricos
+        // Si no hay tracking, todos los users son históricos → sin filtro adicional
+        cohortClause = trackingStartDate
+          ? { createdAt: { lt: trackingStartDate } }
+          : {};
       } else if (cohortFilter === 'Directo') {
         if (!trackingStartDate) {
-          // No hay tracking todavía → no hay users Directo posibles
-          cohortWhere.id = '__no_match__'; // forzar 0 resultados
+          cohortClause = { id: '__no_match__' };
         } else {
-          cohortWhere.createdAt = { gte: trackingStartDate };
-          cohortWhere.attribution = {
-            OR: [
-              { firstTouchSource: null },
-              { firstTouchSource: '' },
+          cohortClause = {
+            AND: [
+              { createdAt: { gte: trackingStartDate } },
+              {
+                OR: [
+                  { attribution: { is: null } },                       // sin fila de attribution
+                  { attribution: { firstTouchSource: null } },         // con fila pero source null
+                  { attribution: { firstTouchSource: '' } },           // con fila pero source vacío
+                ],
+              },
             ],
           };
         }
       } else if (cohortFilter === 'Atribuido') {
         if (!trackingStartDate) {
-          cohortWhere.id = '__no_match__';
+          cohortClause = { id: '__no_match__' };
         } else {
-          cohortWhere.createdAt = { gte: trackingStartDate };
-          cohortWhere.attribution = {
-            firstTouchSource: { not: null },
+          cohortClause = {
+            AND: [
+              { createdAt: { gte: trackingStartDate } },
+              { attribution: { firstTouchSource: { not: null } } },
+              { attribution: { firstTouchSource: { not: '' } } },
+            ],
           };
         }
       }
-      // Combinamos con AND si ya hay where existente
-      if (where.AND) {
-        (where.AND as any[]).push(cohortWhere);
-      } else {
-        Object.assign(where, cohortWhere);
+
+      // Combinamos con AND para no romper otros filtros (status, plan, country, etc.)
+      if (cohortClause && Object.keys(cohortClause).length > 0) {
+        const existingAnd = (where.AND as Prisma.UserWhereInput[] | undefined) ?? [];
+        where.AND = [...existingAnd, cohortClause];
       }
     }
 
