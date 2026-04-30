@@ -1279,7 +1279,16 @@ export class AdminService {
 
     // Calcular trackingStartDate ANTES del query principal — necesario para
     // poder filtrar por cohort dentro del where.
+    //
+    // IMPORTANTE: usamos el primer PAGEVIEW (no cualquier evento) para evitar
+    // un race condition. Cuando un user se registra, el flow es:
+    //   1. INSERT user (createdAt = T0)
+    //   2. ingestAttributionEvent dispara CompleteRegistration (createdAt = T0+200ms)
+    // Si tomáramos T0+200ms como trackingStartDate, ese mismo user que disparó
+    // el evento quedaría categorizado como 'Histórico' (porque T0 < T0+200ms).
+    // PageView sí marca el inicio real del tracking de visitantes.
     const firstAttributionEvent = await prisma.attributionEvent.findFirst({
+      where: { eventName: 'PageView' },
       orderBy: { createdAt: 'asc' },
       select: { createdAt: true },
     });
@@ -1451,15 +1460,19 @@ export class AdminService {
 
   // ─── ACQUISITION ──────────────────────────────────────────
   // Métricas de adquisición basadas en attribution_events.
-  // El "tracking start date" se calcula dinámicamente desde el primer evento
+  // El "tracking start date" se calcula dinámicamente desde el primer PageView
   // capturado — eso permite separar el cohort histórico (users registrados
   // antes del tracking) del cohort attributed (post-tracking).
   static async getAcquisition(query: { from?: string; to?: string }) {
     const { from, to, prevFrom, prevTo } = parseDateRange(query);
 
-    // Tracking start: primer evento en attribution_events. Si no hay ninguno,
+    // Tracking start: primer PageView en attribution_events. Si no hay ninguno,
     // el tracking aún no arrancó — reportamos cohort histórico = todos los users.
+    // Usamos PageView (no cualquier evento) para evitar race condition con
+    // CompleteRegistration server-side: ese evento se dispara ~200ms después
+    // del INSERT del user, lo que dejaría al primer user mal-categorizado.
     const firstEvent = await prisma.attributionEvent.findFirst({
+      where: { eventName: 'PageView' },
       orderBy: { createdAt: 'asc' },
       select: { createdAt: true },
     });
@@ -1614,7 +1627,7 @@ export class AdminService {
       `
       WITH events_in_period AS (
         SELECT
-          COALESCE("source", '(sin source)') as source,
+          COALESCE("source", 'Directo') as source,
           "eventName",
           "userId",
           "anonymousId",
@@ -1653,7 +1666,7 @@ export class AdminService {
       const visitors = Number(row.visitors);
       const subscriptions = Number(row.subscriptions);
       return {
-        source: row.source ?? '(sin source)',
+        source: row.source ?? 'Directo',
         visitors,
         leads: Number(row.leads),
         registrations: Number(row.registrations),
