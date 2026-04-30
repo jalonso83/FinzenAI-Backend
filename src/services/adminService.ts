@@ -55,7 +55,31 @@ function pctChange(current: number, previous: number): number {
   return Math.round(((current - previous) / previous) * 10000) / 100;
 }
 
+// Margen de seguridad para trackingStartDate (60s).
+// Razón: cuando un user se registra, el flow es:
+//   T=0ms      INSERT user (user.createdAt = T0)
+//   T=200ms    ingestAttributionEvent dispara CompleteRegistration server-side
+// Sin margen, ese mismo user quedaría categorizado como 'Histórico' porque
+// user.createdAt < event.createdAt. 60s absorbe ese race condition con holgura
+// (un user real que se registró 1 minuto antes del primer evento es legítimamente
+// histórico). Valor empíricamente confirmado con caso azazazza887@gmail.com (263ms).
+const TRACKING_START_MARGIN_MS = 60_000;
+
 export class AdminService {
+  /**
+   * Calcula el momento desde el cual el sistema tiene tracking activo.
+   * Usado por getUsersList (cohort filter) y getAcquisition (banner histórico).
+   * Retorna null si aún no hay ningún evento capturado.
+   */
+  private static async getTrackingStartDate(): Promise<Date | null> {
+    const firstEvent = await prisma.attributionEvent.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    });
+    if (!firstEvent) return null;
+    return new Date(firstEvent.createdAt.getTime() - TRACKING_START_MARGIN_MS);
+  }
+
   // ─── PULSE ───────────────────────────────────────────────
   static async getPulse(query: { from?: string; to?: string }) {
     const { from, to, prevFrom, prevTo } = parseDateRange(query);
@@ -1279,20 +1303,7 @@ export class AdminService {
 
     // Calcular trackingStartDate ANTES del query principal — necesario para
     // poder filtrar por cohort dentro del where.
-    //
-    // IMPORTANTE: usamos el primer PAGEVIEW (no cualquier evento) para evitar
-    // un race condition. Cuando un user se registra, el flow es:
-    //   1. INSERT user (createdAt = T0)
-    //   2. ingestAttributionEvent dispara CompleteRegistration (createdAt = T0+200ms)
-    // Si tomáramos T0+200ms como trackingStartDate, ese mismo user que disparó
-    // el evento quedaría categorizado como 'Histórico' (porque T0 < T0+200ms).
-    // PageView sí marca el inicio real del tracking de visitantes.
-    const firstAttributionEvent = await prisma.attributionEvent.findFirst({
-      where: { eventName: 'PageView' },
-      orderBy: { createdAt: 'asc' },
-      select: { createdAt: true },
-    });
-    const trackingStartDate = firstAttributionEvent?.createdAt ?? null;
+    const trackingStartDate = await AdminService.getTrackingStartDate();
 
     // Filtro por cohort (debe agregarse al where ANTES del findMany).
     // Lógica:
@@ -1460,23 +1471,16 @@ export class AdminService {
 
   // ─── ACQUISITION ──────────────────────────────────────────
   // Métricas de adquisición basadas en attribution_events.
-  // El "tracking start date" se calcula dinámicamente desde el primer PageView
-  // capturado — eso permite separar el cohort histórico (users registrados
-  // antes del tracking) del cohort attributed (post-tracking).
+  // El "tracking start date" se calcula dinámicamente desde el primer evento
+  // capturado, restando 60s de margen para absorber race conditions con
+  // eventos server-side (CompleteRegistration se dispara ~200ms después del
+  // INSERT del user). Eso permite separar correctamente cohort histórico
+  // (users registrados antes del tracking) del cohort attributed.
   static async getAcquisition(query: { from?: string; to?: string }) {
     const { from, to, prevFrom, prevTo } = parseDateRange(query);
 
-    // Tracking start: primer PageView en attribution_events. Si no hay ninguno,
-    // el tracking aún no arrancó — reportamos cohort histórico = todos los users.
-    // Usamos PageView (no cualquier evento) para evitar race condition con
-    // CompleteRegistration server-side: ese evento se dispara ~200ms después
-    // del INSERT del user, lo que dejaría al primer user mal-categorizado.
-    const firstEvent = await prisma.attributionEvent.findFirst({
-      where: { eventName: 'PageView' },
-      orderBy: { createdAt: 'asc' },
-      select: { createdAt: true },
-    });
-    const trackingStartDate = firstEvent?.createdAt ?? null;
+    // Tracking start con margen — ver helper para detalles del race condition.
+    const trackingStartDate = await AdminService.getTrackingStartDate();
 
     // Cohort histórico: users registrados ANTES del tracking
     const historicalUsersCount = trackingStartDate
