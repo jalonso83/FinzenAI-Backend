@@ -16,6 +16,7 @@ interface UsersListQuery {
   plan?: string;
   status?: string;
   country?: string;
+  cohort?: string; // 'Histórico' | 'Directo' | 'Atribuido'
   sortBy?: string;
   sortOrder?: string;
 }
@@ -1276,6 +1277,57 @@ export class AdminService {
     const orderByField = allowedSorts.includes(sortBy) ? sortBy : 'createdAt';
     const orderBy: Prisma.UserOrderByWithRelationInput = { [orderByField]: sortOrder };
 
+    // Calcular trackingStartDate ANTES del query principal — necesario para
+    // poder filtrar por cohort dentro del where.
+    const firstAttributionEvent = await prisma.attributionEvent.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    });
+    const trackingStartDate = firstAttributionEvent?.createdAt ?? null;
+
+    // Filtro por cohort (debe agregarse al where ANTES del findMany).
+    // Lógica:
+    //   'Histórico'  → createdAt < trackingStartDate (o todos si no hay tracking)
+    //   'Directo'    → createdAt >= trackingStartDate Y NO tiene attribution.firstTouchSource
+    //   'Atribuido'  → createdAt >= trackingStartDate Y SÍ tiene attribution.firstTouchSource
+    const cohortFilter = query.cohort?.trim();
+    if (cohortFilter && ['Histórico', 'Directo', 'Atribuido'].includes(cohortFilter)) {
+      const cohortWhere: Prisma.UserWhereInput = {};
+      if (cohortFilter === 'Histórico') {
+        cohortWhere.createdAt = trackingStartDate
+          ? { lt: trackingStartDate }
+          : undefined; // Si no hay tracking, todos son históricos
+      } else if (cohortFilter === 'Directo') {
+        if (!trackingStartDate) {
+          // No hay tracking todavía → no hay users Directo posibles
+          cohortWhere.id = '__no_match__'; // forzar 0 resultados
+        } else {
+          cohortWhere.createdAt = { gte: trackingStartDate };
+          cohortWhere.attribution = {
+            OR: [
+              { firstTouchSource: null },
+              { firstTouchSource: '' },
+            ],
+          };
+        }
+      } else if (cohortFilter === 'Atribuido') {
+        if (!trackingStartDate) {
+          cohortWhere.id = '__no_match__';
+        } else {
+          cohortWhere.createdAt = { gte: trackingStartDate };
+          cohortWhere.attribution = {
+            firstTouchSource: { not: null },
+          };
+        }
+      }
+      // Combinamos con AND si ya hay where existente
+      if (where.AND) {
+        (where.AND as any[]).push(cohortWhere);
+      } else {
+        Object.assign(where, cohortWhere);
+      }
+    }
+
     const [users, total] = await Promise.all([
       prisma.user.findMany({
         where,
@@ -1293,6 +1345,11 @@ export class AdminService {
               status: true,
               trialEndsAt: true,
               currentPeriodEnd: true,
+            },
+          },
+          attribution: {
+            select: {
+              firstTouchSource: true,
             },
           },
           _count: {
@@ -1327,36 +1384,37 @@ export class AdminService {
       });
     }
 
-    // Cohort dinámico: comparamos createdAt del user vs el primer evento en
-    // attribution_events. Users registrados ANTES de esa fecha son cohort
-    // histórico ("Pre-tracking"); el resto es "Tracked".
-    const firstAttributionEvent = await prisma.attributionEvent.findFirst({
-      orderBy: { createdAt: 'asc' },
-      select: { createdAt: true },
+    // Cohort dinámico (3 valores en español):
+    //   'Histórico'  — createdAt < trackingStartDate (registrado antes del tracking)
+    //   'Directo'    — registrado después del tracking, sin firstTouchSource
+    //   'Atribuido'  — registrado después del tracking, con firstTouchSource conocido
+    // trackingStartDate ya fue calculado arriba (antes del findMany para soportar filtro).
+    const mappedUsers = users.map(u => {
+      let cohort: 'Histórico' | 'Directo' | 'Atribuido';
+      if (!trackingStartDate || u.createdAt < trackingStartDate) {
+        cohort = 'Histórico';
+      } else if (u.attribution?.firstTouchSource) {
+        cohort = 'Atribuido';
+      } else {
+        cohort = 'Directo';
+      }
+      return {
+        id: u.id,
+        name: u.name,
+        lastName: u.lastName,
+        email: u.email,
+        country: u.country,
+        verified: u.verified,
+        createdAt: u.createdAt,
+        plan: u.subscription?.plan || 'FREE',
+        subscriptionStatus: u.subscription?.status || null,
+        trialEndsAt: u.subscription?.trialEndsAt || null,
+        currentPeriodEnd: u.subscription?.currentPeriodEnd || null,
+        transactionCount: u._count.transactions,
+        lastActivity: lastActivityMap[u.id] || null,
+        cohort,
+      };
     });
-    const trackingStartDate = firstAttributionEvent?.createdAt ?? null;
-
-    const mappedUsers = users.map(u => ({
-      id: u.id,
-      name: u.name,
-      lastName: u.lastName,
-      email: u.email,
-      country: u.country,
-      verified: u.verified,
-      createdAt: u.createdAt,
-      plan: u.subscription?.plan || 'FREE',
-      subscriptionStatus: u.subscription?.status || null,
-      trialEndsAt: u.subscription?.trialEndsAt || null,
-      currentPeriodEnd: u.subscription?.currentPeriodEnd || null,
-      transactionCount: u._count.transactions,
-      lastActivity: lastActivityMap[u.id] || null,
-      // Si no hay trackingStartDate (sistema sin eventos aún), TODOS los users
-      // son "Pre-tracking" — porque NINGUNO se registró bajo el sistema de tracking.
-      // Esa es la semántica correcta: cohort se define respecto al inicio del tracking.
-      cohort: !trackingStartDate || u.createdAt < trackingStartDate
-        ? ('Pre-tracking' as const)
-        : ('Tracked' as const),
-    }));
 
     return {
       users: mappedUsers,
