@@ -1327,6 +1327,15 @@ export class AdminService {
       });
     }
 
+    // Cohort dinámico: comparamos createdAt del user vs el primer evento en
+    // attribution_events. Users registrados ANTES de esa fecha son cohort
+    // histórico ("Pre-tracking"); el resto es "Tracked".
+    const firstAttributionEvent = await prisma.attributionEvent.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    });
+    const trackingStartDate = firstAttributionEvent?.createdAt ?? null;
+
     const mappedUsers = users.map(u => ({
       id: u.id,
       name: u.name,
@@ -1341,6 +1350,12 @@ export class AdminService {
       currentPeriodEnd: u.subscription?.currentPeriodEnd || null,
       transactionCount: u._count.transactions,
       lastActivity: lastActivityMap[u.id] || null,
+      // Si no hay trackingStartDate (sistema sin eventos aún), TODOS los users
+      // son "Pre-tracking" — porque NINGUNO se registró bajo el sistema de tracking.
+      // Esa es la semántica correcta: cohort se define respecto al inicio del tracking.
+      cohort: !trackingStartDate || u.createdAt < trackingStartDate
+        ? ('Pre-tracking' as const)
+        : ('Tracked' as const),
     }));
 
     return {
@@ -1361,5 +1376,241 @@ export class AdminService {
       orderBy: { country: 'asc' },
     });
     return result.map(r => r.country).filter(Boolean);
+  }
+
+  // ─── ACQUISITION ──────────────────────────────────────────
+  // Métricas de adquisición basadas en attribution_events.
+  // El "tracking start date" se calcula dinámicamente desde el primer evento
+  // capturado — eso permite separar el cohort histórico (users registrados
+  // antes del tracking) del cohort attributed (post-tracking).
+  static async getAcquisition(query: { from?: string; to?: string }) {
+    const { from, to, prevFrom, prevTo } = parseDateRange(query);
+
+    // Tracking start: primer evento en attribution_events. Si no hay ninguno,
+    // el tracking aún no arrancó — reportamos cohort histórico = todos los users.
+    const firstEvent = await prisma.attributionEvent.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    });
+    const trackingStartDate = firstEvent?.createdAt ?? null;
+
+    // Cohort histórico: users registrados ANTES del tracking
+    const historicalUsersCount = trackingStartDate
+      ? await prisma.user.count({
+          where: { createdAt: { lt: trackingStartDate } },
+        })
+      : await prisma.user.count();
+
+    // Helpers de conteo con semántica correcta:
+    //  - countRawEvents: cada disparo cuenta (PageView, Lead — el usuario puede generar varios)
+    //  - countUniqueVisitors: distinct anonymousId|userId (visitantes únicos)
+    //  - countUniqueUsers: distinct userId (usuarios únicos — para CompleteRegistration y Subscribe,
+    //    evita inflar por re-deliveries de webhook o renovaciones)
+    const countRawEvents = (eventName: string, rangeFrom: Date, rangeTo: Date) =>
+      prisma.attributionEvent.count({
+        where: { eventName, eventTime: { gte: rangeFrom, lte: rangeTo } },
+      });
+
+    const countUniqueVisitors = async (rangeFrom: Date, rangeTo: Date): Promise<number> => {
+      const result = await prisma.$queryRawUnsafe<{ cnt: bigint }[]>(
+        `SELECT COUNT(DISTINCT COALESCE("anonymousId", "userId"))::bigint as cnt
+         FROM attribution_events
+         WHERE "eventName" = 'PageView'
+           AND "eventTime" >= $1 AND "eventTime" <= $2`,
+        rangeFrom,
+        rangeTo,
+      );
+      return Number(result[0]?.cnt ?? 0);
+    };
+
+    const countUniqueUsersByEvent = async (
+      eventName: string,
+      rangeFrom: Date,
+      rangeTo: Date,
+    ): Promise<number> => {
+      const result = await prisma.$queryRawUnsafe<{ cnt: bigint }[]>(
+        `SELECT COUNT(DISTINCT "userId")::bigint as cnt
+         FROM attribution_events
+         WHERE "eventName" = $1
+           AND "userId" IS NOT NULL
+           AND "eventTime" >= $2 AND "eventTime" <= $3`,
+        eventName,
+        rangeFrom,
+        rangeTo,
+      );
+      return Number(result[0]?.cnt ?? 0);
+    };
+
+    const [
+      pageViews,           // unique visitors
+      leads,               // raw clicks (Lead = click en CTA, sí queremos contar todos)
+      registrations,       // unique users
+      subscriptions,       // unique users
+      prevPageViews,
+      prevLeads,
+      prevRegistrations,
+      prevSubscriptions,
+    ] = await Promise.all([
+      countUniqueVisitors(from, to),
+      countRawEvents('Lead', from, to),
+      countUniqueUsersByEvent('CompleteRegistration', from, to),
+      countUniqueUsersByEvent('Subscribe', from, to),
+      countUniqueVisitors(prevFrom, prevTo),
+      countRawEvents('Lead', prevFrom, prevTo),
+      countUniqueUsersByEvent('CompleteRegistration', prevFrom, prevTo),
+      countUniqueUsersByEvent('Subscribe', prevFrom, prevTo),
+    ]);
+
+    // Funnel — counts en cada etapa con conversion rates
+    const funnel = {
+      visitors: pageViews,
+      leads,
+      registrations,
+      subscriptions,
+      visitorsToLeadsRate: pageViews > 0 ? Math.round((leads / pageViews) * 10000) / 100 : 0,
+      leadsToRegistrationsRate: leads > 0 ? Math.round((registrations / leads) * 10000) / 100 : 0,
+      registrationsToSubscriptionsRate:
+        registrations > 0 ? Math.round((subscriptions / registrations) * 10000) / 100 : 0,
+      visitorsToSubscriptionsRate:
+        pageViews > 0 ? Math.round((subscriptions / pageViews) * 10000) / 100 : 0,
+    };
+
+    // Eventos por día — serie temporal del periodo seleccionado.
+    // DATE_TRUNC con AT TIME ZONE 'America/Santo_Domingo' (UTC-4) para que
+    // el bucketing diario refleje el día local del negocio, no UTC.
+    // Para PageView usamos COUNT(DISTINCT) — los demás eventos cuentan por user único.
+    const eventsByDayRaw = await prisma.$queryRawUnsafe<
+      { day: string; eventName: string; cnt: bigint }[]
+    >(
+      `
+      SELECT
+        TO_CHAR(DATE_TRUNC('day', "eventTime" AT TIME ZONE 'America/Santo_Domingo'), 'YYYY-MM-DD') as day,
+        "eventName",
+        CASE
+          WHEN "eventName" = 'PageView' THEN COUNT(DISTINCT COALESCE("anonymousId", "userId"))::bigint
+          WHEN "eventName" IN ('CompleteRegistration', 'Subscribe') THEN COUNT(DISTINCT "userId")::bigint
+          ELSE COUNT(*)::bigint
+        END as cnt
+      FROM attribution_events
+      WHERE "eventTime" >= $1 AND "eventTime" <= $2
+      GROUP BY day, "eventName"
+      ORDER BY day ASC
+      `,
+      from,
+      to,
+    );
+
+    // Reagrupar por día con todos los eventos como columnas
+    const eventsByDayMap = new Map<
+      string,
+      { day: string; pageViews: number; leads: number; registrations: number; subscriptions: number }
+    >();
+    for (const row of eventsByDayRaw) {
+      if (!eventsByDayMap.has(row.day)) {
+        eventsByDayMap.set(row.day, {
+          day: row.day,
+          pageViews: 0,
+          leads: 0,
+          registrations: 0,
+          subscriptions: 0,
+        });
+      }
+      const entry = eventsByDayMap.get(row.day)!;
+      const cnt = Number(row.cnt);
+      if (row.eventName === 'PageView') entry.pageViews = cnt;
+      else if (row.eventName === 'Lead') entry.leads = cnt;
+      else if (row.eventName === 'CompleteRegistration') entry.registrations = cnt;
+      else if (row.eventName === 'Subscribe') entry.subscriptions = cnt;
+    }
+    const eventsByDay = Array.from(eventsByDayMap.values()).sort((a, b) =>
+      a.day.localeCompare(b.day),
+    );
+
+    // Top sources — agregación por source de attribution_events.
+    // Subscriptions y registrations son DISTINCT por userId (1 user = 1 conversión).
+    // Revenue: para evitar double counting por re-deliveries de webhook,
+    // se dedupea por (source, userId) tomando MAX(value) — luego se suma.
+    const bySourceRaw = await prisma.$queryRawUnsafe<
+      {
+        source: string;
+        visitors: bigint;
+        leads: bigint;
+        registrations: bigint;
+        subscriptions: bigint;
+        revenue: number | null;
+      }[]
+    >(
+      `
+      WITH events_in_period AS (
+        SELECT
+          COALESCE("source", '(sin source)') as source,
+          "eventName",
+          "userId",
+          "anonymousId",
+          "value"
+        FROM attribution_events
+        WHERE "eventTime" >= $1 AND "eventTime" <= $2
+      ),
+      dedup_subs AS (
+        SELECT source, "userId", MAX("value") as max_value
+        FROM events_in_period
+        WHERE "eventName" = 'Subscribe' AND "userId" IS NOT NULL
+        GROUP BY source, "userId"
+      ),
+      revenue_by_source AS (
+        SELECT source, COALESCE(SUM(max_value), 0) as revenue, COUNT(*)::bigint as subs
+        FROM dedup_subs
+        GROUP BY source
+      )
+      SELECT
+        e.source,
+        COUNT(DISTINCT CASE WHEN e."eventName" = 'PageView' THEN COALESCE(e."anonymousId", e."userId") END)::bigint as visitors,
+        COUNT(CASE WHEN e."eventName" = 'Lead' THEN 1 END)::bigint as leads,
+        COUNT(DISTINCT CASE WHEN e."eventName" = 'CompleteRegistration' THEN e."userId" END)::bigint as registrations,
+        COALESCE(rs.subs, 0)::bigint as subscriptions,
+        COALESCE(rs.revenue, 0) as revenue
+      FROM events_in_period e
+      LEFT JOIN revenue_by_source rs ON rs.source = e.source
+      GROUP BY e.source, rs.subs, rs.revenue
+      ORDER BY visitors DESC
+      `,
+      from,
+      to,
+    );
+
+    const bySource = bySourceRaw.map(row => {
+      const visitors = Number(row.visitors);
+      const subscriptions = Number(row.subscriptions);
+      return {
+        source: row.source ?? '(sin source)',
+        visitors,
+        leads: Number(row.leads),
+        registrations: Number(row.registrations),
+        subscriptions,
+        revenue: Number(row.revenue ?? 0),
+        conversionRate: visitors > 0 ? Math.round((subscriptions / visitors) * 10000) / 100 : 0,
+      };
+    });
+
+    return {
+      kpis: {
+        pageViews,
+        leads,
+        registrations,
+        subscriptions,
+        pageViewsChange: pctChange(pageViews, prevPageViews),
+        leadsChange: pctChange(leads, prevLeads),
+        registrationsChange: pctChange(registrations, prevRegistrations),
+        subscriptionsChange: pctChange(subscriptions, prevSubscriptions),
+      },
+      funnel,
+      eventsByDay,
+      bySource,
+      cohort: {
+        trackingStartDate: trackingStartDate ? trackingStartDate.toISOString() : null,
+        historicalUsersCount,
+      },
+      period: { from: from.toISOString(), to: to.toISOString() },
+    };
   }
 }

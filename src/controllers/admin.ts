@@ -52,6 +52,15 @@ export const getEngagement = async (req: Request, res: Response) => {
   }
 };
 
+export const getAcquisition = async (req: Request, res: Response) => {
+  try {
+    const data = await AdminService.getAcquisition(req.query as any);
+    return res.json({ message: 'Acquisition data retrieved', data });
+  } catch (error) {
+    return handleError(res, 'acquisition', error);
+  }
+};
+
 export const getUnitEconomics = async (req: Request, res: Response) => {
   try {
     const data = await AdminService.getUnitEconomics(req.query as any);
