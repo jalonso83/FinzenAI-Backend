@@ -760,6 +760,189 @@ export const verifyEmailFromLink = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * POST /api/auth/verify-email-with-attribution
+ *
+ * Verifica el email del usuario Y matchea su attribution (UTMs/click_ids/source).
+ * Llamado por la landing page /verify cuando el user hace click en el link del email.
+ *
+ * Body: { token, email, anonymousId? }
+ *
+ * Flujo:
+ *  1. Valida HMAC token + email (mismo flujo que GET /verify-email-link)
+ *  2. Marca user.verified = true
+ *  3. Best-effort: matchea attribution_events por anonymousId (si vino del localStorage)
+ *     o por IP+UserAgent (fallback) y popula UserAttribution
+ *  4. Backfill userId en los attribution_events que matchearon
+ *
+ * El paso 3 NO bloquea ni falla la verificación — si no hay match,
+ * el user simplemente queda como "Directo" en el dashboard.
+ *
+ * Respuesta JSON: { success, alreadyVerified, message }
+ */
+const ATTRIBUTION_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function matchAndPopulateAttribution(
+  userId: string,
+  anonymousId: string | null,
+  ipAddress: string | null,
+  userAgent: string | null
+): Promise<void> {
+  // 1. Buscar primero por anonymousId (señal más confiable)
+  let events = anonymousId
+    ? await prisma.attributionEvent.findMany({
+        where: {
+          anonymousId,
+          source: { not: null },
+        },
+        orderBy: { eventTime: 'asc' },
+        take: 50,
+      })
+    : [];
+
+  let matchMethod: 'anonymousId' | 'ip+ua' | 'none' = events.length > 0 ? 'anonymousId' : 'none';
+
+  // 2. Fallback: IP + UA en últimos 30 días (eventos sin userId asignado todavía)
+  if (events.length === 0 && ipAddress && userAgent) {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    events = await prisma.attributionEvent.findMany({
+      where: {
+        ipAddress,
+        userAgent,
+        userId: null,
+        source: { not: null },
+        eventTime: { gte: thirtyDaysAgo },
+      },
+      orderBy: { eventTime: 'asc' },
+      take: 50,
+    });
+    if (events.length > 0) matchMethod = 'ip+ua';
+  }
+
+  if (events.length === 0) {
+    logger.log(`[Attribution] Sin match para user ${userId} (anonymousId=${anonymousId ? 'sí' : 'no'}, ip=${ipAddress ? 'sí' : 'no'}) — queda como Directo`);
+    return;
+  }
+
+  const firstTouch = events[0];
+  const lastTouch = events[events.length - 1];
+
+  // Click IDs: el más reciente que tenga alguno (priorizamos last-touch)
+  const clickIdEvent = [...events].reverse().find(e => e.fbclid || e.ttclid || e.gclid);
+
+  const attributionData = {
+    firstTouchSource: firstTouch.source,
+    firstTouchMedium: firstTouch.medium,
+    firstTouchCampaign: firstTouch.campaign,
+    firstTouchLandingPage: firstTouch.pageUrl,
+    firstTouchAt: firstTouch.eventTime,
+    lastTouchSource: lastTouch.source,
+    lastTouchMedium: lastTouch.medium,
+    lastTouchCampaign: lastTouch.campaign,
+    lastTouchAt: lastTouch.eventTime,
+    signupFbclid: clickIdEvent?.fbclid ?? null,
+    signupTtclid: clickIdEvent?.ttclid ?? null,
+    signupGclid: clickIdEvent?.gclid ?? null,
+    signupIpAddress: ipAddress,
+    signupUserAgent: userAgent,
+  };
+
+  await prisma.userAttribution.upsert({
+    where: { userId },
+    create: { userId, ...attributionData },
+    update: attributionData,
+  });
+
+  // Backfill userId en los eventos que matchearon (solo los que NO tenían userId)
+  await prisma.attributionEvent.updateMany({
+    where: {
+      id: { in: events.map(e => e.id) },
+      userId: null,
+    },
+    data: { userId },
+  });
+
+  logger.log(`[Attribution] ✅ Match para user ${userId} via ${matchMethod}: ${events.length} eventos, source="${lastTouch.source}"`);
+}
+
+export const verifyEmailWithAttribution = async (req: Request, res: Response) => {
+  try {
+    const { token, email: rawEmail, anonymousId } = req.body ?? {};
+
+    if (typeof token !== 'string' || typeof rawEmail !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Token y email son requeridos.',
+      });
+    }
+
+    const email = rawEmail.toLowerCase().trim();
+
+    // anonymousId opcional pero si viene debe ser UUID válido
+    if (anonymousId !== undefined && anonymousId !== null && anonymousId !== '') {
+      if (typeof anonymousId !== 'string' || !ATTRIBUTION_UUID_REGEX.test(anonymousId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'anonymousId inválido.',
+        });
+      }
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'No encontramos una cuenta asociada a este correo.',
+      });
+    }
+
+    if (user.verified) {
+      return res.json({
+        success: true,
+        alreadyVerified: true,
+        message: '¡Tu cuenta ya estaba verificada!',
+      });
+    }
+
+    const tokenData = verifyVerificationToken(token);
+    if (!tokenData || tokenData.userId !== user.id) {
+      return res.status(400).json({
+        success: false,
+        error: 'El enlace ha expirado (24 horas) o es inválido. Solicita un nuevo correo desde la app.',
+      });
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { verified: true }
+    });
+
+    logger.log(`✅ Email verificado via landing para: ${email}`);
+
+    // Best-effort attribution matching — fire-and-forget, NO bloquea respuesta
+    const ipAddress = req.ip ?? null;
+    const userAgent = req.get('user-agent') ?? null;
+    const trimmedAnonId = (typeof anonymousId === 'string' && anonymousId.trim() !== '') ? anonymousId : null;
+
+    void matchAndPopulateAttribution(user.id, trimmedAnonId, ipAddress, userAgent)
+      .catch((err) => {
+        logger.warn(`[Auth] Error matching attribution para user ${user.id}:`, err);
+      });
+
+    return res.json({
+      success: true,
+      alreadyVerified: false,
+      message: '¡Tu cuenta ha sido verificada exitosamente!',
+    });
+  } catch (error) {
+    logger.error('Verify email with attribution error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Error del servidor. Por favor intenta nuevamente más tarde.',
+    });
+  }
+};
+
 // Función para generar código de 6 dígitos
 const generateResetCode = (): string => {
   return crypto.randomInt(100000, 1000000).toString();

@@ -212,7 +212,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
                 <strong>Para comenzar tu viaje hacia la libertad financiera, confirma tu cuenta:</strong>
             </p>
 
-            <a href="${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${token}&email=${email}" class="confirm-button">
+            <a href="${ENV.LANDING_URL}/verify?token=${token}&email=${encodeURIComponent(email)}" class="confirm-button">
                 🎯 Confirmar Cuenta y Comenzar
             </a>
 
@@ -261,7 +261,7 @@ export const sendVerificationEmail = async (email: string, token: string, name: 
     if (!ENV.RESEND_API_KEY) {
       // Modo simulación para desarrollo
       logger.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-      logger.log(`[SIMULACIÓN] Enlace: ${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${token}&email=${email}`);
+      logger.log(`[SIMULACIÓN] Enlace: ${ENV.LANDING_URL}/verify?token=${token}&email=${encodeURIComponent(email)}`);
       return;
     }
 
@@ -296,7 +296,7 @@ export const sendVerificationEmail = async (email: string, token: string, name: 
     logger.error('❌ Error sending verification email:', error);
     // No fallar en ningún entorno, solo simular
     logger.log(`[SIMULACIÓN] Email de verificación enviado a ${email} para usuario ${name}`);
-    logger.log(`[SIMULACIÓN] Enlace: ${ENV.BACKEND_URL}/api/auth/verify-email-link?token=${token}&email=${email}`);
+    logger.log(`[SIMULACIÓN] Enlace: ${ENV.LANDING_URL}/verify?token=${token}&email=${encodeURIComponent(email)}`);
   }
 };
 

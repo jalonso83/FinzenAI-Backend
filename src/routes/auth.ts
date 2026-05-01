@@ -1,5 +1,5 @@
 import express, { Router } from 'express';
-import { register, login, resendVerificationEmail, verifyEmail, verifyEmailFromLink, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility, deleteAccount } from '../controllers/auth';
+import { register, login, resendVerificationEmail, verifyEmail, verifyEmailFromLink, verifyEmailWithAttribution, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility, deleteAccount } from '../controllers/auth';
 import { authenticateToken } from '../middlewares/auth';
 import {
   loginLimiter,
@@ -17,6 +17,7 @@ router.post('/login', loginLimiter, login);
 router.post('/resend-verification', emailVerificationLimiter, resendVerificationEmail);
 router.post('/verify-email', emailVerificationLimiter, verifyEmail);
 router.get('/verify-email-link', emailVerificationLimiter, verifyEmailFromLink);
+router.post('/verify-email-with-attribution', emailVerificationLimiter, verifyEmailWithAttribution);
 router.post('/forgot-password', passwordResetLimiter, forgotPassword);
 router.post('/reset-password', passwordResetLimiter, resetPassword);
 router.post('/check-trial-eligibility', apiLimiter, checkTrialEligibility);

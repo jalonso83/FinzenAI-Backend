@@ -70,6 +70,7 @@ export const ENV = {
   BACKEND_URL: getOptionalEnv('BACKEND_URL', 'https://finzenai-backend-production.up.railway.app'),
   FRONTEND_URL: getOptionalEnv('FRONTEND_URL', 'http://localhost:5173'),
   APP_URL: getOptionalEnv('APP_URL', 'https://finzenai.com'),
+  LANDING_URL: getOptionalEnv('LANDING_URL', 'https://www.finzenai.com'),
 
   // === REVENUECAT ===
   REVENUECAT_SECRET_KEY: getOptionalEnv('REVENUECAT_SECRET_KEY', ''),
