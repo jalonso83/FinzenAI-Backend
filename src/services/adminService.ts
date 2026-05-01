@@ -813,9 +813,61 @@ export class AdminService {
       ? Math.round((referralsConvertedFromCohort / referralsMade) * 10000) / 100
       : 0;
 
-    // % Adopción Zenio: cap at 100 to handle edge case of Zenio users without tx
-    const zenioAdoptionRate = activeUsers > 0
-      ? Math.min(Math.round((zenioActiveUsers / activeUsers) * 10000) / 100, 100)
+    // ─── KPIs de Adopción (cohort-consistent) ──────────────────
+    //
+    // CRÍTICO: numerator y denominator deben compartir el MISMO cohort
+    // (users registrados en el período). Sin esto, los ratios pueden exceder
+    // 100% porque legacy users (registrados antes) tienen tx/Zenio uso en el
+    // período pero no entran en totalUsers.
+    //
+    // Patrón inspirado en TTFT (timeToFirstTxData arriba): excluimos users
+    // registrados en la última hora porque no tuvieron chance de activarse.
+    const adoptionData = await prisma.$queryRawUnsafe<{
+      cohort_size: bigint;
+      with_tx: bigint;
+      with_zenio: bigint;
+    }[]>(`
+      WITH cohort AS (
+        SELECT id
+        FROM users
+        WHERE "createdAt" >= $1
+          AND "createdAt" <= LEAST($2::timestamp, NOW() - interval '1 hour')
+      ),
+      tx_users AS (
+        SELECT DISTINCT t."userId"
+        FROM transactions t
+        INNER JOIN cohort c ON c.id = t."userId"
+        WHERE t.date >= $1 AND t.date <= $2
+      ),
+      zenio_users AS (
+        SELECT DISTINCT o."userId"
+        FROM openai_daily_usage o
+        INNER JOIN cohort c ON c.id = o."userId"
+        WHERE o."date" >= $1 AND o."date" <= $2
+          AND (
+            COALESCE((o."costByFeature" ->> 'zenio_v2')::float, 0) > 0
+            OR COALESCE((o."costByFeature" ->> 'zenio_agents')::float, 0) > 0
+            OR COALESCE((o."costByFeature" ->> 'zenio_transcription')::float, 0) > 0
+          )
+      )
+      SELECT
+        (SELECT COUNT(*) FROM cohort)::bigint as cohort_size,
+        (SELECT COUNT(*) FROM tx_users)::bigint as with_tx,
+        (SELECT COUNT(*) FROM zenio_users)::bigint as with_zenio
+    `, from, to);
+
+    const adoptionCohortSize = Number(adoptionData[0]?.cohort_size ?? 0);
+    const cohortWithTx = Number(adoptionData[0]?.with_tx ?? 0);
+    const cohortWithZenio = Number(adoptionData[0]?.with_zenio ?? 0);
+
+    // % Adopción Tx: del cohort registrado en el período, cuántos hicieron ≥1 tx
+    const txAdoptionRate = adoptionCohortSize > 0
+      ? Math.round((cohortWithTx / adoptionCohortSize) * 10000) / 100
+      : 0;
+
+    // % Adopción Zenio: del cohort registrado en el período, cuántos usaron Zenio
+    const zenioAdoptionRate = adoptionCohortSize > 0
+      ? Math.round((cohortWithZenio / adoptionCohortSize) * 10000) / 100
       : 0;
 
     // % Racha Activa
@@ -846,6 +898,7 @@ export class AdminService {
       onboardingRate,
       zenioActiveUsers,
       zenioAdoptionRate,
+      txAdoptionRate,
       streakActiveUsers,
       streakActiveRate,
       timeToFirstTx,
