@@ -514,4 +514,104 @@ export const sendPasswordResetEmail = async (email: string, resetCode: string, n
     logger.log(`[SIMULACIÓN] Email de reset enviado a ${email}`);
     logger.log(`[SIMULACIÓN] Código de 6 dígitos: ${resetCode}`);
   }
-}; 
+};
+
+// ─── Feedback notification (admin alert para BUGs) ─────────────────
+
+interface FeedbackNotificationInput {
+  feedbackId: string;
+  userName: string;
+  userEmail: string;
+  type: string;
+  module: string | null;
+  message: string;
+  appVersion: string | null;
+  platform: string | null;
+  createdAt: Date;
+}
+
+const ADMIN_FEEDBACK_EMAIL = 'info@finzenai.com';
+
+const MODULE_LABELS: Record<string, string> = {
+  dashboard: 'Dashboard / Inicio',
+  transactions: 'Transacciones',
+  budgets: 'Presupuestos',
+  goals: 'Metas',
+  zenio: 'Zenio (Asistente IA)',
+  tools: 'Calculadoras y Herramientas',
+  subscriptions: 'Suscripciones y Pagos',
+  email_sync: 'Email Bancario',
+  notifications: 'Notificaciones y Recordatorios',
+  gamification: 'Gamificación',
+  auth: 'Login / Registro',
+  other: 'Otro',
+};
+
+const escapeHtml = (s: string): string =>
+  s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+/**
+ * Envía notificación de BUG al admin (info@finzenai.com).
+ * Best-effort: si Resend falla, solo loguea — no rompe el flujo principal.
+ */
+export const sendFeedbackNotification = async (input: FeedbackNotificationInput): Promise<void> => {
+  try {
+    const moduleLabel = input.module ? (MODULE_LABELS[input.module] ?? input.module) : 'No especificado';
+    const platformLabel = input.platform ? input.platform.toUpperCase() : 'Desconocida';
+    const appVersionLabel = input.appVersion ?? 'Desconocida';
+
+    if (!ENV.RESEND_API_KEY) {
+      logger.log(`[SIMULACIÓN] Feedback BUG #${input.feedbackId} de ${input.userEmail} sería notificado a ${ADMIN_FEEDBACK_EMAIL}`);
+      return;
+    }
+
+    const subject = `[FinZen Feedback] 🐛 Bug: ${moduleLabel}`;
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>${escapeHtml(subject)}</title></head>
+<body style="font-family: Arial, sans-serif; background:#f4f6f9; padding:20px; color:#333;">
+  <div style="max-width:600px; margin:0 auto; background:#fff; border-radius:10px; overflow:hidden;">
+    <div style="background:#dc2626; color:#fff; padding:20px; text-align:center;">
+      <h1 style="margin:0; font-size:20px;">🐛 Nuevo Bug Reportado</h1>
+    </div>
+    <div style="padding:24px;">
+      <table style="width:100%; border-collapse:collapse; font-size:14px;">
+        <tr><td style="padding:8px 0; font-weight:bold; width:140px;">Usuario:</td><td>${escapeHtml(input.userName)} (${escapeHtml(input.userEmail)})</td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold;">Módulo:</td><td>${escapeHtml(moduleLabel)}</td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold;">Plataforma:</td><td>${escapeHtml(platformLabel)}</td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold;">App Version:</td><td>${escapeHtml(appVersionLabel)}</td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold;">Fecha:</td><td>${input.createdAt.toISOString()}</td></tr>
+        <tr><td style="padding:8px 0; font-weight:bold;">ID:</td><td><code>${escapeHtml(input.feedbackId)}</code></td></tr>
+      </table>
+      <hr style="margin:20px 0; border:none; border-top:1px solid #eee;">
+      <h3 style="margin:0 0 8px; font-size:14px; color:#555;">Mensaje:</h3>
+      <div style="background:#f9fafb; padding:14px; border-radius:8px; border-left:3px solid #dc2626; white-space:pre-wrap; font-size:14px; line-height:1.6;">${escapeHtml(input.message)}</div>
+      <p style="margin:24px 0 0; font-size:12px; color:#888;">Revisa este feedback en el dashboard admin de FinZen AI.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    const { data, error } = await resend.emails.send({
+      from: 'FinZen AI <info@finzenai.com>',
+      to: ADMIN_FEEDBACK_EMAIL,
+      replyTo: input.userEmail,
+      subject,
+      html,
+    });
+
+    if (error) {
+      logger.error('[Feedback] Error de Resend al notificar BUG:', error);
+      return;
+    }
+
+    logger.log(`[Feedback] ✅ Notificación de BUG enviada a ${ADMIN_FEEDBACK_EMAIL}`, data);
+  } catch (error) {
+    logger.error('[Feedback] Error inesperado al notificar BUG:', error);
+  }
+};

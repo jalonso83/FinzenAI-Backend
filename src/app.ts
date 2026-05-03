@@ -49,6 +49,7 @@ import adminRoutes from './routes/admin';
 import exchangeRateRoutes from './routes/exchangeRates';
 import openaiCostsRoutes from './routes/openaiCosts';
 import eventsRoutes from './routes/events';
+import feedbackRoutes from './routes/feedback';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
@@ -174,6 +175,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/admin/openai-costs', openaiCostsRoutes);
 app.use('/api/exchange-rates', exchangeRateRoutes);
 app.use('/api/events', eventsRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {

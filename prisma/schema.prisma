@@ -87,6 +87,9 @@ model User {
   attribution       UserAttribution?
   attributionEvents AttributionEvent[]
 
+  // Feedback enviado por el usuario desde la app
+  feedback Feedback[]
+
   @@map("users")
 }
 
@@ -1138,4 +1141,53 @@ model AttributionEvent {
   @@index([sentToMeta, eventTime])
   @@index([sentToTiktok, eventTime])
   @@map("attribution_events")
+}
+
+// ─── User Feedback ─────────────────────────────────────────────────
+//
+// Reportes de bugs, sugerencias y otros comentarios enviados por usuarios
+// desde la app móvil. Se accede vía menú usuario → "Enviar Feedback".
+//
+// Los BUGs disparan un email a info@finzenai.com automáticamente.
+// SUGGESTION/OTHER solo persisten — admin los revisa en el dashboard.
+
+enum FeedbackType {
+  BUG
+  SUGGESTION
+  OTHER
+}
+
+enum FeedbackStatus {
+  NEW
+  REVIEWED
+  RESOLVED
+  WONT_FIX
+}
+
+model Feedback {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    FeedbackType
+  module  String? // "dashboard" | "transactions" | "budgets" | etc. — string libre, validado en código
+  message String  @db.Text
+
+  // Metadatos auto-capturados del request
+  appVersion String? // "1.1.1"
+  platform   String? // "ios" | "android"
+
+  // Manejo admin
+  status        FeedbackStatus @default(NEW)
+  adminResponse String?        @db.Text
+  reviewedAt    DateTime?
+  reviewedBy    String? // email del admin que respondió
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([type, createdAt])
+  @@map("feedback")
 }

@@ -140,3 +140,19 @@ export const webhookLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+/**
+ * Feedback Limiter - Previene spam del formulario de feedback
+ * 5 envíos por hora por IP (suficiente para reportar varios bugs en el día)
+ */
+export const feedbackLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 5,
+  message: {
+    error: 'Too Many Requests',
+    message: 'Has enviado mucho feedback. Por favor intenta de nuevo en 1 hora.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: rateLimitHandler,
+});
