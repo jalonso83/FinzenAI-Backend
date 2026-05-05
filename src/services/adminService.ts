@@ -740,10 +740,12 @@ export class AdminService {
 
       // Referrals from THIS cohort that ended up converting (any time after).
       // Same cohort as referralsMade so the ratio is meaningful.
+      // Incluye CONVERTED y REWARDED: el flujo es PENDING → CONVERTED → REWARDED,
+      // y el estado final tras una conversión exitosa es REWARDED.
       prisma.referral.count({
         where: {
           createdAt: { gte: from, lte: to },
-          status: 'CONVERTED',
+          status: { in: ['CONVERTED', 'REWARDED'] },
         },
       }),
 
