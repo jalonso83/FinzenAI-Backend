@@ -186,9 +186,15 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   logger.log('✅ Payment succeeded:', invoice.id);
 
-  // Obtener el subscription ID del invoice (cast necesario por tipos de Stripe)
+  // Obtener el subscription ID del invoice. En API versions >= 2024-12-18.acacia,
+  // `invoice.subscription` ya no existe a nivel raíz; vive en
+  // `invoice.parent.subscription_details.subscription`. Soportamos ambas ubicaciones.
   const invoiceAny = invoice as any;
-  const subscriptionId = invoiceAny.subscription as string;
+  const subscriptionId: string | undefined =
+    invoiceAny.subscription ||
+    invoiceAny.parent?.subscription_details?.subscription ||
+    invoiceAny.lines?.data?.[0]?.parent?.subscription_item_details?.subscription;
+
   if (!subscriptionId) {
     logger.error('❌ No subscription ID in invoice');
     throw new Error('No subscription ID in invoice');
@@ -307,9 +313,14 @@ function deriveEventId(scope: string, key: string): string {
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
   logger.log('❌ Payment failed:', invoice.id);
 
-  // Obtener el subscription ID del invoice (cast necesario por tipos de Stripe)
+  // Obtener el subscription ID del invoice (ver nota en handlePaymentSucceeded
+  // sobre el cambio de ubicación a partir de API 2024-12-18.acacia).
   const invoiceAny = invoice as any;
-  const subscriptionId = invoiceAny.subscription as string;
+  const subscriptionId: string | undefined =
+    invoiceAny.subscription ||
+    invoiceAny.parent?.subscription_details?.subscription ||
+    invoiceAny.lines?.data?.[0]?.parent?.subscription_item_details?.subscription;
+
   if (!subscriptionId) {
     logger.error('❌ No subscription ID in invoice');
     throw new Error('No subscription ID in failed payment invoice');
