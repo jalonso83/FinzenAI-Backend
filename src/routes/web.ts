@@ -18,6 +18,12 @@ const APPLE_TEAM_ID = 'PK4462U2Y4';
 const APP_BUNDLE_ID = 'com.jl.alonso.finzenaimobile';
 const APP_SCHEME = 'finzenai';
 
+// SHA-256 fingerprint del certificado App Signing key de Google Play.
+// Requerido para Android App Links (autoVerify) — sin esto, Play Console
+// reporta el dominio como "no verificado" y los deep links muestran selector.
+const ANDROID_PLAY_SIGNING_SHA256 =
+  '76:73:2A:95:E2:70:EF:C8:12:E3:73:D7:12:0B:69:4F:F6:17:B9:C7:CF:0C:F6:54:25:B3:E8:78:CC:A0:47:C5';
+
 /**
  * Apple App Site Association
  * Requerido para Universal Links en iOS
@@ -41,6 +47,27 @@ router.get('/.well-known/apple-app-site-association', (req: Request, res: Respon
       ]
     }
   });
+});
+
+/**
+ * Android Digital Asset Links
+ * Requerido para Android App Links (autoVerify=true en intentFilters).
+ * Sin este archivo, Google Play Console reporta el dominio como no verificado
+ * y los users ven un selector "Abrir con..." al hacer click en deep links.
+ * Debe estar en: /.well-known/assetlinks.json
+ */
+router.get('/.well-known/assetlinks.json', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json([
+    {
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: {
+        namespace: 'android_app',
+        package_name: APP_BUNDLE_ID,
+        sha256_cert_fingerprints: [ANDROID_PLAY_SIGNING_SHA256],
+      },
+    },
+  ]);
 });
 
 /**
