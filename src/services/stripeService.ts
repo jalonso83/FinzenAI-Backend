@@ -95,13 +95,12 @@ export class StripeService {
         logger.log(`[StripeService] Usuario ${userId} ya usó su trial en la app, cobro inmediato`);
       }
 
-      // Aplicar descuento de referido si existe
+      // Aplicar descuento de referido si existe.
+      // Stripe rechaza si se envían `discounts` y `allow_promotion_codes` juntos
+      // (incluso con allow_promotion_codes=false). Por eso solo setamos uno.
       if (refereeCoupon) {
         sessionConfig.discounts = [{ coupon: refereeCoupon }];
-        // No permitir otros códigos si ya tiene descuento de referido
-        sessionConfig.allow_promotion_codes = false;
       } else {
-        // Permitir códigos promocionales solo si no tiene referido
         sessionConfig.allow_promotion_codes = true;
       }
 
