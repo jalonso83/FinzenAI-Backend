@@ -1549,9 +1549,19 @@ export class AdminService {
     //  - countUniqueVisitors: distinct anonymousId|userId (visitantes únicos)
     //  - countUniqueUsers: distinct userId (usuarios únicos — para CompleteRegistration y Subscribe,
     //    evita inflar por re-deliveries de webhook o renovaciones)
+    //
+    // BOT FILTER: excluye HeadlessChrome (signature de crawlers/audit bots).
+    // Mantiene userAgent NULL (eventos server-side legítimos como Subscribe vía webhook).
     const countRawEvents = (eventName: string, rangeFrom: Date, rangeTo: Date) =>
       prisma.attributionEvent.count({
-        where: { eventName, eventTime: { gte: rangeFrom, lte: rangeTo } },
+        where: {
+          eventName,
+          eventTime: { gte: rangeFrom, lte: rangeTo },
+          OR: [
+            { userAgent: null },
+            { userAgent: { not: { contains: 'HeadlessChrome', mode: 'insensitive' } } },
+          ],
+        },
       });
 
     const countUniqueVisitors = async (rangeFrom: Date, rangeTo: Date): Promise<number> => {
@@ -1559,7 +1569,8 @@ export class AdminService {
         `SELECT COUNT(DISTINCT COALESCE("anonymousId", "userId"))::bigint as cnt
          FROM attribution_events
          WHERE "eventName" = 'PageView'
-           AND "eventTime" >= $1 AND "eventTime" <= $2`,
+           AND "eventTime" >= $1 AND "eventTime" <= $2
+           AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')`,
         rangeFrom,
         rangeTo,
       );
@@ -1576,7 +1587,8 @@ export class AdminService {
          FROM attribution_events
          WHERE "eventName" = $1
            AND "userId" IS NOT NULL
-           AND "eventTime" >= $2 AND "eventTime" <= $3`,
+           AND "eventTime" >= $2 AND "eventTime" <= $3
+           AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')`,
         eventName,
         rangeFrom,
         rangeTo,
@@ -1636,6 +1648,7 @@ export class AdminService {
         END as cnt
       FROM attribution_events
       WHERE "eventTime" >= $1 AND "eventTime" <= $2
+        AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
       GROUP BY day, "eventName"
       ORDER BY day ASC
       `,
@@ -1669,13 +1682,16 @@ export class AdminService {
       a.day.localeCompare(b.day),
     );
 
-    // Top sources — agregación por source de attribution_events.
+    // Top sources/campañas — agregación por (source, campaign) de attribution_events.
     // Subscriptions y registrations son DISTINCT por userId (1 user = 1 conversión).
     // Revenue: para evitar double counting por re-deliveries de webhook,
-    // se dedupea por (source, userId) tomando MAX(value) — luego se suma.
+    // se dedupea por (source, campaign, userId) tomando MAX(value) — luego se suma.
+    // El JOIN usa `IS NOT DISTINCT FROM` para que NULL = NULL en campaña.
+    // BOT FILTER: excluye eventos de HeadlessChrome (crawlers/audit bots).
     const bySourceRaw = await prisma.$queryRawUnsafe<
       {
         source: string;
+        campaign: string | null;
         visitors: bigint;
         leads: bigint;
         registrations: bigint;
@@ -1687,34 +1703,38 @@ export class AdminService {
       WITH events_in_period AS (
         SELECT
           COALESCE("source", 'Directo') as source,
+          "campaign",
           "eventName",
           "userId",
           "anonymousId",
           "value"
         FROM attribution_events
         WHERE "eventTime" >= $1 AND "eventTime" <= $2
+          AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
       ),
       dedup_subs AS (
-        SELECT source, "userId", MAX("value") as max_value
+        SELECT source, "campaign", "userId", MAX("value") as max_value
         FROM events_in_period
         WHERE "eventName" = 'Subscribe' AND "userId" IS NOT NULL
-        GROUP BY source, "userId"
+        GROUP BY source, "campaign", "userId"
       ),
-      revenue_by_source AS (
-        SELECT source, COALESCE(SUM(max_value), 0) as revenue, COUNT(*)::bigint as subs
+      revenue_by_source_campaign AS (
+        SELECT source, "campaign", COALESCE(SUM(max_value), 0) as revenue, COUNT(*)::bigint as subs
         FROM dedup_subs
-        GROUP BY source
+        GROUP BY source, "campaign"
       )
       SELECT
         e.source,
+        e."campaign",
         COUNT(DISTINCT CASE WHEN e."eventName" = 'PageView' THEN COALESCE(e."anonymousId", e."userId") END)::bigint as visitors,
         COUNT(CASE WHEN e."eventName" = 'Lead' THEN 1 END)::bigint as leads,
         COUNT(DISTINCT CASE WHEN e."eventName" = 'CompleteRegistration' THEN e."userId" END)::bigint as registrations,
         COALESCE(rs.subs, 0)::bigint as subscriptions,
         COALESCE(rs.revenue, 0) as revenue
       FROM events_in_period e
-      LEFT JOIN revenue_by_source rs ON rs.source = e.source
-      GROUP BY e.source, rs.subs, rs.revenue
+      LEFT JOIN revenue_by_source_campaign rs
+        ON rs.source = e.source AND rs."campaign" IS NOT DISTINCT FROM e."campaign"
+      GROUP BY e.source, e."campaign", rs.subs, rs.revenue
       ORDER BY visitors DESC
       `,
       from,
@@ -1726,6 +1746,7 @@ export class AdminService {
       const subscriptions = Number(row.subscriptions);
       return {
         source: row.source ?? 'Directo',
+        campaign: row.campaign ?? null,
         visitors,
         leads: Number(row.leads),
         registrations: Number(row.registrations),
