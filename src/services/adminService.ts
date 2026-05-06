@@ -1559,7 +1559,7 @@ export class AdminService {
           eventTime: { gte: rangeFrom, lte: rangeTo },
           OR: [
             { userAgent: null },
-            { userAgent: { not: { contains: 'HeadlessChrome', mode: 'insensitive' } } },
+            { userAgent: { not: { contains: 'HeadlessChrome' } } },
           ],
         },
       });
