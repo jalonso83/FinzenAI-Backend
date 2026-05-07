@@ -159,8 +159,10 @@ export async function generateDashboardPdf(
     // 6. Esperar fonts
     await page.evaluateHandle('document.fonts.ready');
 
-    // 7. Pequeño delay extra para animaciones de charts
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // 7. Delay extra para animaciones de charts (recharts ~1500ms + buffer).
+    // Sin esto, los donut/line/bar charts se capturan mid-animation y salen
+    // cortados en el PDF.
+    await new Promise(resolve => setTimeout(resolve, 2500));
 
     // 8. Generar PDF con header/footer
     const rangeLabel = RANGE_LABELS[params.range] ?? params.range;
@@ -171,7 +173,7 @@ export async function generateDashboardPdf(
     });
 
     const headerTemplate = `
-      <div style="font-size:9px;color:#666;width:100%;padding:0 15mm;font-family:sans-serif;">
+      <div style="font-size:9px;color:#666;width:100%;padding:0 15mm;font-family:sans-serif;text-align:center;">
         <span>FinZen AI · Reporte Ejecutivo · Periodo: Últimos ${escapeHtml(rangeLabel)}</span>
       </div>
     `;
