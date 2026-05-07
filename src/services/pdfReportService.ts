@@ -118,6 +118,23 @@ export async function generateDashboardPdf(
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 1800 });
 
+    // Diagnóstico: capturar logs del browser, network failures y respuestas 4xx/5xx.
+    page.on('console', (msg) => {
+      logger.log(`[PdfReport][Browser-console] ${msg.type()}: ${msg.text()}`);
+    });
+    page.on('requestfailed', (request) => {
+      logger.error(`[PdfReport][Browser-net] FAIL ${request.url()} - ${request.failure()?.errorText}`);
+    });
+    page.on('response', (response) => {
+      const status = response.status();
+      if (status >= 400) {
+        logger.warn(`[PdfReport][Browser-net] HTTP ${status} ${response.url()}`);
+      }
+    });
+    page.on('pageerror', (error) => {
+      logger.error(`[PdfReport][Browser-pageerror] ${error.message}`);
+    });
+
     // 4. Navegar. Usamos 'domcontentloaded' (no 'networkidle0') porque el
     // dashboard tiene scripts persistentes (analytics, etc.) que mantienen la
     // red activa indefinidamente. La garantía real de que el contenido está
