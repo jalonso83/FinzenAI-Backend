@@ -119,8 +119,9 @@ export async function generateDashboardPdf(
     await page.setViewport({ width: 1280, height: 1800 });
 
     // Diagnóstico: capturar logs del browser, network failures y respuestas 4xx/5xx.
+    // Usamos logger.error para TODO porque en producción solo .error sale.
     page.on('console', (msg) => {
-      logger.log(`[PdfReport][Browser-console] ${msg.type()}: ${msg.text()}`);
+      logger.error(`[PdfReport][Browser-console] ${msg.type()}: ${msg.text()}`);
     });
     page.on('requestfailed', (request) => {
       logger.error(`[PdfReport][Browser-net] FAIL ${request.url()} - ${request.failure()?.errorText}`);
@@ -128,7 +129,7 @@ export async function generateDashboardPdf(
     page.on('response', (response) => {
       const status = response.status();
       if (status >= 400) {
-        logger.warn(`[PdfReport][Browser-net] HTTP ${status} ${response.url()}`);
+        logger.error(`[PdfReport][Browser-net] HTTP ${status} ${response.url()}`);
       }
     });
     page.on('pageerror', (error) => {
