@@ -782,6 +782,35 @@ export const verifyEmailFromLink = async (req: Request, res: Response) => {
  */
 const ATTRIBUTION_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Ventana del fallback IP+device para attribution match.
+// Realista: el flujo "click ad → landing → install → register → verify email"
+// dura típicamente 5-15 minutos. 75 min cubre ~95% de casos sin abrir mucho
+// la puerta a falsos positivos por otra persona en la misma wifi.
+const IP_DEVICE_MATCH_WINDOW_MS = 75 * 60 * 1000;
+
+/**
+ * Extrae un fingerprint de "plataforma + OS major" del User-Agent.
+ * Sobrevive entre webviews distintos en el mismo dispositivo (Meta in-app vs
+ * Safari vs Gmail webview todos tienen el mismo "iPhone; CPU iPhone OS XX").
+ *
+ * Devuelve un substring que se puede usar con `contains` de Prisma.
+ * Ej: "iPhone; CPU iPhone OS 18", "Android 14".
+ */
+function extractDeviceFingerprint(ua: string | null): string | null {
+  if (!ua) return null;
+
+  const iphone = ua.match(/iPhone;\s*CPU\s*iPhone\s*OS\s*(\d+)/i);
+  if (iphone) return `iPhone; CPU iPhone OS ${iphone[1]}`;
+
+  const ipad = ua.match(/iPad;\s*CPU\s*OS\s*(\d+)/i);
+  if (ipad) return `iPad; CPU OS ${ipad[1]}`;
+
+  const android = ua.match(/Android\s+(\d+)/i);
+  if (android) return `Android ${android[1]}`;
+
+  return null;
+}
+
 async function matchAndPopulateAttribution(
   userId: string,
   anonymousId: string | null,
@@ -800,23 +829,28 @@ async function matchAndPopulateAttribution(
       })
     : [];
 
-  let matchMethod: 'anonymousId' | 'ip+ua' | 'none' = events.length > 0 ? 'anonymousId' : 'none';
+  let matchMethod: 'anonymousId' | 'ip+device' | 'none' = events.length > 0 ? 'anonymousId' : 'none';
 
-  // 2. Fallback: IP + UA en últimos 30 días (eventos sin userId asignado todavía)
-  if (events.length === 0 && ipAddress && userAgent) {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  // 2. Fallback: IP + plataforma + OS major en ventana corta.
+  // Razón del cambio vs UA exacto: el UA cambia entre webviews del mismo
+  // teléfono (Meta in-app vs Safari vs Gmail), pero la plataforma y OS major
+  // se mantienen. Ventana corta protege contra falsos positivos en wifi
+  // compartida (más detalle en IP_DEVICE_MATCH_WINDOW_MS).
+  const deviceFingerprint = extractDeviceFingerprint(userAgent);
+  if (events.length === 0 && ipAddress && deviceFingerprint) {
+    const windowStart = new Date(Date.now() - IP_DEVICE_MATCH_WINDOW_MS);
     events = await prisma.attributionEvent.findMany({
       where: {
         ipAddress,
-        userAgent,
+        userAgent: { contains: deviceFingerprint },
         userId: null,
         source: { not: null },
-        eventTime: { gte: thirtyDaysAgo },
+        eventTime: { gte: windowStart },
       },
       orderBy: { eventTime: 'asc' },
       take: 50,
     });
-    if (events.length > 0) matchMethod = 'ip+ua';
+    if (events.length > 0) matchMethod = 'ip+device';
   }
 
   if (events.length === 0) {
