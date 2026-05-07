@@ -118,9 +118,12 @@ export async function generateDashboardPdf(
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 1800 });
 
-    // 4. Navegar
+    // 4. Navegar. Usamos 'domcontentloaded' (no 'networkidle0') porque el
+    // dashboard tiene scripts persistentes (analytics, etc.) que mantienen la
+    // red activa indefinidamente. La garantía real de que el contenido está
+    // listo viene del waitForFunction(__PDF_READY__) más abajo.
     await page.goto(url.toString(), {
-      waitUntil: 'networkidle0',
+      waitUntil: 'domcontentloaded',
       timeout: PDF_GENERATION_TIMEOUT_MS,
     });
 
