@@ -1,14 +1,15 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
-import { authenticateAdmin } from '../middlewares/adminAuth';
+import { authenticateAdminOrPdfToken } from '../middlewares/adminAuth';
 import { strictApiLimiter } from '../config/rateLimiter';
 import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf } from '../controllers/admin';
 import { getFeedbackList, updateFeedback } from '../controllers/feedback';
 
 const router: ExpressRouter = Router();
 
-// All admin routes require admin authentication + strict rate limiting (30/min)
-router.use(authenticateAdmin);
+// All admin routes accept either admin auth (cookie/JWT) or pdfToken (Puppeteer
+// during PDF generation). The compound middleware decides at runtime.
+router.use(authenticateAdminOrPdfToken);
 router.use(strictApiLimiter);
 
 router.get('/pulse', getPulse);

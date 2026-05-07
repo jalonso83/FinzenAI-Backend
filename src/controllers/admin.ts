@@ -3,7 +3,7 @@ import { AdminService } from '../services/adminService';
 import { prisma } from '../lib/prisma';
 import { sendVerificationEmailSafe } from './auth';
 import { logger } from '../utils/logger';
-import { generateDummyPdf, PdfBusyError } from '../services/pdfReportService';
+import { generateDashboardPdf as generateDashboardPdfService, PdfBusyError, PdfInvalidRangeError } from '../services/pdfReportService';
 
 // Helper para sleep entre sends (throttling)
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -193,19 +193,44 @@ export const getDistinctCountries = async (req: Request, res: Response) => {
 };
 
 /**
- * Hito 1: endpoint dummy de PDF. Genera un PDF de prueba con HTML estático.
- * Sirve para validar end-to-end que Puppeteer corre correctamente en Railway.
- * Será reemplazado en hitos posteriores por la generación real del dashboard.
+ * POST /api/admin/dashboard/pdf
+ * Genera el PDF ejecutivo del dashboard. Lanza Puppeteer que renderiza la
+ * landing en modo PDF, espera a que esté listo, y retorna el PDF binario.
+ *
+ * Query params:
+ *  - range: '7d' | '14d' | '30d' | '90d' (default: '30d')
+ *
+ * Defensa: NO acepta pdfToken como auth (evita recursión accidental). Solo
+ * admin con cookie/JWT puede gatillar la generación.
  */
 export const generateDashboardPdf = async (req: Request, res: Response) => {
   try {
-    const pdf = await generateDummyPdf();
+    // Defensa: este endpoint solo se invoca via auth admin normal, NO con pdfToken.
+    if (req.query.pdfToken) {
+      return res.status(403).json({
+        message: 'Esta acción requiere auth admin directa, no pdfToken',
+        error: 'Forbidden',
+      });
+    }
+
+    const adminUser = req.user;
+    if (!adminUser) {
+      return res.status(401).json({ message: 'Unauthorized', error: 'Missing user' });
+    }
+
+    const range = (typeof req.query.range === 'string' ? req.query.range : '30d');
+
+    const pdf = await generateDashboardPdfService({
+      adminUserId: adminUser.id,
+      adminEmail: adminUser.email,
+      range,
+    });
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    const filename = `finzen-reporte-${dateStr}-${range}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="finzen-reporte-${Date.now()}.pdf"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', pdf.length.toString());
     return res.end(pdf);
   } catch (error) {
@@ -213,6 +238,12 @@ export const generateDashboardPdf = async (req: Request, res: Response) => {
       return res.status(429).json({
         message: 'Otro PDF se está generando. Intenta en 30 segundos.',
         error: 'PDF generation busy',
+      });
+    }
+    if (error instanceof PdfInvalidRangeError) {
+      return res.status(400).json({
+        message: `Range inválido: ${(error as Error).message}. Valores válidos: 7d, 14d, 30d, 90d`,
+        error: 'Bad request',
       });
     }
     return handleError(res, 'dashboard pdf', error);

@@ -5,7 +5,7 @@
 
 import { Router, Request, Response, type Router as ExpressRouter } from 'express';
 import { prisma } from '../lib/prisma';
-import { authenticateToken } from '../middlewares/auth';
+import { authenticateAdminOrPdfToken } from '../middlewares/adminAuth';
 import { logger } from '../utils/logger';
 import { OpenAiUsageService } from '../services/openAiUsageService';
 import Decimal from 'decimal.js';
@@ -41,7 +41,7 @@ function getDisplayName(technicalName: string): string {
  * Query params: from (YYYY-MM-DD), to (YYYY-MM-DD)
  * Retorna metrics de costos de OpenAI para dashboard
  */
-router.get('/', authenticateToken, async (req: Request, res: Response) => {
+router.get('/', authenticateAdminOrPdfToken, async (req: Request, res: Response) => {
   try {
     const { from, to } = req.query;
 
