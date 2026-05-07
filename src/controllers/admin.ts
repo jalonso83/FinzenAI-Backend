@@ -3,6 +3,7 @@ import { AdminService } from '../services/adminService';
 import { prisma } from '../lib/prisma';
 import { sendVerificationEmailSafe } from './auth';
 import { logger } from '../utils/logger';
+import { generateDummyPdf, PdfBusyError } from '../services/pdfReportService';
 
 // Helper para sleep entre sends (throttling)
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -188,5 +189,32 @@ export const getDistinctCountries = async (req: Request, res: Response) => {
     return res.json({ message: 'Countries retrieved', data });
   } catch (error) {
     return handleError(res, 'countries', error);
+  }
+};
+
+/**
+ * Hito 1: endpoint dummy de PDF. Genera un PDF de prueba con HTML estático.
+ * Sirve para validar end-to-end que Puppeteer corre correctamente en Railway.
+ * Será reemplazado en hitos posteriores por la generación real del dashboard.
+ */
+export const generateDashboardPdf = async (req: Request, res: Response) => {
+  try {
+    const pdf = await generateDummyPdf();
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="finzen-reporte-${Date.now()}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length.toString());
+    return res.end(pdf);
+  } catch (error) {
+    if (error instanceof PdfBusyError) {
+      return res.status(429).json({
+        message: 'Otro PDF se está generando. Intenta en 30 segundos.',
+        error: 'PDF generation busy',
+      });
+    }
+    return handleError(res, 'dashboard pdf', error);
   }
 };

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
 import { authenticateAdmin } from '../middlewares/adminAuth';
 import { strictApiLimiter } from '../config/rateLimiter';
-import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition } from '../controllers/admin';
+import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf } from '../controllers/admin';
 import { getFeedbackList, updateFeedback } from '../controllers/feedback';
 
 const router: ExpressRouter = Router();
@@ -21,6 +21,9 @@ router.get('/acquisition', getAcquisition);
 router.get('/unit-economics', getUnitEconomics);
 router.get('/financial-health', getFinancialHealth);
 router.post('/users/resend-verification-bulk', bulkResendVerification);
+
+// PDF export (Hito 1: dummy PDF para validar Puppeteer infrastructure)
+router.post('/dashboard/pdf', generateDashboardPdf);
 
 // Feedback management
 router.get('/feedback', getFeedbackList);
