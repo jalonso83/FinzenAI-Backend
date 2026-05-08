@@ -817,6 +817,9 @@ async function matchAndPopulateAttribution(
   ipAddress: string | null,
   userAgent: string | null
 ): Promise<void> {
+  // DIAGNÓSTICO: usar logger.error para que se vea en producción.
+  logger.error(`[Attribution] ▶ Iniciando match para user=${userId} | anonymousId=${anonymousId ?? 'NULL'} | ip=${ipAddress ?? 'NULL'} | ua="${userAgent ?? 'NULL'}"`);
+
   // 1. Buscar primero por anonymousId (señal más confiable)
   let events = anonymousId
     ? await prisma.attributionEvent.findMany({
@@ -830,6 +833,8 @@ async function matchAndPopulateAttribution(
     : [];
 
   let matchMethod: 'anonymousId' | 'ip+device' | 'none' = events.length > 0 ? 'anonymousId' : 'none';
+
+  logger.error(`[Attribution] · Búsqueda por anonymousId → ${events.length} eventos encontrados`);
 
   // 2. Fallback: IP + plataforma + OS major en ventana corta.
   // Razón del cambio vs UA exacto: el UA cambia entre webviews del mismo
@@ -851,10 +856,13 @@ async function matchAndPopulateAttribution(
       take: 50,
     });
     if (events.length > 0) matchMethod = 'ip+device';
+    logger.error(`[Attribution] · Fallback IP+device (fingerprint="${deviceFingerprint}", ventana=${IP_DEVICE_MATCH_WINDOW_MS / 60000}min) → ${events.length} eventos encontrados`);
+  } else if (events.length === 0) {
+    logger.error(`[Attribution] · Fallback IP+device NO ejecutado | ipAddress=${ipAddress ? 'OK' : 'NULL'} | fingerprint=${deviceFingerprint ?? 'NULL'}`);
   }
 
   if (events.length === 0) {
-    logger.log(`[Attribution] Sin match para user ${userId} (anonymousId=${anonymousId ? 'sí' : 'no'}, ip=${ipAddress ? 'sí' : 'no'}) — queda como Directo`);
+    logger.error(`[Attribution] ❌ SIN MATCH para user=${userId} — queda como Directo`);
     return;
   }
 
@@ -896,7 +904,7 @@ async function matchAndPopulateAttribution(
     data: { userId },
   });
 
-  logger.log(`[Attribution] ✅ Match para user ${userId} via ${matchMethod}: ${events.length} eventos, source="${lastTouch.source}"`);
+  logger.error(`[Attribution] ✅ MATCH para user=${userId} via ${matchMethod} | ${events.length} eventos | firstTouch="${firstTouch.source}/${firstTouch.campaign ?? '-'}" | lastTouch="${lastTouch.source}/${lastTouch.campaign ?? '-'}"`);
 }
 
 export const verifyEmailWithAttribution = async (req: Request, res: Response) => {
@@ -951,6 +959,7 @@ export const verifyEmailWithAttribution = async (req: Request, res: Response) =>
       data: { verified: true }
     });
 
+    logger.error(`[Attribution] ▶ Endpoint /verify-email-with-attribution para email=${email} | bodyAnonymousId=${anonymousId ?? 'NULL/no-enviado'}`);
     logger.log(`✅ Email verificado via landing para: ${email}`);
 
     // Best-effort attribution matching — fire-and-forget, NO bloquea respuesta
