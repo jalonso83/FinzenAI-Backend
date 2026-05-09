@@ -1356,64 +1356,45 @@ export class AdminService {
     const orderByField = allowedSorts.includes(sortBy) ? sortBy : 'createdAt';
     const orderBy: Prisma.UserOrderByWithRelationInput = { [orderByField]: sortOrder };
 
-    // Calcular trackingStartDate ANTES del query principal — necesario para
-    // poder filtrar por cohort dentro del where.
-    const trackingStartDate = await AdminService.getTrackingStartDate();
+    // Filtro por plataforma (Android/iOS/Desconocido) — se deriva del userAgent
+    // del evento `CompleteRegistration` en attribution_events.
+    //   Android: UA contiene 'okhttp' o 'Dalvik'
+    //   iOS: UA contiene 'CFNetwork' o 'Darwin'
+    //   Desconocido: sin CompleteRegistration o UA fuera de los patrones anteriores
+    const ANDROID_UA_PATTERNS = ['okhttp', 'Dalvik'];
+    const IOS_UA_PATTERNS = ['CFNetwork', 'Darwin'];
 
-    // Filtro por cohort (debe agregarse al where ANTES del findMany).
-    // Lógica:
-    //   'Histórico'  → createdAt < trackingStartDate (o todos si no hay tracking)
-    //   'Directo'    → createdAt >= trackingStartDate Y (sin fila attribution O firstTouchSource null/'')
-    //   'Atribuido'  → createdAt >= trackingStartDate Y attribution.firstTouchSource no-null Y no-''
-    //
-    // CRÍTICO: en Prisma, `attribution: { firstTouchSource: null }` SOLO matchea users
-    // que TIENEN fila de attribution con source null. Para users SIN fila usar
-    // `attribution: { is: null }`. Por eso 'Directo' debe incluir AMBOS casos via OR.
-    const cohortFilter = query.cohort?.trim();
-    if (cohortFilter && ['Histórico', 'Directo', 'Atribuido'].includes(cohortFilter)) {
-      let cohortClause: Prisma.UserWhereInput | null = null;
+    const platformFilter = query.cohort?.trim();
+    if (platformFilter && ['Android', 'iOS', 'Desconocido'].includes(platformFilter)) {
+      const androidMatch: Prisma.UserWhereInput = {
+        attributionEvents: {
+          some: {
+            eventName: 'CompleteRegistration',
+            OR: ANDROID_UA_PATTERNS.map(p => ({ userAgent: { contains: p } })),
+          },
+        },
+      };
+      const iosMatch: Prisma.UserWhereInput = {
+        attributionEvents: {
+          some: {
+            eventName: 'CompleteRegistration',
+            OR: IOS_UA_PATTERNS.map(p => ({ userAgent: { contains: p } })),
+          },
+        },
+      };
 
-      if (cohortFilter === 'Histórico') {
-        // Si no hay tracking, todos los users son históricos → sin filtro adicional
-        cohortClause = trackingStartDate
-          ? { createdAt: { lt: trackingStartDate } }
-          : {};
-      } else if (cohortFilter === 'Directo') {
-        if (!trackingStartDate) {
-          cohortClause = { id: '__no_match__' };
-        } else {
-          cohortClause = {
-            AND: [
-              { createdAt: { gte: trackingStartDate } },
-              {
-                OR: [
-                  { attribution: { is: null } },                       // sin fila de attribution
-                  { attribution: { firstTouchSource: null } },         // con fila pero source null
-                  { attribution: { firstTouchSource: '' } },           // con fila pero source vacío
-                ],
-              },
-            ],
-          };
-        }
-      } else if (cohortFilter === 'Atribuido') {
-        if (!trackingStartDate) {
-          cohortClause = { id: '__no_match__' };
-        } else {
-          cohortClause = {
-            AND: [
-              { createdAt: { gte: trackingStartDate } },
-              { attribution: { firstTouchSource: { not: null } } },
-              { attribution: { firstTouchSource: { not: '' } } },
-            ],
-          };
-        }
+      let platformClause: Prisma.UserWhereInput;
+      if (platformFilter === 'Android') {
+        platformClause = androidMatch;
+      } else if (platformFilter === 'iOS') {
+        platformClause = iosMatch;
+      } else {
+        // Desconocido = NO matchea ni Android ni iOS
+        platformClause = { AND: [{ NOT: androidMatch }, { NOT: iosMatch }] };
       }
 
-      // Combinamos con AND para no romper otros filtros (status, plan, country, etc.)
-      if (cohortClause && Object.keys(cohortClause).length > 0) {
-        const existingAnd = (where.AND as Prisma.UserWhereInput[] | undefined) ?? [];
-        where.AND = [...existingAnd, cohortClause];
-      }
+      const existingAnd = (where.AND as Prisma.UserWhereInput[] | undefined) ?? [];
+      where.AND = [...existingAnd, platformClause];
     }
 
     const [users, total] = await Promise.all([
@@ -1435,11 +1416,6 @@ export class AdminService {
               currentPeriodEnd: true,
             },
           },
-          attribution: {
-            select: {
-              firstTouchSource: true,
-            },
-          },
           _count: {
             select: {
               transactions: true,
@@ -1456,36 +1432,49 @@ export class AdminService {
     // Get last activity for these users via raw query
     const userIds = users.map(u => u.id);
     let lastActivityMap: Record<string, Date> = {};
+    let platformMap: Record<string, 'Android' | 'iOS' | 'Desconocido'> = {};
 
     if (userIds.length > 0) {
-      const lastActivities = await prisma.$queryRawUnsafe<
-        { userId: string; lastActivity: Date }[]
-      >(
-        `SELECT "userId", MAX("createdAt") as "lastActivity"
-         FROM gamification_events
-         WHERE "userId" = ANY($1::text[])
-         GROUP BY "userId"`,
-        userIds
-      );
+      const [lastActivities, registrationUAs] = await Promise.all([
+        prisma.$queryRawUnsafe<{ userId: string; lastActivity: Date }[]>(
+          `SELECT "userId", MAX("createdAt") as "lastActivity"
+           FROM gamification_events
+           WHERE "userId" = ANY($1::text[])
+           GROUP BY "userId"`,
+          userIds
+        ),
+        // Tomamos el UA del CompleteRegistration más reciente por user.
+        prisma.$queryRawUnsafe<{ userId: string; userAgent: string | null }[]>(
+          `SELECT DISTINCT ON ("userId") "userId", "userAgent"
+           FROM attribution_events
+           WHERE "userId" = ANY($1::text[])
+             AND "eventName" = 'CompleteRegistration'
+           ORDER BY "userId", "eventTime" DESC`,
+          userIds
+        ),
+      ]);
+
       lastActivities.forEach(a => {
         lastActivityMap[a.userId] = a.lastActivity;
       });
+
+      registrationUAs.forEach(r => {
+        const ua = r.userAgent ?? '';
+        if (ANDROID_UA_PATTERNS.some(p => ua.includes(p))) {
+          platformMap[r.userId] = 'Android';
+        } else if (IOS_UA_PATTERNS.some(p => ua.includes(p))) {
+          platformMap[r.userId] = 'iOS';
+        } else {
+          platformMap[r.userId] = 'Desconocido';
+        }
+      });
     }
 
-    // Cohort dinámico (3 valores en español):
-    //   'Histórico'  — createdAt < trackingStartDate (registrado antes del tracking)
-    //   'Directo'    — registrado después del tracking, sin firstTouchSource
-    //   'Atribuido'  — registrado después del tracking, con firstTouchSource conocido
-    // trackingStartDate ya fue calculado arriba (antes del findMany para soportar filtro).
+    // El campo se sigue llamando `cohort` para no romper consumidores existentes,
+    // pero los valores ahora representan la plataforma (Android / iOS / Desconocido)
+    // derivada del userAgent del evento CompleteRegistration.
     const mappedUsers = users.map(u => {
-      let cohort: 'Histórico' | 'Directo' | 'Atribuido';
-      if (!trackingStartDate || u.createdAt < trackingStartDate) {
-        cohort = 'Histórico';
-      } else if (u.attribution?.firstTouchSource) {
-        cohort = 'Atribuido';
-      } else {
-        cohort = 'Directo';
-      }
+      const cohort: 'Android' | 'iOS' | 'Desconocido' = platformMap[u.id] ?? 'Desconocido';
       return {
         id: u.id,
         name: u.name,
