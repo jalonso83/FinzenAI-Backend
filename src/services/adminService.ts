@@ -1717,7 +1717,11 @@ export class AdminService {
         e."campaign",
         COUNT(DISTINCT CASE WHEN e."eventName" = 'PageView' THEN COALESCE(e."anonymousId", e."userId") END)::bigint as visitors,
         COUNT(CASE WHEN e."eventName" = 'Lead' THEN 1 END)::bigint as leads,
-        COUNT(DISTINCT CASE WHEN e."eventName" = 'CompleteRegistration' THEN e."userId" END)::bigint as registrations,
+        -- Atribución por source: cada anonymousId único que disparó un Lead
+        -- (click al botón "Descargar iOS/Android") cuenta como 1 user atribuido.
+        -- No se usa CompleteRegistration porque ese evento se dispara desde la app
+        -- mobile sin contexto de UTMs (siempre cae como source=NULL).
+        COUNT(DISTINCT CASE WHEN e."eventName" = 'Lead' THEN COALESCE(e."anonymousId", e."userId") END)::bigint as registrations,
         COALESCE(rs.subs, 0)::bigint as subscriptions,
         COALESCE(rs.revenue, 0) as revenue
       FROM events_in_period e
@@ -1732,16 +1736,18 @@ export class AdminService {
 
     const bySource = bySourceRaw.map(row => {
       const visitors = Number(row.visitors);
-      const subscriptions = Number(row.subscriptions);
+      const registrations = Number(row.registrations);
       return {
         source: row.source ?? 'Directo',
         campaign: row.campaign ?? null,
         visitors,
         leads: Number(row.leads),
-        registrations: Number(row.registrations),
-        subscriptions,
+        registrations,
+        subscriptions: Number(row.subscriptions),
         revenue: Number(row.revenue ?? 0),
-        conversionRate: visitors > 0 ? Math.round((subscriptions / visitors) * 10000) / 100 : 0,
+        // CR% = atribuidos (Lead) / visitantes. Refleja qué % de quienes vieron
+        // la landing decidieron descargar la app — métrica útil de campaña.
+        conversionRate: visitors > 0 ? Math.round((registrations / visitors) * 10000) / 100 : 0,
       };
     });
 
