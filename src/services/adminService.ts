@@ -1671,10 +1671,16 @@ export class AdminService {
       a.day.localeCompare(b.day),
     );
 
-    // Top sources/campañas — agregación por (source, campaign) de attribution_events.
-    // Subscriptions y registrations son DISTINCT por userId (1 user = 1 conversión).
-    // Revenue: para evitar double counting por re-deliveries de webhook,
-    // se dedupea por (source, campaign, userId) tomando MAX(value) — luego se suma.
+    // Top sources/campañas — agregación LIFETIME (no aplica el filtro de fechas
+    // del dashboard). El usuario lo decidió así porque los costos manuales por
+    // campaña no tienen granularidad temporal — mezclar costo lifetime con
+    // métricas filtradas por fecha generaría CPL/CAC engañosos. Esta tabla y
+    // (próximamente) sus columnas de costo viven en el mundo "totales lifetime".
+    // Las demás secciones del dashboard de Adquisición SÍ siguen filtradas por
+    // el rango de fechas seleccionado.
+    //
+    // Subscriptions/revenue: dedup por (source, campaign, userId) con MAX(value)
+    // para evitar double-counting por re-deliveries del webhook de Stripe.
     // El JOIN usa `IS NOT DISTINCT FROM` para que NULL = NULL en campaña.
     // BOT FILTER: excluye eventos de HeadlessChrome (crawlers/audit bots).
     const bySourceRaw = await prisma.$queryRawUnsafe<
@@ -1689,7 +1695,7 @@ export class AdminService {
       }[]
     >(
       `
-      WITH events_in_period AS (
+      WITH events_lifetime AS (
         SELECT
           COALESCE("source", 'Directo') as source,
           "campaign",
@@ -1698,12 +1704,11 @@ export class AdminService {
           "anonymousId",
           "value"
         FROM attribution_events
-        WHERE "eventTime" >= $1 AND "eventTime" <= $2
-          AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
+        WHERE ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
       ),
       dedup_subs AS (
         SELECT source, "campaign", "userId", MAX("value") as max_value
-        FROM events_in_period
+        FROM events_lifetime
         WHERE "eventName" = 'Subscribe' AND "userId" IS NOT NULL
         GROUP BY source, "campaign", "userId"
       ),
@@ -1724,14 +1729,12 @@ export class AdminService {
         COUNT(DISTINCT CASE WHEN e."eventName" = 'Lead' THEN COALESCE(e."anonymousId", e."userId") END)::bigint as registrations,
         COALESCE(rs.subs, 0)::bigint as subscriptions,
         COALESCE(rs.revenue, 0) as revenue
-      FROM events_in_period e
+      FROM events_lifetime e
       LEFT JOIN revenue_by_source_campaign rs
         ON rs.source = e.source AND rs."campaign" IS NOT DISTINCT FROM e."campaign"
       GROUP BY e.source, e."campaign", rs.subs, rs.revenue
       ORDER BY visitors DESC
       `,
-      from,
-      to,
     );
 
     const bySource = bySourceRaw.map(row => {
@@ -1771,5 +1774,171 @@ export class AdminService {
       },
       period: { from: from.toISOString(), to: to.toISOString() },
     };
+  }
+
+  // ─── CAMPAIGN COSTS ──────────────────────────────────────
+  // Gestión de costos manuales por (source, campaign). Sin granularidad temporal:
+  // 1 fila por campaña, costo acumulado total. El listado mergea las (source,
+  // campaign) que ya tienen eventos en attribution_events con las que sólo
+  // existen como costo manual (sin eventos todavía).
+
+  /**
+   * Devuelve todas las (source, campaign) que tienen eventos en attribution_events
+   * OR un costo ingresado manualmente. Por cada par incluye métricas lifetime
+   * (visitors, leads, registros) y, si hay costo, también CPL/CAC/CPV.
+   */
+  static async getCampaignCosts() {
+    // 1. Métricas lifetime por (source, campaign) desde attribution_events.
+    //    Mismo criterio que la tabla Top Sources: filtra bots HeadlessChrome.
+    //    NOTA: 'Directo' (source NULL) NO se incluye — no tiene sentido asignarle
+    //    costo manual de campaña.
+    const metrics = await prisma.$queryRawUnsafe<{
+      source: string;
+      campaign: string;
+      visitors: bigint;
+      leads: bigint;
+      registrations: bigint;
+    }[]>(
+      `
+      SELECT
+        "source" as source,
+        COALESCE("campaign", '') as campaign,
+        COUNT(DISTINCT CASE WHEN "eventName" = 'PageView' THEN COALESCE("anonymousId", "userId") END)::bigint as visitors,
+        COUNT(CASE WHEN "eventName" = 'Lead' THEN 1 END)::bigint as leads,
+        COUNT(DISTINCT CASE WHEN "eventName" = 'Lead' THEN COALESCE("anonymousId", "userId") END)::bigint as registrations
+      FROM attribution_events
+      WHERE "source" IS NOT NULL
+        AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
+      GROUP BY "source", COALESCE("campaign", '')
+      `,
+    );
+
+    // 2. Costos manuales (todos).
+    const costs = await prisma.campaignCost.findMany();
+
+    // 3. Merge: usamos un Map para combinar por (source, campaign).
+    type Row = {
+      id: string | null;
+      source: string;
+      campaign: string;
+      costUSD: number;
+      notes: string | null;
+      visitors: number;
+      leads: number;
+      registrations: number;
+      cpv: number | null;
+      cpl: number | null;
+      cac: number | null;
+      hasEvents: boolean;
+      isManual: boolean; // true si tiene costo pero NO tiene eventos todavía
+    };
+
+    const map = new Map<string, Row>();
+    const key = (s: string, c: string) => `${s}::${c}`;
+
+    for (const m of metrics) {
+      map.set(key(m.source, m.campaign), {
+        id: null,
+        source: m.source,
+        campaign: m.campaign,
+        costUSD: 0,
+        notes: null,
+        visitors: Number(m.visitors),
+        leads: Number(m.leads),
+        registrations: Number(m.registrations),
+        cpv: null,
+        cpl: null,
+        cac: null,
+        hasEvents: true,
+        isManual: false,
+      });
+    }
+
+    for (const c of costs) {
+      const k = key(c.source, c.campaign);
+      const existing = map.get(k);
+      const cost = Number(c.costUSD);
+      if (existing) {
+        existing.id = c.id;
+        existing.costUSD = cost;
+        existing.notes = c.notes;
+        existing.cpv = existing.visitors > 0 ? Math.round((cost / existing.visitors) * 100) / 100 : null;
+        existing.cpl = existing.leads > 0 ? Math.round((cost / existing.leads) * 100) / 100 : null;
+        existing.cac = existing.registrations > 0 ? Math.round((cost / existing.registrations) * 100) / 100 : null;
+      } else {
+        // Costo manual sin eventos todavía.
+        map.set(k, {
+          id: c.id,
+          source: c.source,
+          campaign: c.campaign,
+          costUSD: cost,
+          notes: c.notes,
+          visitors: 0,
+          leads: 0,
+          registrations: 0,
+          cpv: null,
+          cpl: null,
+          cac: null,
+          hasEvents: false,
+          isManual: true,
+        });
+      }
+    }
+
+    const rows = Array.from(map.values()).sort((a, b) => {
+      // Primero las que tienen inversión, después por visitors desc.
+      if (a.costUSD > 0 && b.costUSD === 0) return -1;
+      if (a.costUSD === 0 && b.costUSD > 0) return 1;
+      return b.visitors - a.visitors;
+    });
+
+    // 4. Resumen para el banner KPI.
+    const totalInvested = rows.reduce((sum, r) => sum + r.costUSD, 0);
+    const totalRegistrations = rows.reduce((sum, r) => sum + (r.costUSD > 0 ? r.registrations : 0), 0);
+    const avgCAC = totalRegistrations > 0
+      ? Math.round((totalInvested / totalRegistrations) * 100) / 100
+      : null;
+
+    return {
+      rows,
+      summary: {
+        totalInvested: Math.round(totalInvested * 100) / 100,
+        totalAttributed: totalRegistrations,
+        avgCAC,
+      },
+    };
+  }
+
+  /**
+   * Upsert de un costo por (source, campaign). Crea si no existe, actualiza si sí.
+   */
+  static async upsertCampaignCost(input: {
+    source: string;
+    campaign?: string | null;
+    costUSD: number;
+    notes?: string | null;
+  }) {
+    const source = input.source.trim();
+    if (!source) throw new Error('source es requerido');
+
+    const campaign = (input.campaign ?? '').trim();
+    const costUSD = Number(input.costUSD);
+    if (!isFinite(costUSD) || costUSD < 0) {
+      throw new Error('costUSD inválido (debe ser número ≥ 0)');
+    }
+    const notes = input.notes?.trim() || null;
+
+    return prisma.campaignCost.upsert({
+      where: { source_campaign: { source, campaign } },
+      create: { source, campaign, costUSD, notes },
+      update: { costUSD, notes },
+    });
+  }
+
+  /**
+   * Borra un costo manual por id.
+   */
+  static async deleteCampaignCost(id: string) {
+    return prisma.campaignCost.delete({ where: { id } });
   }
 }

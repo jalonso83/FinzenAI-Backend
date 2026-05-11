@@ -1143,6 +1143,30 @@ model AttributionEvent {
   @@map("attribution_events")
 }
 
+// ─── Campaign Costs ────────────────────────────────────────────────
+//
+// Costo manual ingresado por el admin para cada (source, campaign).
+// Modelo simple: 1 fila por par único, costo es acumulado total a la fecha.
+// No tiene granularidad temporal por decisión de producto — el filtro de
+// fechas del dashboard NO aplica a estos datos.
+//
+// `campaign` usa "" en lugar de NULL para que el unique compuesto funcione
+// correctamente en Postgres (NULLs no son iguales entre sí).
+
+model CampaignCost {
+  id        String   @id @default(cuid())
+  source    String
+  campaign  String   @default("")
+  costUSD   Decimal  @db.Decimal(10, 2)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([source, campaign])
+  @@index([source])
+  @@map("campaign_costs")
+}
+
 // ─── User Feedback ─────────────────────────────────────────────────
 //
 // Reportes de bugs, sugerencias y otros comentarios enviados por usuarios

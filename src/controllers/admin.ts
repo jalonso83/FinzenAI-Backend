@@ -249,3 +249,49 @@ export const generateDashboardPdf = async (req: Request, res: Response) => {
     return handleError(res, 'dashboard pdf', error);
   }
 };
+
+// ─── Campaign Costs ─────────────────────────────────────
+
+export const getCampaignCosts = async (_req: Request, res: Response) => {
+  try {
+    const data = await AdminService.getCampaignCosts();
+    return res.json({ message: 'Campaign costs retrieved', data });
+  } catch (error) {
+    return handleError(res, 'campaign costs', error);
+  }
+};
+
+export const upsertCampaignCost = async (req: Request, res: Response) => {
+  try {
+    const { source, campaign, costUSD, notes } = req.body ?? {};
+    if (typeof source !== 'string' || !source.trim()) {
+      return res.status(400).json({ message: 'source es requerido', error: 'Bad request' });
+    }
+    if (typeof costUSD !== 'number' && typeof costUSD !== 'string') {
+      return res.status(400).json({ message: 'costUSD es requerido', error: 'Bad request' });
+    }
+    const cost = typeof costUSD === 'string' ? parseFloat(costUSD) : costUSD;
+    const data = await AdminService.upsertCampaignCost({
+      source,
+      campaign: campaign ?? '',
+      costUSD: cost,
+      notes,
+    });
+    return res.json({ message: 'Campaign cost saved', data });
+  } catch (error) {
+    return handleError(res, 'upsert campaign cost', error);
+  }
+};
+
+export const deleteCampaignCost = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ message: 'id es requerido', error: 'Bad request' });
+    }
+    await AdminService.deleteCampaignCost(id);
+    return res.json({ message: 'Campaign cost deleted' });
+  } catch (error) {
+    return handleError(res, 'delete campaign cost', error);
+  }
+};
