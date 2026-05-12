@@ -1539,8 +1539,18 @@ export class AdminService {
     //  - countUniqueUsers: distinct userId (usuarios únicos — para CompleteRegistration y Subscribe,
     //    evita inflar por re-deliveries de webhook o renovaciones)
     //
-    // BOT FILTER: excluye HeadlessChrome (signature de crawlers/audit bots).
-    // Mantiene userAgent NULL (eventos server-side legítimos como Subscribe vía webhook).
+    // NOISE FILTERS (3 capas):
+    //   1. HeadlessChrome UA → bots/crawlers
+    //   2. campaign tipo __XXX__ → macros TikTok no resueltas (preview/scan)
+    //   3. ttclid con "Preview_" → clicks de preview del advertiser
+    // Mantiene userAgent NULL y ttclid NULL (eventos server-side legítimos
+    // como Subscribe vía webhook no tienen UA/ttclid).
+    const NOISE_SQL_FILTERS = `
+      AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
+      AND ("campaign" IS NULL OR "campaign" NOT LIKE '\\_\\_%\\_\\_' ESCAPE '\\')
+      AND ("ttclid" IS NULL OR "ttclid" NOT LIKE '%Preview\\_%' ESCAPE '\\')
+    `;
+
     const countRawEvents = (eventName: string, rangeFrom: Date, rangeTo: Date) =>
       prisma.attributionEvent.count({
         where: {
@@ -1550,6 +1560,12 @@ export class AdminService {
             { userAgent: null },
             { userAgent: { not: { contains: 'HeadlessChrome' } } },
           ],
+          NOT: {
+            OR: [
+              { AND: [{ campaign: { startsWith: '__' } }, { campaign: { endsWith: '__' } }] },
+              { ttclid: { contains: 'Preview_' } },
+            ],
+          },
         },
       });
 
@@ -1559,7 +1575,7 @@ export class AdminService {
          FROM attribution_events
          WHERE "eventName" = 'PageView'
            AND "eventTime" >= $1 AND "eventTime" <= $2
-           AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')`,
+           ${NOISE_SQL_FILTERS}`,
         rangeFrom,
         rangeTo,
       );
@@ -1577,7 +1593,7 @@ export class AdminService {
          WHERE "eventName" = $1
            AND "userId" IS NOT NULL
            AND "eventTime" >= $2 AND "eventTime" <= $3
-           AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')`,
+           ${NOISE_SQL_FILTERS}`,
         eventName,
         rangeFrom,
         rangeTo,
@@ -1637,7 +1653,7 @@ export class AdminService {
         END as cnt
       FROM attribution_events
       WHERE "eventTime" >= $1 AND "eventTime" <= $2
-        AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
+        ${NOISE_SQL_FILTERS}
       GROUP BY day, "eventName"
       ORDER BY day ASC
       `,
@@ -1705,6 +1721,12 @@ export class AdminService {
           "value"
         FROM attribution_events
         WHERE ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
+          -- Filtra macros TikTok no resueltas (ej: __CAMPAIGN_NAME__, __AID_NAME__)
+          -- que llegan literales cuando el advertiser previsualiza el ad o un bot
+          -- toca la URL antes del replacement.
+          AND ("campaign" IS NULL OR "campaign" NOT LIKE '\\_\\_%\\_\\_' ESCAPE '\\')
+          -- Filtra clicks de preview de TikTok (ttclid contiene "Preview_").
+          AND ("ttclid" IS NULL OR "ttclid" NOT LIKE '%Preview\\_%' ESCAPE '\\')
       ),
       dedup_subs AS (
         SELECT source, "campaign", "userId", MAX("value") as max_value
@@ -1809,6 +1831,10 @@ export class AdminService {
       FROM attribution_events
       WHERE "source" IS NOT NULL
         AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
+        -- Filtra macros TikTok no resueltas (__CAMPAIGN_NAME__, __AID_NAME__, etc.).
+        AND ("campaign" IS NULL OR "campaign" NOT LIKE '\\_\\_%\\_\\_' ESCAPE '\\')
+        -- Filtra clicks de preview de TikTok (ttclid contiene "Preview_").
+        AND ("ttclid" IS NULL OR "ttclid" NOT LIKE '%Preview\\_%' ESCAPE '\\')
       GROUP BY "source", COALESCE("campaign", '')
       `,
     );
