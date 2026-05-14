@@ -1,5 +1,6 @@
 import express, { Router } from 'express';
 import { register, login, resendVerificationEmail, verifyEmail, verifyEmailFromLink, verifyEmailWithAttribution, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility, deleteAccount } from '../controllers/auth';
+import { skipOnboarding } from '../controllers/onboarding';
 import { authenticateToken } from '../middlewares/auth';
 import {
   loginLimiter,
@@ -28,4 +29,7 @@ router.put('/profile', apiLimiter, authenticateToken, updateProfile);
 router.put('/change-password', apiLimiter, authenticateToken, changePassword);
 router.delete('/account', apiLimiter, authenticateToken, deleteAccount);
 
-export default router; 
+// Skip onboarding (gateado por feature flag — ver controllers/config.ts)
+router.post('/onboarding/skip', apiLimiter, authenticateToken, skipOnboarding);
+
+export default router;

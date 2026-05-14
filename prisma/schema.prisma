@@ -27,6 +27,8 @@ model User {
   updatedAt           DateTime  @updatedAt
   onboarding          Boolean   @default(false)
   onboardingCompleted Boolean   @default(false)
+  onboardingMethod    String?
+  onboardingSkippedAt DateTime?
 
   // Trial tracking
   hasUsedTrial Boolean @default(false)

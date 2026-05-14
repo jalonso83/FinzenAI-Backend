@@ -207,7 +207,9 @@ const USER_PROFILE_SELECT = {
   id: true, name: true, lastName: true, email: true, phone: true,
   birthDate: true, country: true, state: true, city: true,
   currency: true, preferredLanguage: true, occupation: true, company: true,
-  verified: true, onboardingCompleted: true, createdAt: true, updatedAt: true
+  verified: true, onboardingCompleted: true,
+  onboardingMethod: true, onboardingSkippedAt: true,
+  createdAt: true, updatedAt: true
 } as const;
 
 /**
