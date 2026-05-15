@@ -288,7 +288,7 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 // Solo se usa cuando ONBOARDING_MODE=v2.1
 // =============================================
 
-async function executeOnboardingV21(args: any, userId: string, userName: string): Promise<any> {
+async function executeOnboardingV21(args: any, userId: string, userName: string, isRePersonalization: boolean = false): Promise<any> {
   // Auto-detect: el AI a veces omite o marca mal `estado_onboarding`.
   // Si tiene todos los campos required (meta + desafío + fondo emergencia)
   // y NO está explícitamente marcado como abandonado, considerarlo completo.
@@ -328,12 +328,17 @@ async function executeOnboardingV21(args: any, userId: string, userName: string)
     },
   });
 
+  // En re-personalización el user ya está completed — no tocar onboardingCompleted.
+  // Solo asegurar onboarding=true (defensivo, ya debería estarlo) y dejar el upsert
+  // del perfil (que sí actualiza con las nuevas respuestas).
   await prisma.user.update({
     where: { id: userId },
-    data: {
-      onboarding: true,
-      onboardingCompleted: isCompleted,
-    },
+    data: isRePersonalization
+      ? { onboarding: true }
+      : {
+          onboarding: true,
+          onboardingCompleted: isCompleted,
+        },
   });
 
   return {
@@ -918,7 +923,8 @@ async function processToolCalls(
   userName: string,
   categories?: any[],
   timezone?: string,
-  onboardingMode?: string
+  onboardingMode?: string,
+  isRePersonalization?: boolean
 ): Promise<ToolCallResult[]> {
   const results: ToolCallResult[] = [];
 
@@ -933,7 +939,7 @@ async function processToolCalls(
       switch (functionName) {
         case 'onboarding_financiero':
           result = onboardingMode === 'v2.1'
-            ? await executeOnboardingV21(functionArgs, userId, userName)
+            ? await executeOnboardingV21(functionArgs, userId, userName, isRePersonalization === true)
             : await executeOnboardingFinanciero(functionArgs, userId, userName);
           break;
         case 'manage_transaction_record':
@@ -1016,7 +1022,7 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     }
 
     // 4. Obtener datos del request
-    let { message, threadId: incomingThreadId, isOnboarding, categories, timezone, autoGreeting, transactions, onboardingVersion } = req.body;
+    let { message, threadId: incomingThreadId, isOnboarding, isRePersonalization, categories, timezone, autoGreeting, transactions, onboardingVersion } = req.body;
     const userTimezone = timezone || 'UTC';
 
     // 4.1 Obtener categorías si no vienen del frontend
@@ -1061,12 +1067,27 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     //   'v2.1' = forzar v2.1 para todos
     const envMode = process.env.ONBOARDING_MODE || 'current';
     const effectiveVersion = envMode === 'v2.1' ? 'v2.1' : (onboardingVersion || 'current');
-    const isV21Onboarding = isOnboarding && !user?.onboardingCompleted && effectiveVersion === 'v2.1';
+    // Re-personalización: el user ya completó el onboarding antes pero quiere actualizarlo.
+    // Forzamos el flujo de v2.1 ignorando el user.onboardingCompleted=true.
+    const isV21Onboarding = isOnboarding && (!user?.onboardingCompleted || isRePersonalization === true) && effectiveVersion === 'v2.1';
 
     const dateContext = `\n\nFECHA ACTUAL: Hoy es ${fechaHumana} (${fechaActual}). Año ${fechaRD.getFullYear()}. Zona horaria: República Dominicana (UTC-4). Cuando el usuario mencione "hoy", "ayer", "mañana", etc., usa esta fecha como referencia.`;
 
+    // Contexto adicional para re-personalización (concatenado al prompt v2.1).
+    // Override quirúrgico — no tocamos el prompt principal validado.
+    const rePersonalizationContext = isRePersonalization === true
+      ? `\n\n## CONTEXTO ADICIONAL: MODO RE-PERSONALIZACIÓN\n` +
+        `El usuario YA completó este onboarding antes y está volviendo VOLUNTARIAMENTE a actualizar su perfil porque sus prioridades cambiaron.\n\n` +
+        `Reglas que sobreescriben el prompt principal SOLO en este modo:\n` +
+        `- NO digas "Bienvenido a FinZen AI" — el usuario ya conoce la app.\n` +
+        `- Saludo inicial: "¡${userName ? `Hola ${userName}, ` : ''}vamos a actualizar tu perfil! Las prioridades cambian y las metas evolucionan. Te haré las mismas preguntas con tu situación actual."\n` +
+        `- Al cierre, en lugar de "Tu perfil está registrado", di: "¡Perfecto ${userName || ''}! Tu perfil ha sido actualizado. Ahora puedo darte recomendaciones más alineadas a tu momento actual."\n` +
+        `- La regla "NUNCA repitas el onboarding si estado_onboarding == completado" NO aplica en este modo — el usuario solicitó explícitamente la actualización.\n` +
+        `- En el Paso 4 (Activación), si el usuario YA tiene presupuestos/metas creados desde el onboarding anterior, no es obligatorio crear nuevos. Pregunta primero si quiere ajustar los existentes o crear nuevos.\n`
+      : '';
+
     const dynamicInstructions = isV21Onboarding
-      ? `${ZENIO_ONBOARDING_V21_PROMPT}${dateContext}${categoriesContext}`
+      ? `${ZENIO_ONBOARDING_V21_PROMPT}${dateContext}${categoriesContext}${rePersonalizationContext}`
       : `${ZENIO_SYSTEM_PROMPT}${dateContext}${categoriesContext}`;
 
     // 7. Construir input para Responses API
@@ -1086,19 +1107,17 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
         content: `Entendido, el usuario se llama ${userName}. Lo saludaré por su nombre de forma natural.`,
       });
 
-      // Si es onboarding
-      if (isOnboarding && !user?.onboardingCompleted) {
-        if (isV21Onboarding) {
-          input.push({
-            role: 'user',
-            content: `Quiero iniciar mi onboarding financiero. Mi nombre es ${userName}. Mi país es ${user?.country || 'DO'} y mi moneda es ${user?.currency || 'DOP'}.`,
-          });
-        } else {
-          input.push({
-            role: 'user',
-            content: `Quiero iniciar mi onboarding financiero. Mi nombre es ${userName}.`,
-          });
-        }
+      // Si es onboarding (incluyendo re-personalización)
+      if ((isOnboarding && !user?.onboardingCompleted) || isRePersonalization === true) {
+        const initialContent = isRePersonalization === true
+          ? `Quiero actualizar mi perfil. Mi nombre es ${userName}. Mi país es ${user?.country || 'DO'} y mi moneda es ${user?.currency || 'DOP'}.`
+          : isV21Onboarding
+            ? `Quiero iniciar mi onboarding financiero. Mi nombre es ${userName}. Mi país es ${user?.country || 'DO'} y mi moneda es ${user?.currency || 'DOP'}.`
+            : `Quiero iniciar mi onboarding financiero. Mi nombre es ${userName}.`;
+        input.push({
+          role: 'user',
+          content: initialContent,
+        });
       } else if (message) {
         input.push({ role: 'user', content: message });
       }
@@ -1185,7 +1204,7 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
       toolCallIterations++;
 
       // Procesar todos los tool calls
-      const toolResults = await processToolCalls(functionCalls, userId, userName, categories, userTimezone, effectiveVersion);
+      const toolResults = await processToolCalls(functionCalls, userId, userName, categories, userTimezone, effectiveVersion, isRePersonalization === true);
 
       // Recoger acciones ejecutadas
       for (const tr of toolResults) {
