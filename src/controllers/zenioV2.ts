@@ -298,9 +298,16 @@ async function executeOnboardingV21(args: any, userId: string, userName: string,
     args.desafio_financiero &&
     args.fondo_emergencia
   );
-  const isCompleted =
-    args.estado_onboarding === 'completado' ||
-    (hasAllRequired && args.estado_onboarding !== 'abandonado');
+  // En re-personalización: cualquier upsert exitoso del perfil = success.
+  // La lógica de "parcial"/"abandonado" sólo aplica al onboarding inicial — un user
+  // que volvió voluntariamente a actualizar su perfil ya completó antes.
+  // Sin esto, el frontend nunca recibe la señal y el botón "Continuar" no aparece.
+  const isCompleted = isRePersonalization
+    ? true
+    : (
+        args.estado_onboarding === 'completado' ||
+        (hasAllRequired && args.estado_onboarding !== 'abandonado')
+      );
 
   await prisma.onboarding.upsert({
     where: { userId },
