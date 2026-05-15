@@ -1,6 +1,6 @@
 import express, { Router } from 'express';
 import { register, login, resendVerificationEmail, verifyEmail, verifyEmailFromLink, verifyEmailWithAttribution, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility, deleteAccount } from '../controllers/auth';
-import { skipOnboarding } from '../controllers/onboarding';
+import { skipOnboarding, completeOnboarding } from '../controllers/onboarding';
 import { authenticateToken } from '../middlewares/auth';
 import {
   loginLimiter,
@@ -31,5 +31,9 @@ router.delete('/account', apiLimiter, authenticateToken, deleteAccount);
 
 // Skip onboarding (gateado por feature flag — ver controllers/config.ts)
 router.post('/onboarding/skip', apiLimiter, authenticateToken, skipOnboarding);
+
+// Complete onboarding (valida que exista perfil antes de marcar completed).
+// Reemplaza el patrón legacy de PUT /auth/profile con onboardingCompleted=true.
+router.post('/onboarding/complete', apiLimiter, authenticateToken, completeOnboarding);
 
 export default router;

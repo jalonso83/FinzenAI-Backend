@@ -90,6 +90,7 @@ const SKIP_RESPONSE_SELECT = {
   occupation: true,
   company: true,
   verified: true,
+  onboarding: true,
   onboardingCompleted: true,
   onboardingMethod: true,
   onboardingSkippedAt: true,
@@ -155,6 +156,89 @@ export const skipOnboarding = async (req: Request, res: Response) => {
     return res.status(500).json({
       error: 'Internal Server Error',
       message: 'No se pudo saltar el onboarding.',
+    });
+  }
+};
+
+/**
+ * POST /api/auth/onboarding/complete
+ *
+ * Marca el onboarding como completado SOLO si existe registro en la tabla Onboarding.
+ * Este es el endpoint que la app móvil debe usar al final del chat con Zenio,
+ * en lugar de hacer PUT directo a /auth/profile (que no valida).
+ *
+ * Si NO existe perfil de onboarding, devuelve 409 con mensaje claro para que
+ * el frontend pueda ofrecer reintentar o saltar.
+ *
+ * Idempotente: si ya estaba completado, devuelve estado actual sin error.
+ */
+export const completeOnboarding = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
+    }
+
+    // Idempotencia: si ya está completado, devolver estado actual
+    const existingUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { onboardingCompleted: true },
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found', message: 'Usuario no encontrado' });
+    }
+
+    if (existingUser.onboardingCompleted) {
+      const current = await prisma.user.findUnique({
+        where: { id: userId },
+        select: SKIP_RESPONSE_SELECT,
+      });
+      return res.json({
+        message: 'El onboarding ya estaba marcado como completado.',
+        user: current,
+        alreadyCompleted: true,
+      });
+    }
+
+    // Validar que existe el perfil financiero antes de marcar completed.
+    // Esto cierra el agujero del bug que dejaba 205 usuarios "rotos" en producción.
+    const profile = await prisma.onboarding.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+
+    if (!profile) {
+      logger.error(
+        `[Onboarding] complete rechazado — userId=${userId} no tiene perfil en tabla Onboarding`
+      );
+      return res.status(409).json({
+        error: 'Onboarding profile missing',
+        message:
+          'No se encontró tu perfil financiero. Por favor reintenta el chat con Zenio o usa la opción de saltar la personalización.',
+        code: 'ONBOARDING_PROFILE_MISSING',
+      });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        onboarding: true,
+        onboardingCompleted: true,
+      },
+      select: SKIP_RESPONSE_SELECT,
+    });
+
+    return res.json({
+      message: 'Onboarding completado exitosamente.',
+      user: updatedUser,
+      alreadyCompleted: false,
+    });
+  } catch (error) {
+    logger.error('[Onboarding] Error completing onboarding:', error);
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'No se pudo completar el onboarding.',
     });
   }
 };

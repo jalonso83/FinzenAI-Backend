@@ -1284,6 +1284,35 @@ export const updateProfile = async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'Email already exists', message: 'Ya existe una cuenta con este email' });
     }
 
+    // 2.b — Logging defensivo (modo MONITOR ONLY).
+    // Si el cliente intenta marcar onboardingCompleted=true vía este endpoint legacy,
+    // verificar que sea un caso legítimo (existe perfil en tabla Onboarding o ya saltó).
+    // Si NO lo es, loguear con error para visibilidad — esto es el bug que dejó 205 rotos.
+    // Por ahora NO bloqueamos para mantener backward compat con app vieja en producción.
+    // Cuando la app nueva esté ampliamente distribuida, considerar activar enforcement
+    // estricto vía env var ENFORCE_ONBOARDING_INTEGRITY.
+    if (onboardingCompleted === true) {
+      try {
+        const [existingProfile, currentUser] = await Promise.all([
+          prisma.onboarding.findUnique({ where: { userId }, select: { id: true } }),
+          prisma.user.findUnique({ where: { id: userId }, select: { onboardingMethod: true, onboardingCompleted: true } }),
+        ]);
+        const isLegitimate =
+          !!existingProfile ||
+          currentUser?.onboardingMethod === 'skipped' ||
+          currentUser?.onboardingCompleted === true;
+        if (!isLegitimate) {
+          logger.error(
+            `[Auth] updateProfile marcó onboardingCompleted=true sin perfil — userId=${userId}. ` +
+            `Bug latente del frontend (detección por keywords). Considerar usar /auth/onboarding/complete en su lugar.`
+          );
+        }
+      } catch (logErr) {
+        // El logging defensivo nunca debe romper el flujo principal.
+        logger.error('[Auth] Error en logging defensivo de updateProfile:', logErr);
+      }
+    }
+
     // 3. Actualizar usuario
     const updatedUser = await prisma.user.update({
       where: { id: userId },
