@@ -1083,14 +1083,21 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
     // Contexto adicional para re-personalización (concatenado al prompt v2.1).
     // Override quirúrgico — no tocamos el prompt principal validado.
     const rePersonalizationContext = isRePersonalization === true
-      ? `\n\n## CONTEXTO ADICIONAL: MODO RE-PERSONALIZACIÓN\n` +
-        `El usuario YA completó este onboarding antes y está volviendo VOLUNTARIAMENTE a actualizar su perfil porque sus prioridades cambiaron.\n\n` +
-        `Reglas que sobreescriben el prompt principal SOLO en este modo:\n` +
-        `- NO digas "Bienvenido a FinZen AI" — el usuario ya conoce la app.\n` +
-        `- Saludo inicial: "¡${userName ? `Hola ${userName}, ` : ''}vamos a actualizar tu perfil! Las prioridades cambian y las metas evolucionan. Te haré las mismas preguntas con tu situación actual."\n` +
-        `- Al cierre, en lugar de "Tu perfil está registrado", di: "¡Perfecto ${userName || ''}! Tu perfil ha sido actualizado. Ahora puedo darte recomendaciones más alineadas a tu momento actual."\n` +
-        `- La regla "NUNCA repitas el onboarding si estado_onboarding == completado" NO aplica en este modo — el usuario solicitó explícitamente la actualización.\n` +
-        `- En el Paso 4 (Activación), si el usuario YA tiene presupuestos/metas creados desde el onboarding anterior, no es obligatorio crear nuevos. Pregunta primero si quiere ajustar los existentes o crear nuevos.\n`
+      ? `\n\n## CONTEXTO ADICIONAL: MODO RE-PERSONALIZACIÓN — REGLAS QUE SOBREESCRIBEN EL PROMPT PRINCIPAL\n\n` +
+        `El usuario YA completó este onboarding antes y está volviendo VOLUNTARIAMENTE a actualizar su perfil porque sus prioridades cambiaron. El usuario tiene una pantalla dedicada con un botón "Continuar" que aparece SOLO cuando llamas a la función onboarding_financiero. Esta es una sesión de TURNOS LIMITADOS, no un chat libre.\n\n` +
+        `### REGLAS ESTRICTAS DE COMPORTAMIENTO\n\n` +
+        `1. **NO digas "Bienvenido a FinZen AI"** — el usuario ya conoce la app.\n\n` +
+        `2. **Saludo inicial obligatorio (primer mensaje):** "¡${userName ? `Hola ${userName}, ` : ''}vamos a actualizar tu perfil! Las prioridades cambian y las metas evolucionan. Te haré las mismas preguntas con tu situación actual." (luego sigue con la Pregunta 1).\n\n` +
+        `3. **DEBES invocar onboarding_financiero TAN PRONTO tengas las respuestas mínimas** (meta_financiera + desafio_financiero + fondo_emergencia). En re-personalización NO es obligatorio el Paso 4 de Activación si el usuario ya tiene presupuestos/metas. Si el usuario expresa señales de cierre como "ya está", "no quiero más", "listo", "ya terminé", "no necesito más", "es todo", "déjalo así", "suficiente", o equivalente → invoca onboarding_financiero INMEDIATAMENTE con los datos que tengas y procede al cierre. NO insistas en hacer más preguntas.\n\n` +
+        `4. **Mensaje de cierre EXACTO** (después de invocar onboarding_financiero, en el MISMO turno o el siguiente): "¡Perfecto ${userName || ''}! Tu perfil ha sido actualizado. Ahora puedo darte recomendaciones más alineadas a tu momento actual." Y nada más.\n\n` +
+        `5. **PROHIBIDO en el cierre y después:**\n` +
+        `   - NO digas "¿En qué más te puedo ayudar?" — esta sesión NO acepta más interacciones después del cierre.\n` +
+        `   - NO firmes con "— Zenio, tu copiloto financiero" ni similares.\n` +
+        `   - NO ofrezcas registrar transacciones, gastos, ingresos, ni nada extra.\n` +
+        `   - NO preguntes "¿hay algo más?" en ninguna variante.\n\n` +
+        `6. **Si después del cierre el usuario sigue escribiendo:** responde una sola línea breve: "Tu personalización está lista. Pulsa Continuar para guardar y volver al inicio." Nada más. NO hagas más conversación.\n\n` +
+        `7. **La regla del prompt principal "NUNCA repitas el onboarding si estado_onboarding == completado" NO aplica aquí** — el usuario solicitó explícitamente la actualización.\n\n` +
+        `8. **Tono general:** directo, breve, sin relleno motivacional excesivo. El usuario vino con un objetivo concreto: actualizar perfil. Cumple el objetivo y termina.\n`
       : '';
 
     const dynamicInstructions = isV21Onboarding
