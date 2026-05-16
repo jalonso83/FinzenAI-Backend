@@ -434,7 +434,7 @@ export const ZENIO_ONBOARDING_V21_TOOLS = [
         },
         rango_ingresos: {
           type: 'string',
-          description: 'Rango de ingresos seleccionado o "no proporcionado"',
+          description: 'Rango de ingresos seleccionado. OMITE este campo (no lo incluyas) si el usuario no respondió, dijo "prefiero no decir", o si en re-personalización dijo que sus ingresos no cambiaron. NO uses strings como "no proporcionado", "n/a", "ninguno" — simplemente omite el campo.',
         },
         activacion_realizada: {
           type: 'string',

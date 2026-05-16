@@ -119,9 +119,11 @@ interface VerifyEmailRequest {
  * Valida los datos de registro
  */
 function validateRegistrationData(data: RegisterRequest): { valid: boolean; error?: string } {
-  const { name, lastName, email, password, country, currency, preferredLanguage } = data;
+  const { name, lastName, email, password, country, currency } = data;
 
-  if (!name || !lastName || !email || !password || !country || !currency || !preferredLanguage) {
+  // preferredLanguage ya no se exige — tiene @default("es") en el schema.
+  // Si el cliente no lo envía, Prisma usa "es" automáticamente.
+  if (!name || !lastName || !email || !password || !country || !currency) {
     return { valid: false, error: 'Todos los campos obligatorios deben ser completados' };
   }
 
@@ -309,7 +311,11 @@ export const register = async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'User already exists', message: 'Ya existe una cuenta con este email' });
     }
 
-    // 3. Crear usuario en base de datos
+    // 3. Crear usuario en base de datos.
+    // preferredLanguage default 'es' si el cliente (app vieja o nueva) no lo envía.
+    // Los campos opcionales que el formulario ya no pide (birthDate, state, city,
+    // occupation, company) se setean a null. Apps viejas que aún los envían siguen
+    // funcionando — el flujo acepta el valor o null indistintamente.
     const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const user = await prisma.user.create({
       data: {
@@ -317,8 +323,11 @@ export const register = async (req: Request, res: Response) => {
         phone: phone || null,
         birthDate: birthDate ? new Date(birthDate) : null,
         country, state: state || null, city: city || null,
-        currency, preferredLanguage,
-        occupation: occupation || null, company, verified: false
+        currency,
+        preferredLanguage: preferredLanguage || 'es',
+        occupation: occupation || null,
+        company: company || null,
+        verified: false
       },
       select: { id: true, email: true, verified: true, createdAt: true }
     });

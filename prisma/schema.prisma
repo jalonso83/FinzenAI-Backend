@@ -19,7 +19,7 @@ model User {
   state               String?
   city                String?
   currency            String
-  preferredLanguage   String
+  preferredLanguage   String    @default("es")
   occupation          String?
   company             String?
   verified            Boolean   @default(false)

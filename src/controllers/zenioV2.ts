@@ -309,18 +309,72 @@ async function executeOnboardingV21(args: any, userId: string, userName: string,
         (hasAllRequired && args.estado_onboarding !== 'abandonado')
       );
 
+  // Construcción del update.
+  // - Onboarding inicial: comportamiento legacy — todos los campos se setean (null si vacíos).
+  // - Re-personalización:
+  //   * incomeRange y financialFeeling: solo se actualizan si el LLM mandó un valor real.
+  //     Si vienen vacíos, 'no proporcionado', null/undefined → NO se sobrescribe el valor previo
+  //     que el user dio en el onboarding original.
+  //   * activationDescription: forzamos texto estándar en español. Evita alucinaciones del LLM
+  //     (ej: palabras en hebreo/inglés mezcladas).
+  // Devuelve true sólo si el valor es un string con contenido real (no placeholder
+  // de "no respuesta"). Cubre variantes que el LLM podría enviar por desobediencia
+  // de la instrucción de "omitir el campo".
+  const NO_ANSWER_TOKENS = new Set([
+    'no proporcionado',
+    'no especificado',
+    'no indicado',
+    'no aplica',
+    'n/a',
+    'na',
+    'ninguno',
+    'ninguna',
+    'ninguna respuesta',
+    'prefiero no decir',
+    'no quiero decir',
+    'sin especificar',
+    'sin respuesta',
+    '-',
+    'null',
+    'undefined',
+  ]);
+  const hasRealValue = (v: any) => {
+    if (v === undefined || v === null) return false;
+    if (typeof v !== 'string') return false;
+    const trimmed = v.trim();
+    if (trimmed === '') return false;
+    return !NO_ANSWER_TOKENS.has(trimmed.toLowerCase());
+  };
+
+  const updateData: any = {
+    mainGoals: Array.isArray(args.meta_financiera) ? args.meta_financiera : [args.meta_financiera],
+    mainChallenge: args.desafio_financiero,
+    mainChallengeOther: args.desafio_financiero?.toLowerCase().includes('otro') ? args.desafio_financiero : undefined,
+    emergencyFund: args.fondo_emergencia,
+    onboardingStatus: args.estado_onboarding,
+  };
+
+  if (isRePersonalization) {
+    // En re-personalización, preservar valores previos si el LLM no envía nada útil.
+    if (hasRealValue(args.sentir_financiero)) {
+      updateData.financialFeeling = args.sentir_financiero;
+    }
+    if (hasRealValue(args.rango_ingresos)) {
+      updateData.incomeRange = args.rango_ingresos;
+    }
+    // Texto fijo en español para evitar alucinaciones del LLM en este campo.
+    updateData.activationDescription =
+      'Actualización de perfil; sin cambios en presupuestos, metas ni transacciones.';
+  } else {
+    // Onboarding inicial: comportamiento legacy.
+    updateData.financialFeeling = args.sentir_financiero || null;
+    updateData.incomeRange = args.rango_ingresos || null;
+    updateData.activationDescription = args.activacion_realizada;
+  }
+
   await prisma.onboarding.upsert({
     where: { userId },
-    update: {
-      mainGoals: Array.isArray(args.meta_financiera) ? args.meta_financiera : [args.meta_financiera],
-      mainChallenge: args.desafio_financiero,
-      mainChallengeOther: args.desafio_financiero?.toLowerCase().includes('otro') ? args.desafio_financiero : undefined,
-      emergencyFund: args.fondo_emergencia,
-      financialFeeling: args.sentir_financiero || null,
-      incomeRange: args.rango_ingresos || null,
-      activationDescription: args.activacion_realizada,
-      onboardingStatus: args.estado_onboarding,
-    },
+    update: updateData,
     create: {
       userId,
       mainGoals: Array.isArray(args.meta_financiera) ? args.meta_financiera : [args.meta_financiera],
@@ -330,7 +384,9 @@ async function executeOnboardingV21(args: any, userId: string, userName: string,
       emergencyFund: args.fondo_emergencia,
       financialFeeling: args.sentir_financiero || '',
       incomeRange: args.rango_ingresos || null,
-      activationDescription: args.activacion_realizada,
+      activationDescription: isRePersonalization
+        ? 'Actualización de perfil; sin cambios en presupuestos, metas ni transacciones.'
+        : args.activacion_realizada,
       onboardingStatus: args.estado_onboarding,
     },
   });
@@ -1089,7 +1145,14 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
         `1. **NO digas "Bienvenido a FinZen AI"** — el usuario ya conoce la app.\n\n` +
         `2. **Saludo inicial obligatorio (primer mensaje):** "¡${userName ? `Hola ${userName}, ` : ''}vamos a actualizar tu perfil! Las prioridades cambian y las metas evolucionan. Te haré las mismas preguntas con tu situación actual." (luego sigue con la Pregunta 1).\n\n` +
         `3. **DEBES invocar onboarding_financiero TAN PRONTO tengas las respuestas mínimas** (meta_financiera + desafio_financiero + fondo_emergencia). Si el usuario expresa señales de cierre como "ya está", "no quiero más", "listo", "ya terminé", "no necesito más", "es todo", "déjalo así", "suficiente", o equivalente → invoca onboarding_financiero INMEDIATAMENTE con los datos que tengas y procede al cierre. NO insistas en hacer más preguntas.\n\n` +
-        `3.b. **EN RE-PERSONALIZACIÓN NO CREES METAS NI PRESUPUESTOS.** El Paso 4 de "Activación" del prompt principal NO aplica aquí. PROHIBIDO llamar a manage_goal_record, manage_budget_record, o manage_transaction_record en este modo. SOLO debes llamar a onboarding_financiero. El usuario ya tiene presupuestos/metas creados de su onboarding anterior — esta sesión es ÚNICAMENTE para actualizar las respuestas del perfil (meta financiera principal, desafío, fondo de emergencia, sentimiento, ingresos). Si el usuario menciona deseo de crear/cambiar metas o presupuestos, dile: "Puedes crear y editar tus metas y presupuestos desde el menú de la app. Aquí solo actualizamos tu perfil para que mis recomendaciones sean más precisas."\n\n` +
+        `3.b. **EN RE-PERSONALIZACIÓN NO CREES METAS NI PRESUPUESTOS.** El Paso 4 de "Activación" del prompt principal NO aplica aquí. PROHIBIDO llamar a manage_goal_record, manage_budget_record, o manage_transaction_record en este modo. SOLO debes llamar a onboarding_financiero. El usuario ya tiene presupuestos/metas creados de su onboarding anterior — esta sesión es ÚNICAMENTE para actualizar las respuestas del perfil. Si el usuario menciona deseo de crear/cambiar metas o presupuestos, dile: "Puedes crear y editar tus metas y presupuestos desde el menú de la app. Aquí solo actualizamos tu perfil para que mis recomendaciones sean más precisas."\n\n` +
+        `3.c. **Pregunta opcional de ingreso (después de Q3 y sentir, antes del cierre):** Haz esta pregunta breve: "Por último, ¿tus ingresos han cambiado desde tu último perfil?". \n` +
+        `   - Si responde "no", "no han cambiado", "siguen igual", o equivalente → NO preguntes el rango. NO incluyas rango_ingresos en el argumento de onboarding_financiero. Procede directo al cierre.\n` +
+        `   - Si responde "sí", "cambiaron", "subió", "bajó", o equivalente → pregunta una sola vez el rango actualizado con los rangos del onboarding original adaptados a la moneda del user (DOP: "Menos de RD$25,000 / RD$25,000-50,000 / RD$50,000-100,000 / Más de RD$100,000 / Prefiero no decir"). Si responde "prefiero no decir" → NO incluyas rango_ingresos en el argumento. Si responde un rango → inclúyelo en rango_ingresos.\n` +
+        `   - Si el usuario ignora o desvía la pregunta → NO insistas, NO incluyas rango_ingresos, procede al cierre.\n\n` +
+        `3.d. **Instrucciones para los argumentos de onboarding_financiero en este modo:**\n` +
+        `   - activacion_realizada: usa EXACTAMENTE el texto "Actualización de perfil; sin cambios en presupuestos, metas ni transacciones." en español puro. NO inventes texto. NO uses palabras en otros idiomas (hebreo, inglés, etc.). Si necesitas variación, mantén siempre español estándar.\n` +
+        `   - rango_ingresos: solo inclúyelo si el usuario respondió afirmativamente a 3.c Y dio un rango concreto. Si dijo "no cambió" o "prefiero no decir" o no respondió, OMITE el campo completamente del argumento (no envíes string vacío, no envíes "no proporcionado").\n\n` +
         `4. **Mensaje de cierre EXACTO** (después de invocar onboarding_financiero, en el MISMO turno o el siguiente): "¡Perfecto ${userName || ''}! Tu perfil ha sido actualizado. Ahora puedo darte recomendaciones más alineadas a tu momento actual." Y nada más.\n\n` +
         `5. **PROHIBIDO en el cierre y después:**\n` +
         `   - NO digas "¿En qué más te puedo ayudar?" — esta sesión NO acepta más interacciones después del cierre.\n` +
