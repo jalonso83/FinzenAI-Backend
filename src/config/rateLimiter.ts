@@ -43,11 +43,11 @@ export const loginLimiter = rateLimit({
 
 /**
  * Register Limiter - Previene creación masiva de cuentas
- * 3 registros por hora por IP
+ * 10 intentos por hora por IP
  */
 export const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hora
-  max: 3, // 3 registros
+  max: 10, // 10 intentos
   message: {
     error: 'Too Many Requests',
     message: 'Has creado demasiadas cuentas. Intenta de nuevo en 1 hora.',

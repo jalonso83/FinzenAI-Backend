@@ -37,7 +37,7 @@ async function isValidEmailDomain(email: string): Promise<boolean> {
 }
 
 // Constantes
-const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_LENGTH = 8;
 const BCRYPT_ROUNDS = 12;
 const VERIFICATION_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 horas
 
