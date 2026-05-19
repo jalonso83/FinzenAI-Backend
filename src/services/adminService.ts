@@ -1551,21 +1551,42 @@ export class AdminService {
       AND ("ttclid" IS NULL OR "ttclid" NOT LIKE '%Preview\\_%' ESCAPE '\\')
     `;
 
+    // Cada noise filter se aplica como su propio AND con OR(IS NULL OR NOT...).
+    // No usar NOT { OR: [...] } de Prisma: en three-valued logic SQL,
+    // FALSE OR NULL = NULL → NOT NULL = NULL → la fila se excluye, lo cual
+    // descartaba silenciosamente todos los Leads con campaign o ttclid NULL.
     const countRawEvents = (eventName: string, rangeFrom: Date, rangeTo: Date) =>
       prisma.attributionEvent.count({
         where: {
           eventName,
           eventTime: { gte: rangeFrom, lte: rangeTo },
-          OR: [
-            { userAgent: null },
-            { userAgent: { not: { contains: 'HeadlessChrome' } } },
+          AND: [
+            {
+              OR: [
+                { userAgent: null },
+                { userAgent: { not: { contains: 'HeadlessChrome' } } },
+              ],
+            },
+            {
+              OR: [
+                { campaign: null },
+                {
+                  NOT: {
+                    AND: [
+                      { campaign: { startsWith: '__' } },
+                      { campaign: { endsWith: '__' } },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              OR: [
+                { ttclid: null },
+                { NOT: { ttclid: { contains: 'Preview_' } } },
+              ],
+            },
           ],
-          NOT: {
-            OR: [
-              { AND: [{ campaign: { startsWith: '__' } }, { campaign: { endsWith: '__' } }] },
-              { ttclid: { contains: 'Preview_' } },
-            ],
-          },
         },
       });
 
