@@ -264,29 +264,49 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
     // No fallar el webhook por error de referido
   }
 
-  // Disparar evento Subscribe a Meta CAPI + TikTok Events API (best-effort, fire-and-forget)
-  // event_id determinístico (UUID v5 derivado de invoice.id) — si Stripe re-entrega
-  // el webhook, generamos el MISMO event_id y Meta/TikTok dedupean correctamente.
+  // Disparar eventos Subscribe + Purchase a Meta CAPI + TikTok Events API (best-effort, fire-and-forget).
+  //
+  // - Subscribe: se mantiene como señal de "activó suscripción" (cuenta cada payment_succeeded —
+  //   incluye primer cobro post-trial y renovaciones). Es la señal histórica con la que ya
+  //   estaban optimizadas las campañas.
+  // - Purchase: nuevo evento que refleja cobro real de dinero. Meta usa Purchase para
+  //   value-based optimization (LTV, ROAS). Se dispara en CADA cobro (inicial + renovaciones)
+  //   porque cada renovación es valor real generado por la campaña original.
+  //
+  // event_ids deterministas distintos por evento (scope diferente) — si Stripe re-entrega
+  // el webhook, cada uno genera el mismo event_id y Meta/TikTok dedupean por evento.
   void (async () => {
     try {
       const userForAttribution = await prisma.user.findUnique({
         where: { id: userId },
         select: { email: true, phone: true },
       });
-      const deterministicEventId = deriveEventId('stripe-subscribe', invoice.id ?? '');
-      await ingestAttributionEvent({
-        eventName: 'Subscribe',
-        eventId: deterministicEventId,
+      const amountUsd = invoice.amount_paid / 100;
+      const currency = invoice.currency?.toUpperCase() ?? 'USD';
+      const baseAttribution = {
         userId,
         email: userForAttribution?.email ?? null,
         phone: userForAttribution?.phone ?? null,
-        value: invoice.amount_paid / 100,
-        currency: invoice.currency?.toUpperCase() ?? 'USD',
-        actionSource: 'website',
+        value: amountUsd,
+        currency,
+        actionSource: 'website' as const,
         customData: { provider: 'stripe', stripeInvoiceId: invoice.id ?? '' },
-      });
+      };
+
+      await Promise.all([
+        ingestAttributionEvent({
+          ...baseAttribution,
+          eventName: 'Subscribe',
+          eventId: deriveEventId('stripe-subscribe', invoice.id ?? ''),
+        }),
+        ingestAttributionEvent({
+          ...baseAttribution,
+          eventName: 'Purchase',
+          eventId: deriveEventId('stripe-purchase', invoice.id ?? ''),
+        }),
+      ]);
     } catch (attributionError) {
-      logger.warn('[StripeWebhook] No se pudo disparar evento Subscribe:', attributionError);
+      logger.warn('[StripeWebhook] No se pudo disparar evento Subscribe/Purchase:', attributionError);
     }
   })();
 }

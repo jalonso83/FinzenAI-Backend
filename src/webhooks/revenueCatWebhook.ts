@@ -117,38 +117,59 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
 
         logger.log(`✅ ${eventType} procesado para usuario ${userId}`);
 
-        // Disparar evento Subscribe a Meta CAPI + TikTok Events API solo en INITIAL_PURCHASE
-        // (no en RENEWAL — esos los trackeamos diferente para no inflar conversiones)
-        // event_id determinístico desde transactionId — si RC re-entrega, dedupea correctamente.
-        if (eventType === RC_WEBHOOK_EVENTS.INITIAL_PURCHASE) {
+        // Disparar eventos a Meta CAPI + TikTok Events API (best-effort, fire-and-forget):
+        //
+        // - Subscribe: solo en INITIAL_PURCHASE (es la señal histórica de "activó suscripción";
+        //   no se dispara en RENEWAL para no inflar el conteo de Subscribe).
+        // - Purchase: en CADA cobro real (INITIAL_PURCHASE + RENEWAL). Meta usa Purchase para
+        //   value-based optimization; ver cada renovación como valor recurrente alimenta LTV/ROAS.
+        //
+        // event_ids deterministas distintos por evento — si RC re-entrega, dedupean por evento.
+        {
+          const isInitial = eventType === RC_WEBHOOK_EVENTS.INITIAL_PURCHASE;
           void (async () => {
             try {
               const userForAttribution = await prisma.user.findUnique({
                 where: { id: userId },
                 select: { email: true, phone: true },
               });
-              const deterministicEventId = deriveEventId(
-                'rc-subscribe',
-                transactionId || `${userId}:${Date.now()}`,
-              );
-              await ingestAttributionEvent({
-                eventName: 'Subscribe',
-                eventId: deterministicEventId,
+              const transactionKey = transactionId || `${userId}:${Date.now()}`;
+              const baseAttribution = {
                 userId,
                 email: userForAttribution?.email ?? null,
                 phone: userForAttribution?.phone ?? null,
                 value: amount,
                 currency: 'USD',
-                actionSource: 'app', // Apple/Google IAP = mobile app
+                actionSource: 'app' as const, // Apple/Google IAP = mobile app
                 customData: {
                   provider: 'revenuecat',
                   plan,
                   period,
                   ...(transactionId ? { transactionId } : {}),
                 },
-              });
+              };
+
+              const tasks: Array<Promise<unknown>> = [
+                ingestAttributionEvent({
+                  ...baseAttribution,
+                  eventName: 'Purchase',
+                  eventId: deriveEventId('rc-purchase', transactionKey),
+                }),
+              ];
+
+              if (isInitial) {
+                tasks.push(
+                  ingestAttributionEvent({
+                    ...baseAttribution,
+                    eventName: 'Subscribe',
+                    eventId: deriveEventId('rc-subscribe', transactionKey),
+                  }),
+                );
+              }
+
+              await Promise.all(tasks);
             } catch (attributionError) {
-              logger.warn('No se pudo disparar evento Subscribe (RC):', attributionError);
+              logger.warn('No se pudo disparar evento Subscribe/Purchase (RC):', attributionError);
             }
           })();
         }
