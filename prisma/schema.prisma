@@ -12,13 +12,13 @@ model User {
   name                String
   lastName            String
   email               String    @unique
-  password            String
+  password            String?
   phone               String?
   birthDate           DateTime?
-  country             String
+  country             String    @default("")
   state               String?
   city                String?
-  currency            String
+  currency            String    @default("")
   preferredLanguage   String    @default("es")
   occupation          String?
   company             String?
@@ -29,6 +29,15 @@ model User {
   onboardingCompleted Boolean   @default(false)
   onboardingMethod    String?
   onboardingSkippedAt DateTime?
+
+  // SSO (Sign in with Apple / Google)
+  // password puede ser null para users que se registran solo vía SSO.
+  // appleSub / googleSub son los IDs únicos del provider — sirven para login
+  // (búsqueda) y para linkeo automático cuando el email del SSO coincide con
+  // un user existente con email_verified=true.
+  appleSub     String?      @unique
+  googleSub    String?      @unique
+  authProvider AuthProvider @default(PASSWORD)
 
   // Trial tracking
   hasUsedTrial Boolean @default(false)
@@ -191,6 +200,12 @@ model Goal {
 enum TransactionType {
   INCOME
   EXPENSE
+}
+
+enum AuthProvider {
+  PASSWORD
+  APPLE
+  GOOGLE
 }
 
 // =============================================

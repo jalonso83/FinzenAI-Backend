@@ -1,5 +1,6 @@
 import express, { Router } from 'express';
 import { register, login, resendVerificationEmail, verifyEmail, verifyEmailFromLink, verifyEmailWithAttribution, forgotPassword, resetPassword, getProfile, updateProfile, changePassword, checkTrialEligibility, deleteAccount } from '../controllers/auth';
+import { appleSignIn, googleSignIn } from '../controllers/sso';
 import { skipOnboarding, completeOnboarding } from '../controllers/onboarding';
 import { authenticateToken } from '../middlewares/auth';
 import {
@@ -15,6 +16,10 @@ const router: Router = express.Router();
 // Rutas de autenticación (con rate limiting)
 router.post('/register', registerLimiter, register);
 router.post('/login', loginLimiter, login);
+// SSO: Sign in with Apple / Google. Cubre tanto login como registro nuevo
+// — el endpoint decide internamente vía linkeo automático por sub o email verificado.
+router.post('/apple', loginLimiter, appleSignIn);
+router.post('/google', loginLimiter, googleSignIn);
 router.post('/resend-verification', emailVerificationLimiter, resendVerificationEmail);
 router.post('/verify-email', emailVerificationLimiter, verifyEmail);
 router.get('/verify-email-link', emailVerificationLimiter, verifyEmailFromLink);

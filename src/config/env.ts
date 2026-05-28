@@ -47,13 +47,26 @@ export const ENV = {
   // === OPENAI ===
   OPENAI_ASSISTANT_ID: getOptionalEnv('OPENAI_ASSISTANT_ID', ''),
 
-  // === GOOGLE OAUTH ===
+  // === GOOGLE OAUTH (Email Sync — Gmail) ===
   GOOGLE_CLIENT_ID: getOptionalEnv('GOOGLE_CLIENT_ID', ''),
   GOOGLE_CLIENT_SECRET: getOptionalEnv('GOOGLE_CLIENT_SECRET', ''),
   GOOGLE_REDIRECT_URI: getOptionalEnv(
     'GOOGLE_REDIRECT_URI',
     'https://finzenai-backend-production.up.railway.app/api/email-sync/gmail/callback'
   ),
+
+  // === SSO (Sign in with Google / Apple) ===
+  // Web Client ID es el `aud` esperado en idTokens de Google Sign-In mobile.
+  // Suele coincidir con GOOGLE_CLIENT_ID si reutilizas el mismo OAuth Web Client.
+  GOOGLE_WEB_CLIENT_ID: getRequiredInProduction('GOOGLE_WEB_CLIENT_ID', ''),
+
+  // Bundle ID de la app iOS (aud de los identityToken de Apple).
+  APPLE_BUNDLE_ID: getOptionalEnv('APPLE_BUNDLE_ID', 'com.jl.alonso.finzenaimobile'),
+
+  // Credenciales server-to-server para revocar tokens Apple (account deletion).
+  APPLE_TEAM_ID: getRequiredInProduction('APPLE_TEAM_ID', ''),
+  APPLE_KEY_ID: getRequiredInProduction('APPLE_KEY_ID', ''),
+  APPLE_PRIVATE_KEY: getRequiredInProduction('APPLE_PRIVATE_KEY', ''),
 
   // === MICROSOFT OAUTH ===
   MICROSOFT_CLIENT_ID: getOptionalEnv('MICROSOFT_CLIENT_ID', ''),

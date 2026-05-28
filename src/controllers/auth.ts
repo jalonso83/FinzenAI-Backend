@@ -415,6 +415,15 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
+    // SSO-only accounts no tienen password — redirigir al método correcto.
+    if (!user.password) {
+      const providerName = user.authProvider === 'APPLE' ? 'Apple' : 'Google';
+      return res.status(401).json({
+        error: 'SSO account',
+        message: `Esta cuenta se registró con ${providerName}. Por favor inicia sesión con ese método.`
+      });
+    }
+
     // Verificar contraseña
     const isValidPassword = await bcrypt.compare(password, user.password);
 
@@ -1168,6 +1177,14 @@ export const changePassword = async (req: Request, res: Response) => {
       });
     }
 
+    // SSO-only accounts no tienen contraseña que cambiar.
+    if (!user.password) {
+      return res.status(400).json({
+        error: 'No password set',
+        message: 'Esta cuenta usa inicio de sesión con Apple o Google y no tiene contraseña.'
+      });
+    }
+
     // Verificar contraseña actual
     const isValidCurrentPassword = await bcrypt.compare(currentPassword, user.password);
 
@@ -1365,6 +1382,15 @@ export const deleteAccount = async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return res.status(404).json({ error: 'Not found', message: 'Usuario no encontrado' });
+    }
+
+    // Para cuentas SSO sin password, el cliente debe usar un flujo alternativo
+    // (re-auth vía Apple/Google) — no implementado todavía, ver Fase 2 mobile.
+    if (!user.password) {
+      return res.status(400).json({
+        error: 'SSO account',
+        message: 'Esta cuenta se eliminará vía el flujo de cuenta SSO. Función pendiente de implementar.'
+      });
     }
 
     // Verificar contraseña
