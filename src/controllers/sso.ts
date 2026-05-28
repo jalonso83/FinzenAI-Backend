@@ -7,6 +7,7 @@ import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
 import { verifyAppleIdentityToken } from '../lib/appleAuth';
 import { verifyGoogleIdToken } from '../lib/googleAuth';
+import { resolveSSOLocale } from '../lib/locale';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import { ReferralService } from '../services/referralService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
@@ -99,6 +100,10 @@ interface SSOResolveInput {
   emailVerified: boolean;
   name: string | null;
   lastName: string | null;
+  // Señales para inferir country/currency en users nuevos.
+  deviceCountry: string | null;
+  deviceLocale: string | null;
+  ipAddress: string | null;
 }
 
 interface SSOResolveResult {
@@ -117,7 +122,7 @@ interface SSOResolveResult {
  * Lanza Error si no se puede resolver (ej: Apple subsecuente sin email y sub no existe).
  */
 async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult> {
-  const { provider, sub, email, emailVerified, name, lastName } = input;
+  const { provider, sub, email, emailVerified, name, lastName, deviceCountry, deviceLocale, ipAddress } = input;
   const subField = provider === 'APPLE' ? 'appleSub' : 'googleSub';
 
   // 1. Match por sub (login de SSO user existente)
@@ -153,6 +158,11 @@ async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult>
   const safeName = (name && name.trim()) || normalizedEmail.split('@')[0];
   const safeLastName = (lastName && lastName.trim()) || '-';
 
+  // Inferir country/currency: device > deviceLocale > GeoIP. Si nada match,
+  // queda vacío y el user lo edita desde Profile.
+  const inferred = await resolveSSOLocale({ deviceCountry, deviceLocale, ipAddress });
+  logger.log(`[SSO] Locale inferido para nuevo user ${normalizedEmail}: country="${inferred.country}" currency="${inferred.currency}"`);
+
   const created = await prisma.user.create({
     data: {
       email: normalizedEmail,
@@ -161,6 +171,8 @@ async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult>
       password: null,
       verified: true,
       authProvider: provider,
+      country: inferred.country,
+      currency: inferred.currency,
       [subField]: sub,
     } as any,
   });
@@ -183,11 +195,13 @@ interface AppleSignInRequest {
   name?: string;
   lastName?: string;
   referralCode?: string;
+  deviceCountry?: string;
+  deviceLocale?: string;
 }
 
 export const appleSignIn = async (req: Request, res: Response) => {
   try {
-    const { identityToken, name, lastName, referralCode } = (req.body ?? {}) as AppleSignInRequest;
+    const { identityToken, name, lastName, referralCode, deviceCountry, deviceLocale } = (req.body ?? {}) as AppleSignInRequest;
     if (!identityToken || typeof identityToken !== 'string') {
       return res.status(400).json({ error: 'Validation error', message: 'identityToken es requerido' });
     }
@@ -211,6 +225,9 @@ export const appleSignIn = async (req: Request, res: Response) => {
         // no en el JWT. La app móvil lo pasa por aquí.
         name: name ?? null,
         lastName: lastName ?? null,
+        deviceCountry: deviceCountry ?? null,
+        deviceLocale: deviceLocale ?? null,
+        ipAddress: req.ip ?? null,
       });
     } catch (err: any) {
       if (err?.message === 'SSO_NO_EMAIL_NO_MATCH') {
@@ -237,11 +254,13 @@ export const appleSignIn = async (req: Request, res: Response) => {
 interface GoogleSignInRequest {
   idToken: string;
   referralCode?: string;
+  deviceCountry?: string;
+  deviceLocale?: string;
 }
 
 export const googleSignIn = async (req: Request, res: Response) => {
   try {
-    const { idToken, referralCode } = (req.body ?? {}) as GoogleSignInRequest;
+    const { idToken, referralCode, deviceCountry, deviceLocale } = (req.body ?? {}) as GoogleSignInRequest;
     if (!idToken || typeof idToken !== 'string') {
       return res.status(400).json({ error: 'Validation error', message: 'idToken es requerido' });
     }
@@ -263,6 +282,9 @@ export const googleSignIn = async (req: Request, res: Response) => {
         emailVerified: verified.emailVerified,
         name: verified.givenName,
         lastName: verified.familyName,
+        deviceCountry: deviceCountry ?? null,
+        deviceLocale: deviceLocale ?? null,
+        ipAddress: req.ip ?? null,
       });
     } catch (err: any) {
       if (err?.message === 'SSO_NO_EMAIL_NO_MATCH') {
