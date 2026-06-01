@@ -1305,12 +1305,15 @@ export class AdminService {
       }
     }
 
-    if (status && ['NO_VERIFICADO', 'SIN_ONBOARDING', 'EN_TRIAL', 'ACTIVO', 'CANCELADO'].includes(status)) {
+    if (status && ['NO_VERIFICADO', 'VERIFICADO', 'SIN_ONBOARDING', 'EN_TRIAL', 'ACTIVO', 'CANCELADO'].includes(status)) {
       let filter: any;
       const now = new Date();
 
       if (status === 'NO_VERIFICADO') {
         filter = { verified: false };
+      } else if (status === 'VERIFICADO') {
+        // Todos los usuarios con email verificado (independiente de onboarding/trial/plan).
+        filter = { verified: true };
       } else if (status === 'SIN_ONBOARDING') {
         filter = { AND: [{ verified: true }, { onboardingCompleted: false }] };
       } else if (status === 'EN_TRIAL') {
