@@ -198,7 +198,9 @@ export const getDistinctCountries = async (req: Request, res: Response) => {
  * landing en modo PDF, espera a que esté listo, y retorna el PDF binario.
  *
  * Query params:
- *  - range: '7d' | '14d' | '30d' | '90d' (default: '30d')
+ *  - from:  fecha inicio YYYY-MM-DD (requerido)
+ *  - to:    fecha fin YYYY-MM-DD (requerido)
+ *  - label: etiqueta legible del periodo (ej. "Mayo 2026", "Q2 2026", "Últimos 7 días")
  *
  * Defensa: NO acepta pdfToken como auth (evita recursión accidental). Solo
  * admin con cookie/JWT puede gatillar la generación.
@@ -218,16 +220,30 @@ export const generateDashboardPdf = async (req: Request, res: Response) => {
       return res.status(401).json({ message: 'Unauthorized', error: 'Missing user' });
     }
 
-    const range = (typeof req.query.range === 'string' ? req.query.range : '30d');
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const label = typeof req.query.label === 'string' ? req.query.label : undefined;
+
+    if (!from || !to) {
+      return res.status(400).json({
+        message: 'Faltan parámetros from/to (YYYY-MM-DD)',
+        error: 'Bad request',
+      });
+    }
+
+    const periodLabel = label || `${from} — ${to}`;
 
     const pdf = await generateDashboardPdfService({
       adminUserId: adminUser.id,
       adminEmail: adminUser.email,
-      range,
+      from,
+      to,
+      periodLabel,
     });
 
     const dateStr = new Date().toISOString().split('T')[0];
-    const filename = `finzen-reporte-${dateStr}-${range}.pdf`;
+    const slug = periodLabel.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+    const filename = `finzen-reporte-${slug}-${dateStr}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -242,7 +258,7 @@ export const generateDashboardPdf = async (req: Request, res: Response) => {
     }
     if (error instanceof PdfInvalidRangeError) {
       return res.status(400).json({
-        message: `Range inválido: ${(error as Error).message}. Valores válidos: 7d, 14d, 30d, 90d`,
+        message: `Periodo inválido: ${(error as Error).message}. Usa fechas YYYY-MM-DD válidas con from ≤ to.`,
         error: 'Bad request',
       });
     }

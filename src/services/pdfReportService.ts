@@ -8,7 +8,7 @@ import { generatePdfToken, invalidatePdfToken } from './pdfTokenService';
  *
  * Flujo de generateDashboardPdf:
  *  1. Genera un pdfToken efímero (90s TTL) asociado al admin que pidió el PDF.
- *  2. Construye URL hacia la landing: /dashboard/detalles?mode=pdf&pdfToken=...&range=...&generatedBy=...
+ *  2. Construye URL hacia la landing: /dashboard/detalles?mode=pdf&pdfToken=...&from=...&to=...&label=...&generatedBy=...
  *  3. Lanza Chromium, navega a esa URL.
  *  4. La landing en mode=pdf renderiza cover + 6 tabs + glosario.
  *  5. Espera a que la landing señale window.__PDF_READY__ === true.
@@ -20,7 +20,23 @@ const PDF_GENERATION_TIMEOUT_MS = 60_000;
 const PDF_READY_TIMEOUT_MS = 30_000;
 const MAX_CONCURRENT_PDFS = 1;
 
-const VALID_RANGES = new Set(['7d', '14d', '30d', '90d']);
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Valida que el periodo sea coherente: fechas ISO (YYYY-MM-DD) válidas, from ≤ to,
+ * y dentro de límites sanos (no antes de 2024, no más de 1 día en el futuro).
+ */
+function isValidPeriod(from: string, to: string): boolean {
+  if (!ISO_DATE_RE.test(from) || !ISO_DATE_RE.test(to)) return false;
+  const f = new Date(`${from}T00:00:00Z`);
+  const t = new Date(`${to}T00:00:00Z`);
+  if (isNaN(f.getTime()) || isNaN(t.getTime())) return false;
+  if (f > t) return false;
+  const min = new Date('2024-01-01T00:00:00Z');
+  const max = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  if (f < min || t > max) return false;
+  return true;
+}
 
 let activePdfGenerations = 0;
 
@@ -53,15 +69,10 @@ export class PdfInvalidRangeError extends Error {
 export interface GenerateDashboardPdfParams {
   adminUserId: string;
   adminEmail: string;
-  range: string;
+  from: string;        // YYYY-MM-DD
+  to: string;          // YYYY-MM-DD
+  periodLabel: string; // etiqueta legible para portada + header
 }
-
-const RANGE_LABELS: Record<string, string> = {
-  '7d': '7 días',
-  '14d': '14 días',
-  '30d': '30 días',
-  '90d': '90 días',
-};
 
 function escapeHtml(s: string): string {
   return s
@@ -80,8 +91,8 @@ function escapeHtml(s: string): string {
 export async function generateDashboardPdf(
   params: GenerateDashboardPdfParams,
 ): Promise<Buffer> {
-  if (!VALID_RANGES.has(params.range)) {
-    throw new PdfInvalidRangeError(params.range);
+  if (!isValidPeriod(params.from, params.to)) {
+    throw new PdfInvalidRangeError(`${params.from}..${params.to}`);
   }
 
   if (activePdfGenerations >= MAX_CONCURRENT_PDFS) {
@@ -94,7 +105,7 @@ export async function generateDashboardPdf(
 
   const startTime = Date.now();
   logger.log(
-    `[PdfReport] Generando PDF dashboard | admin=${params.adminEmail} range=${params.range}`,
+    `[PdfReport] Generando PDF dashboard | admin=${params.adminEmail} periodo=${params.periodLabel} (${params.from}..${params.to})`,
   );
 
   try {
@@ -105,7 +116,9 @@ export async function generateDashboardPdf(
     const url = new URL(`${ENV.LANDING_URL}/dashboard/detalles`);
     url.searchParams.set('mode', 'pdf');
     url.searchParams.set('pdfToken', pdfToken);
-    url.searchParams.set('range', params.range);
+    url.searchParams.set('from', params.from);
+    url.searchParams.set('to', params.to);
+    url.searchParams.set('label', params.periodLabel);
     url.searchParams.set('generatedBy', params.adminEmail);
 
     // 3. Lanzar Chromium
@@ -165,7 +178,7 @@ export async function generateDashboardPdf(
     await new Promise(resolve => setTimeout(resolve, 2500));
 
     // 8. Generar PDF con header/footer
-    const rangeLabel = RANGE_LABELS[params.range] ?? params.range;
+    const rangeLabel = params.periodLabel;
     const generatedDate = new Date().toLocaleDateString('es-DO', {
       year: 'numeric',
       month: 'long',
@@ -174,7 +187,7 @@ export async function generateDashboardPdf(
 
     const headerTemplate = `
       <div style="font-size:9px;color:#666;width:100%;padding:0 15mm;font-family:sans-serif;text-align:center;">
-        <span>FinZen AI · Reporte Ejecutivo · Periodo: Últimos ${escapeHtml(rangeLabel)}</span>
+        <span>FinZen AI · Reporte Ejecutivo · Periodo: ${escapeHtml(rangeLabel)}</span>
       </div>
     `;
 
