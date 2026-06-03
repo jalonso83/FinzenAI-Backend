@@ -213,6 +213,7 @@ export class AdminService {
             SELECT 1 FROM gamification_events ge
             WHERE ge."userId" = u.id
               AND ge."createdAt" >= u."createdAt" + interval '1 day'
+              AND ge."eventType" NOT IN ('email_sync_daily', 'email_tx_imported', 'points_awarded', 'streak_break')
           ))::bigint as retained
         FROM users u
         WHERE u."createdAt" >= $1
@@ -227,6 +228,7 @@ export class AdminService {
             SELECT 1 FROM gamification_events ge
             WHERE ge."userId" = u.id
               AND ge."createdAt" >= u."createdAt" + interval '7 days'
+              AND ge."eventType" NOT IN ('email_sync_daily', 'email_tx_imported', 'points_awarded', 'streak_break')
           ))::bigint as retained
         FROM users u
         WHERE u."createdAt" >= $1
@@ -241,6 +243,7 @@ export class AdminService {
             SELECT 1 FROM gamification_events ge
             WHERE ge."userId" = u.id
               AND ge."createdAt" >= u."createdAt" + interval '30 days'
+              AND ge."eventType" NOT IN ('email_sync_daily', 'email_tx_imported', 'points_awarded', 'streak_break')
           ))::bigint as retained
         FROM users u
         WHERE u."createdAt" >= $1
@@ -362,6 +365,7 @@ export class AdminService {
         WHERE u."createdAt" >= $1
           AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '1 day')
           AND ge."createdAt" >= u."createdAt" + interval '1 day'
+          AND ge."eventType" NOT IN ('email_sync_daily', 'email_tx_imported', 'points_awarded', 'streak_break')
       `, from, to),
 
       // Funnel: D7 retained — same fix.
@@ -371,6 +375,7 @@ export class AdminService {
         WHERE u."createdAt" >= $1
           AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '7 days')
           AND ge."createdAt" >= u."createdAt" + interval '7 days'
+          AND ge."eventType" NOT IN ('email_sync_daily', 'email_tx_imported', 'points_awarded', 'streak_break')
       `, from, to),
 
       // Funnel: cohort users that started a trial (any time after registration).
@@ -397,29 +402,34 @@ export class AdminService {
     const cohorts = await prisma.$queryRawUnsafe<{
       cohort_week: string;
       cohort_size: bigint;
-      d1: bigint;
-      d7: bigint;
-      d14: bigint;
-      d30: bigint;
+      d1: bigint | null;
+      d7: bigint | null;
+      d14: bigint | null;
+      d30: bigint | null;
     }[]>(`
       WITH cohort AS (
-        SELECT id, DATE_TRUNC('week', "createdAt") as cohort_week
+        SELECT id, "createdAt", DATE_TRUNC('week', "createdAt") as cohort_week
         FROM users
         WHERE "createdAt" >= $1 AND "createdAt" <= $2
       )
       SELECT
         c.cohort_week::text as cohort_week,
         COUNT(DISTINCT c.id)::bigint as cohort_size,
-        COUNT(DISTINCT CASE WHEN ge."createdAt" >= c.cohort_week + interval '1 day'
-          THEN c.id END)::bigint as d1,
-        COUNT(DISTINCT CASE WHEN ge."createdAt" >= c.cohort_week + interval '7 days'
-          THEN c.id END)::bigint as d7,
-        COUNT(DISTINCT CASE WHEN ge."createdAt" >= c.cohort_week + interval '14 days'
-          THEN c.id END)::bigint as d14,
-        COUNT(DISTINCT CASE WHEN ge."createdAt" >= c.cohort_week + interval '30 days'
-          THEN c.id END)::bigint as d30
+        -- Retención medida desde el registro DE CADA USUARIO (no desde el inicio de
+        -- semana) y excluyendo eventos de sistema (jobs/scheduler). Devuelve NULL
+        -- cuando la cohorte completa aún no cumplió la ventana → "no observable",
+        -- no 0%. Madurez: NOW() >= fin de la semana (cohort_week + 7d) + N días.
+        (CASE WHEN c.cohort_week + interval '7 days' + interval '1 day' > NOW() THEN NULL
+          ELSE COUNT(DISTINCT CASE WHEN ge."createdAt" >= c."createdAt" + interval '1 day' THEN c.id END) END)::bigint as d1,
+        (CASE WHEN c.cohort_week + interval '7 days' + interval '7 days' > NOW() THEN NULL
+          ELSE COUNT(DISTINCT CASE WHEN ge."createdAt" >= c."createdAt" + interval '7 days' THEN c.id END) END)::bigint as d7,
+        (CASE WHEN c.cohort_week + interval '7 days' + interval '14 days' > NOW() THEN NULL
+          ELSE COUNT(DISTINCT CASE WHEN ge."createdAt" >= c."createdAt" + interval '14 days' THEN c.id END) END)::bigint as d14,
+        (CASE WHEN c.cohort_week + interval '7 days' + interval '30 days' > NOW() THEN NULL
+          ELSE COUNT(DISTINCT CASE WHEN ge."createdAt" >= c."createdAt" + interval '30 days' THEN c.id END) END)::bigint as d30
       FROM cohort c
       LEFT JOIN gamification_events ge ON ge."userId" = c.id
+        AND ge."eventType" NOT IN ('email_sync_daily', 'email_tx_imported', 'points_awarded', 'streak_break')
       GROUP BY c.cohort_week
       ORDER BY c.cohort_week ASC
     `, from, to);
@@ -443,10 +453,11 @@ export class AdminService {
       cohorts: cohorts.map(c => ({
         week: c.cohort_week,
         size: Number(c.cohort_size),
-        d1: Number(c.d1),
-        d7: Number(c.d7),
-        d14: Number(c.d14),
-        d30: Number(c.d30),
+        // null = ventana aún no observable (cohorte inmadura) → no convertir a 0.
+        d1: c.d1 === null ? null : Number(c.d1),
+        d7: c.d7 === null ? null : Number(c.d7),
+        d14: c.d14 === null ? null : Number(c.d14),
+        d30: c.d30 === null ? null : Number(c.d30),
       })),
       period: { from, to },
     };
