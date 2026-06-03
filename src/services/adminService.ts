@@ -134,30 +134,23 @@ export class AdminService {
         where: { status: 'TRIALING' },
       }),
 
-      // Churn (revenue-based): users that paid in the previous period of the
-      // same length, but did NOT pay in the current period. This is independent
-      // of subscription.status — true churn is when money stops coming in.
+      // Churn: suscripciones de pago cuyo acceso terminó SIN renovar dentro del
+      // periodo — basado en el ESTADO de la suscripción (status perdido +
+      // currentPeriodEnd dentro de [from, to]), NO en la recencia del pago.
+      // Esto evita marcar como churn a suscriptores anuales, que pagan 1 vez al
+      // año y naturalmente no pagan el mes siguiente.
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT prev."userId")::bigint as cnt
-        FROM payments prev
-        WHERE prev.status = 'SUCCEEDED'
-          AND prev."createdAt" >= $1 AND prev."createdAt" <= $2
-          AND NOT EXISTS (
-            SELECT 1 FROM payments curr
-            WHERE curr."userId" = prev."userId"
-              AND curr.status = 'SUCCEEDED'
-              AND curr."createdAt" >= $3 AND curr."createdAt" <= $4
-          )
-      `, prevFrom, prevTo, from, to),
+        SELECT COUNT(*)::bigint as cnt
+        FROM subscriptions
+        WHERE status IN ('CANCELED', 'UNPAID', 'INCOMPLETE_EXPIRED')
+          AND "currentPeriodEnd" >= $1 AND "currentPeriodEnd" <= $2
+      `, from, to),
 
-      // Churn denominator: users that paid in the previous period (the base
-      // we measure attrition against).
-      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT "userId")::bigint as cnt
-        FROM payments
-        WHERE status = 'SUCCEEDED'
-          AND "createdAt" >= $1 AND "createdAt" <= $2
-      `, prevFrom, prevTo),
+      // Base de churn: suscripciones de pago actualmente activas. El rate se
+      // calcula como churned / (churned + activas).
+      prisma.subscription.count({
+        where: { plan: { in: ['PREMIUM', 'PRO'] }, status: 'ACTIVE' },
+      }),
 
       // DAU: distinct users with HUMAN gamification events in the last 7 days.
       // Excludes system-generated events (scheduler bonuses, meta-events) so we
@@ -279,9 +272,11 @@ export class AdminService {
     const mau = mauRaw.length;
 
     const churnedCountNum = Number(churnedCount[0]?.cnt ?? 0);
-    const activeStartOfPeriodNum = Number(activeStartOfPeriod[0]?.cnt ?? 0);
-    const churnRate = activeStartOfPeriodNum > 0
-      ? Math.round((churnedCountNum / activeStartOfPeriodNum) * 10000) / 100
+    // activeStartOfPeriod ahora es un count de suscripciones de pago activas.
+    // Base = activas + las que hicieron churn en el periodo.
+    const churnBase = activeStartOfPeriod + churnedCountNum;
+    const churnRate = churnBase > 0
+      ? Math.round((churnedCountNum / churnBase) * 10000) / 100
       : 0;
 
     const freeToPaidRate = totalFreeUsers > 0
@@ -494,21 +489,16 @@ export class AdminService {
         where: { status: 'TRIALING' },
       }),
 
-      // Cancellations (revenue-based, last 30 days):
-      // users that paid in [thirtyDaysAgo - 30d, thirtyDaysAgo] but did NOT pay in
-      // [thirtyDaysAgo, to]. Status-independent; reflects real attrition.
-      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT prev."userId")::bigint as cnt
-        FROM payments prev
-        WHERE prev.status = 'SUCCEEDED'
-          AND prev."createdAt" >= $1 AND prev."createdAt" < $2
-          AND NOT EXISTS (
-            SELECT 1 FROM payments curr
-            WHERE curr."userId" = prev."userId"
-              AND curr.status = 'SUCCEEDED'
-              AND curr."createdAt" >= $2 AND curr."createdAt" <= $3
-          )
-      `, new Date(thirtyDaysAgo.getTime() - 30 * 24 * 60 * 60 * 1000), thirtyDaysAgo, to),
+      // Cancelaciones (últimos 30 días): suscripciones de pago cuyo acceso
+      // terminó sin renovar (status perdido + currentPeriodEnd en los últimos
+      // 30 días). Basado en el ESTADO de la suscripción, NO en la recencia del
+      // pago — así un suscriptor anual no se cuenta como cancelado.
+      prisma.subscription.count({
+        where: {
+          status: { in: ['CANCELED', 'UNPAID', 'INCOMPLETE_EXPIRED'] },
+          currentPeriodEnd: { gte: thirtyDaysAgo, lte: to },
+        },
+      }),
 
       // Payments succeeded in period
       prisma.payment.count({
@@ -671,7 +661,7 @@ export class AdminService {
       revenueByPlan,
       subscribersByPlan: { PREMIUM: subscribersByPlan.PREMIUM, PRO: subscribersByPlan.PRO },
       trialsActive,
-      cancellations30d: Number(cancellations30d[0]?.cnt ?? 0),
+      cancellations30d: cancellations30d,
       mrrTrend: mrrTrendData.map(m => ({
         month: m.month,
         mrr: Math.round((Number(m.premium) + Number(m.pro)) * 100) / 100,
