@@ -1,6 +1,19 @@
 import rateLimit from 'express-rate-limit';
 import { Request, Response } from 'express';
 import { logger } from '../utils/logger';
+import { validatePdfToken } from '../services/pdfTokenService';
+
+/**
+ * Las requests del render del PDF (Puppeteer) llevan ?pdfToken= válido. Una sola
+ * generación dispara múltiples llamadas a los endpoints del dashboard (KPIs,
+ * charts, etc.) en ráfaga desde el IP del proxy, lo que dispara los 429. Son
+ * internas y ya autenticadas, así que se eximen del rate limit. Validamos el
+ * token (no solo su presencia) para que no sea un bypass abusable.
+ */
+const isValidPdfRender = (req: Request): boolean => {
+  const t = req.query?.pdfToken;
+  return typeof t === 'string' && t.length > 0 && validatePdfToken(t) !== null;
+};
 
 /**
  * Rate Limiting Configuration
@@ -104,8 +117,8 @@ export const apiLimiter = rateLimit({
   legacyHeaders: false,
   handler: rateLimitHandler,
   skip: (req: Request) => {
-    // Skip para health checks
-    return req.path === '/health' || req.path === '/api/health';
+    // Skip para health checks y para el render interno del PDF (pdfToken válido)
+    return req.path === '/health' || req.path === '/api/health' || isValidPdfRender(req);
   },
 });
 
@@ -123,6 +136,9 @@ export const strictApiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
+  // El render del PDF (Puppeteer) hace múltiples llamadas con pdfToken válido;
+  // no deben contar contra este límite estricto.
+  skip: (req: Request) => isValidPdfRender(req),
 });
 
 /**
