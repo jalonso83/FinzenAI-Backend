@@ -91,8 +91,15 @@ function escapeHtml(s: string): string {
 export async function generateDashboardPdf(
   params: GenerateDashboardPdfParams,
 ): Promise<Buffer> {
-  if (!isValidPeriod(params.from, params.to)) {
-    throw new PdfInvalidRangeError(`${params.from}..${params.to}`);
+  // El periodo en curso (mes/trimestre actual) puede tener 'to' en el futuro
+  // (ej. Q2 termina el 30-jun). Lo recortamos a hoy: no se rechaza el reporte y
+  // solo se consulta hasta hoy. El label se mantiene ("Q2 2026", etc.).
+  const from = params.from;
+  const today = new Date().toISOString().split('T')[0];
+  const to = params.to > today ? today : params.to;
+
+  if (!isValidPeriod(from, to)) {
+    throw new PdfInvalidRangeError(`${from}..${to}`);
   }
 
   if (activePdfGenerations >= MAX_CONCURRENT_PDFS) {
@@ -105,7 +112,7 @@ export async function generateDashboardPdf(
 
   const startTime = Date.now();
   logger.log(
-    `[PdfReport] Generando PDF dashboard | admin=${params.adminEmail} periodo=${params.periodLabel} (${params.from}..${params.to})`,
+    `[PdfReport] Generando PDF dashboard | admin=${params.adminEmail} periodo=${params.periodLabel} (${from}..${to})`,
   );
 
   try {
@@ -116,8 +123,8 @@ export async function generateDashboardPdf(
     const url = new URL(`${ENV.LANDING_URL}/dashboard/detalles`);
     url.searchParams.set('mode', 'pdf');
     url.searchParams.set('pdfToken', pdfToken);
-    url.searchParams.set('from', params.from);
-    url.searchParams.set('to', params.to);
+    url.searchParams.set('from', from);
+    url.searchParams.set('to', to);
     url.searchParams.set('label', params.periodLabel);
     url.searchParams.set('generatedBy', params.adminEmail);
 

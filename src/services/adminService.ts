@@ -1341,7 +1341,7 @@ export class AdminService {
           } }
         ]};
       } else if (status === 'CANCELADO') {
-        filter = { subscription: { status: 'CANCELLED' } };
+        filter = { subscription: { status: 'CANCELED' } };
       }
 
       if (where.AND) {
