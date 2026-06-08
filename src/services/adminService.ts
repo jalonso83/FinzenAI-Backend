@@ -319,6 +319,7 @@ export class AdminService {
     const [
       registrationsByDay,
       totalRegistered,
+      totalVerified,
       totalOnboarded,
       totalActivated,
       retainedD1,
@@ -338,6 +339,11 @@ export class AdminService {
       // Funnel: total registered in period
       prisma.user.count({
         where: { createdAt: { gte: from, lte: to } },
+      }),
+
+      // Funnel: verified (confirmed email) within the cohort
+      prisma.user.count({
+        where: { createdAt: { gte: from, lte: to }, verified: true },
       }),
 
       // Funnel: onboarded (completed onboarding)
@@ -438,6 +444,7 @@ export class AdminService {
       })),
       funnel: {
         registered: totalRegistered,
+        verified: totalVerified,
         onboarded: totalOnboarded,
         activated: Number(totalActivated[0]?.cnt ?? 0),
         retainedD1: activated,
