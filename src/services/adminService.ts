@@ -1444,9 +1444,10 @@ export class AdminService {
     const userIds = users.map(u => u.id);
     let lastActivityMap: Record<string, Date> = {};
     let platformMap: Record<string, 'Android' | 'iOS' | 'Desconocido'> = {};
+    let zenioQueriesMap: Record<string, number> = {};
 
     if (userIds.length > 0) {
-      const [lastActivities, registrationUAs] = await Promise.all([
+      const [lastActivities, registrationUAs, zenioUsage] = await Promise.all([
         prisma.$queryRawUnsafe<{ userId: string; lastActivity: Date }[]>(
           `SELECT "userId", MAX("createdAt") as "lastActivity"
            FROM gamification_events
@@ -1463,10 +1464,23 @@ export class AdminService {
            ORDER BY "userId", "eventTime" DESC`,
           userIds
         ),
+        // Consultas de chat con Zenio (acumulado de por vida, sin voz/transcripción).
+        prisma.$queryRawUnsafe<{ userId: string; zenioQueries: number }[]>(
+          `SELECT "userId", SUM("totalCallCount")::int AS "zenioQueries"
+           FROM user_model_usage
+           WHERE "userId" = ANY($1::text[])
+             AND feature IN ('zenio_v2', 'zenio_agents')
+           GROUP BY "userId"`,
+          userIds
+        ),
       ]);
 
       lastActivities.forEach(a => {
         lastActivityMap[a.userId] = a.lastActivity;
+      });
+
+      zenioUsage.forEach(z => {
+        zenioQueriesMap[z.userId] = Number(z.zenioQueries) || 0;
       });
 
       registrationUAs.forEach(r => {
@@ -1499,6 +1513,7 @@ export class AdminService {
         trialEndsAt: u.subscription?.trialEndsAt || null,
         currentPeriodEnd: u.subscription?.currentPeriodEnd || null,
         transactionCount: u._count.transactions,
+        zenioQueries: zenioQueriesMap[u.id] || 0,
         lastActivity: lastActivityMap[u.id] || null,
         cohort,
       };
