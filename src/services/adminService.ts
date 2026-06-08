@@ -702,6 +702,7 @@ export class AdminService {
       referralsConvertedFromCohort,
       registrationsByChannel,
       streakActiveUsersData,
+      activeAnyActivityData,
       timeToFirstTxData,
     ] = await Promise.all([
       // Total transactions in period
@@ -774,6 +775,19 @@ export class AdminService {
         WHERE "currentStreak" > 0
           AND "lastActivityDate" >= $1
           AND "lastActivityDate" <= $2
+      `, from, to),
+
+      // Denominador de "Racha Activa": usuarios activos por CUALQUIER actividad
+      // en el período (no solo transacciones). Usamos gamification_events sin
+      // excluir tipos: todo evento de racha (add_tx, daily_open, create_budget,
+      // goal_contrib, email_sync_daily, email_tx_imported) crea un registro acá,
+      // por lo que este conjunto SIEMPRE contiene al numerador de racha → el
+      // ratio queda acotado a ≤100%.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT "userId")::bigint as cnt
+        FROM gamification_events
+        WHERE "createdAt" >= $1
+          AND "createdAt" <= $2
       `, from, to),
 
       // Time-to-first-transaction (median hours) and first-tx adoption rate
@@ -880,10 +894,14 @@ export class AdminService {
       ? Math.round((cohortWithZenio / adoptionCohortSize) * 10000) / 100
       : 0;
 
-    // % Racha Activa
+    // % Racha Activa: de los usuarios activos por CUALQUIER actividad en el
+    // período, qué % mantiene una racha viva. Denominador = activeAnyActivity
+    // (no `activeUsers`, que solo cuenta quien transó) — así el numerador
+    // (con racha) es subconjunto del denominador y el ratio nunca supera 100%.
     const streakActiveUsers = Number(streakActiveUsersData[0]?.cnt ?? 0);
-    const streakActiveRate = activeUsers > 0
-      ? Math.round((streakActiveUsers / activeUsers) * 10000) / 100
+    const activeAnyActivity = Number(activeAnyActivityData[0]?.cnt ?? 0);
+    const streakActiveRate = activeAnyActivity > 0
+      ? Math.round((streakActiveUsers / activeAnyActivity) * 10000) / 100
       : 0;
 
     // Time-to-first-transaction
