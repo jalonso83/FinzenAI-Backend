@@ -17,6 +17,10 @@ export interface AudienceFilters {
   segments: LifecycleSegment[];  // combinados con OR
   dormantDays?: number;          // umbral "dormido", default 14
   type: string;                  // NotificationType (para opt-out)
+  // Modo prueba: ignora todos los filtros y envía SOLO al admin (testUserId).
+  // testUserId lo inyecta el controller desde el admin autenticado — nunca el cliente.
+  test?: boolean;
+  testUserId?: string;
 }
 
 interface AudienceRow {
@@ -46,6 +50,21 @@ export class BroadcastService {
    *  - active: tiene ≥1 tx y actividad dentro del umbral.
    */
   private static audienceBody(f: AudienceFilters, applyOptOut: boolean): { sql: string; params: any[] } {
+    // Modo prueba: solo el admin. Ignora segmentos, planes, opt-out y país.
+    // (Incluye el LEFT JOIN a preferences para que el SELECT de resolveAudience
+    // pueda leer quietHours, aunque en test las ignoramos al enviar.)
+    if (f.test && f.testUserId) {
+      return {
+        sql: `
+          FROM users u
+          JOIN user_devices d ON d."userId" = u.id AND d."isActive" = true
+          LEFT JOIN notification_preferences np ON np."userId" = u.id
+          WHERE u.id = $1
+        `,
+        params: [f.testUserId],
+      };
+    }
+
     const country = !f.country || f.country === 'Todos' ? 'ALL' : f.country;
     const params = [
       f.plans,                                // $1
@@ -89,7 +108,10 @@ export class BroadcastService {
 
   /** Cuenta sin enviar: usuarios alcanzados + cuántos se excluyen por opt-out. */
   static async previewAudience(f: AudienceFilters): Promise<{ target: number; optedOut: number }> {
-    if (!f.segments || f.segments.length === 0 || f.plans.length === 0 || f.platforms.length === 0) {
+    if (!f.test && (!f.segments || f.segments.length === 0 || f.plans.length === 0 || f.platforms.length === 0)) {
+      return { target: 0, optedOut: 0 };
+    }
+    if (f.test && !f.testUserId) {
       return { target: 0, optedOut: 0 };
     }
     const withOptOut = this.audienceBody(f, true);
@@ -145,6 +167,7 @@ export class BroadcastService {
         ...(broadcast.audience as unknown as AudienceFilters),
         type: broadcast.type,
       };
+      const isTest = filters.test === true;
       const rows = await this.resolveAudience(filters);
 
       // Agrupar por usuario → tokens + quiet hours.
@@ -183,7 +206,8 @@ export class BroadcastService {
       const suppressed = new Set<string>();
       const tokensByBadge = new Map<number, string[]>();
       for (const [userId, info] of byUser) {
-        if (isInQuietHours(info.qhStart, info.qhEnd)) {
+        // En modo prueba ignoramos quiet hours para que el test siempre llegue.
+        if (!isTest && isInQuietHours(info.qhStart, info.qhEnd)) {
           suppressed.add(userId);
           continue;
         }

@@ -23,6 +23,8 @@ function validateContent(body: any): string | null {
 
 function validateAudience(audience: any): string | null {
   if (!audience || typeof audience !== 'object') return 'Audiencia requerida';
+  // Modo prueba: solo va al admin, no requiere segmentación.
+  if (audience.test === true) return null;
   if (!Array.isArray(audience.segments) || audience.segments.length === 0) return 'Selecciona al menos un segmento';
   if (!Array.isArray(audience.plans) || audience.plans.length === 0) return 'Selecciona al menos un plan';
   if (!Array.isArray(audience.platforms) || audience.platforms.length === 0) return 'Selecciona al menos una plataforma';
@@ -40,13 +42,19 @@ export const createBroadcast = async (req: Request, res: Response) => {
     const audienceError = validateAudience(req.body.audience);
     if (audienceError) return res.status(400).json({ message: audienceError, error: 'Bad request' });
 
+    // Modo prueba: el destinatario es SIEMPRE el admin autenticado (no se confía
+    // en un testUserId que venga del cliente).
+    const audience = req.body.audience.test === true
+      ? { ...req.body.audience, testUserId: adminId }
+      : req.body.audience;
+
     const broadcast = await prisma.broadcast.create({
       data: {
         title: req.body.title,
         body: req.body.body,
         type: req.body.type,
         data: req.body.data ?? undefined,
-        audience: req.body.audience,
+        audience,
         status: 'DRAFT',
         createdBy: adminId,
       },
@@ -86,13 +94,19 @@ export const listBroadcasts = async (req: Request, res: Response) => {
 // POST /api/admin/broadcasts/preview — calcula audiencia sin enviar
 export const previewBroadcast = async (req: Request, res: Response) => {
   try {
+    const adminId = (req.user as any)?.id as string | undefined;
     if (!ALLOWED_TYPES.includes(req.body?.type)) {
       return res.status(400).json({ message: 'Tipo inválido', error: 'Bad request' });
     }
     const audienceError = validateAudience(req.body.audience);
     if (audienceError) return res.status(400).json({ message: audienceError, error: 'Bad request' });
 
-    const filters: AudienceFilters = { ...req.body.audience, type: req.body.type };
+    const filters: AudienceFilters = {
+      ...req.body.audience,
+      type: req.body.type,
+      // En prueba, el destinatario es el admin autenticado.
+      ...(req.body.audience?.test === true ? { testUserId: adminId } : {}),
+    };
     const result = await BroadcastService.previewAudience(filters);
     return res.json({ message: 'Audiencia calculada', data: result });
   } catch (error) {
