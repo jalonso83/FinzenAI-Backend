@@ -4,6 +4,7 @@ import { authenticateAdminOrPdfToken } from '../middlewares/adminAuth';
 import { strictApiLimiter } from '../config/rateLimiter';
 import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf, getCampaignCosts, upsertCampaignCost, deleteCampaignCost } from '../controllers/admin';
 import { getFeedbackList, updateFeedback } from '../controllers/feedback';
+import { createBroadcast, listBroadcasts, previewBroadcast, sendBroadcast } from '../controllers/broadcasts';
 
 const router: ExpressRouter = Router();
 
@@ -29,6 +30,12 @@ router.post('/dashboard/pdf', generateDashboardPdf);
 // Feedback management
 router.get('/feedback', getFeedbackList);
 router.patch('/feedback/:id', updateFeedback);
+
+// Broadcasts (notificaciones masivas)
+router.get('/broadcasts', listBroadcasts);
+router.post('/broadcasts', createBroadcast);
+router.post('/broadcasts/preview', previewBroadcast);
+router.post('/broadcasts/:id/send', sendBroadcast);
 
 // Campaign costs (manual cost entry per source/campaign — lifetime, no date filter)
 router.get('/campaign-costs', getCampaignCosts);

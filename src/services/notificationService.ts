@@ -253,6 +253,24 @@ export class NotificationService {
   }
 
   /**
+   * Envío masivo (broadcast). Público porque lo consume broadcastService.
+   * Reutiliza el motor Expo Push (sendMulticast: batches de 100) y limpia los
+   * tokens muertos. Aplica el MISMO badge a todos los tokens del lote — el
+   * caller agrupa los usuarios por su badge antes de llamar.
+   */
+  static async sendBroadcastChunk(
+    tokens: string[],
+    payload: NotificationPayload,
+    badgeCount: number
+  ): Promise<{ successCount: number; failureCount: number }> {
+    const result = await this.sendMulticast(tokens, payload, badgeCount);
+    if (result.failedTokens && result.failedTokens.length > 0) {
+      await this.cleanupInvalidTokens(result.failedTokens);
+    }
+    return { successCount: result.successCount, failureCount: result.failureCount };
+  }
+
+  /**
    * Envía notificación multicast a múltiples tokens usando Expo Push API
    * @param badgeCount - Número de notificaciones no leídas para mostrar en el ícono de la app
    */
@@ -377,6 +395,10 @@ export class NotificationService {
       case 'TRIAL_ENDING':
       case 'TRIAL_ENDED':
         return preferences.trialNotificationsEnabled ?? true;
+      case 'MARKETING':
+        return preferences.marketingEnabled ?? true;
+      case 'ANNOUNCEMENT':
+        return preferences.announcementsEnabled ?? true;
       case 'SYSTEM':
         return true; // System notifications always enabled
       default:

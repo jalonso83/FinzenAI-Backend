@@ -632,6 +632,8 @@ model NotificationPreferences {
   paymentRemindersEnabled   Boolean @default(true)
   antExpenseAlertsEnabled   Boolean @default(true)
   trialNotificationsEnabled Boolean @default(true)
+  marketingEnabled          Boolean @default(true) // broadcast tipo MARKETING
+  announcementsEnabled      Boolean @default(true) // broadcast tipo ANNOUNCEMENT
 
   // Umbral de alerta de presupuesto (porcentaje)
   budgetAlertThreshold Int @default(80)
@@ -670,13 +672,38 @@ model NotificationLog {
   sentAt       DateTime?
   readAt       DateTime?
   errorMessage String?
+  broadcastId  String?            // si vino de un broadcast masivo (para tasa de apertura)
   createdAt    DateTime           @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([type, status])
+  @@index([broadcastId])
   @@map("notification_logs")
+}
+
+// Notificaciones masivas (broadcast) creadas desde el panel admin.
+// Una fila por campaña; sus destinatarios viven como NotificationLog con broadcastId.
+model Broadcast {
+  id           String    @id @default(cuid())
+  title        String
+  body         String
+  data         Json?     // deeplink / pantalla destino al tocar
+  type         NotificationType // MARKETING | ANNOUNCEMENT | SYSTEM
+  audience     Json      // filtros de segmentación serializados (planes, plataformas, país, segmentos, umbral)
+  status       String    @default("DRAFT") // DRAFT | SENDING | SENT | FAILED
+  targetCount  Int?      // usuarios distintos alcanzados (calculado al enviar)
+  successCount Int?      // tokens entregados
+  failureCount Int?      // tokens fallidos
+  createdBy    String    // userId del admin que lo creó (auditoría)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  sentAt       DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("broadcasts")
 }
 
 enum DevicePlatform {
@@ -702,6 +729,8 @@ enum NotificationType {
   TRIAL_DAY_5
   TRIAL_ENDING
   TRIAL_ENDED
+  MARKETING       // broadcast: ofertas, promociones (opt-out independiente)
+  ANNOUNCEMENT    // broadcast: novedades / cambios de producto
 }
 
 enum NotificationStatus {
