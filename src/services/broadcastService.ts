@@ -17,10 +17,12 @@ export interface AudienceFilters {
   segments: LifecycleSegment[];  // combinados con OR
   dormantDays?: number;          // umbral "dormido", default 14
   type: string;                  // NotificationType (para opt-out)
-  // Modo prueba: ignora todos los filtros y envía SOLO al admin (testUserId).
-  // testUserId lo inyecta el controller desde el admin autenticado — nunca el cliente.
+  // Modo prueba / envío dirigido a un solo usuario. Ignora la segmentación y
+  // envía SOLO a testUserId. testUserId lo inyecta el controller (admin o el
+  // usuario resuelto desde targetEmail) — nunca lo manda crudo el cliente.
   test?: boolean;
   testUserId?: string;
+  targetEmail?: string; // envío dirigido a un usuario específico por email
 }
 
 interface AudienceRow {

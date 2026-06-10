@@ -23,6 +23,8 @@ interface RegisterDeviceRequest {
 
 interface UpdatePreferencesRequest {
   emailSyncEnabled?: boolean;
+  marketingEnabled?: boolean;
+  announcementsEnabled?: boolean;
   budgetAlertsEnabled?: boolean;
   goalRemindersEnabled?: boolean;
   weeklyReportEnabled?: boolean;
@@ -146,6 +148,8 @@ export const getPreferences = async (req: AuthRequest, res: Response) => {
         goalRemindersEnabled: true,
         weeklyReportEnabled: true,
         tipsEnabled: true,
+        marketingEnabled: true,
+        announcementsEnabled: true,
         antExpenseAlertsEnabled: true,
         budgetAlertThreshold: 80,
         goalReminderFrequency: 7,
@@ -162,6 +166,8 @@ export const getPreferences = async (req: AuthRequest, res: Response) => {
       goalRemindersEnabled: preferences.goalRemindersEnabled,
       weeklyReportEnabled: preferences.weeklyReportEnabled,
       tipsEnabled: preferences.tipsEnabled,
+      marketingEnabled: preferences.marketingEnabled ?? true,
+      announcementsEnabled: preferences.announcementsEnabled ?? true,
       antExpenseAlertsEnabled: preferences.antExpenseAlertsEnabled,
       budgetAlertThreshold: preferences.budgetAlertThreshold,
       goalReminderFrequency: preferences.goalReminderFrequency,
@@ -244,6 +250,8 @@ export const updatePreferences = async (req: AuthRequest, res: Response) => {
         goalRemindersEnabled: preferences.goalRemindersEnabled,
         weeklyReportEnabled: preferences.weeklyReportEnabled,
         tipsEnabled: preferences.tipsEnabled,
+        marketingEnabled: preferences.marketingEnabled ?? true,
+        announcementsEnabled: preferences.announcementsEnabled ?? true,
         antExpenseAlertsEnabled: preferences.antExpenseAlertsEnabled,
         budgetAlertThreshold: preferences.budgetAlertThreshold,
         goalReminderFrequency: preferences.goalReminderFrequency,

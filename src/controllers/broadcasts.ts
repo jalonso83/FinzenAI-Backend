@@ -23,12 +23,34 @@ function validateContent(body: any): string | null {
 
 function validateAudience(audience: any): string | null {
   if (!audience || typeof audience !== 'object') return 'Audiencia requerida';
-  // Modo prueba: solo va al admin, no requiere segmentación.
-  if (audience.test === true) return null;
+  // Modo prueba (solo admin) o envío dirigido (un email): no requieren segmentación.
+  if (audience.test === true || audience.targetEmail) return null;
   if (!Array.isArray(audience.segments) || audience.segments.length === 0) return 'Selecciona al menos un segmento';
   if (!Array.isArray(audience.plans) || audience.plans.length === 0) return 'Selecciona al menos un plan';
   if (!Array.isArray(audience.platforms) || audience.platforms.length === 0) return 'Selecciona al menos una plataforma';
   return null;
+}
+
+// Resuelve el destinatario único cuando aplica:
+//  - test=true → el admin autenticado.
+//  - targetEmail → busca ese usuario por email (case-insensitive).
+// En ambos casos deja test=true + testUserId, reutilizando el camino de
+// un-solo-usuario del broadcastService. testUserId NUNCA se confía al cliente.
+async function resolveTargeting(audience: any, adminId: string): Promise<{ audience?: any; error?: string }> {
+  if (!audience || typeof audience !== 'object') return { error: 'Audiencia requerida' };
+  if (audience.test === true) {
+    return { audience: { ...audience, testUserId: adminId } };
+  }
+  if (audience.targetEmail) {
+    const email = String(audience.targetEmail).trim().toLowerCase();
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (!user) return { error: `No existe un usuario con el email "${email}"` };
+    return { audience: { ...audience, test: true, testUserId: user.id } };
+  }
+  return { audience };
 }
 
 // POST /api/admin/broadcasts — crea en estado DRAFT
@@ -42,11 +64,11 @@ export const createBroadcast = async (req: Request, res: Response) => {
     const audienceError = validateAudience(req.body.audience);
     if (audienceError) return res.status(400).json({ message: audienceError, error: 'Bad request' });
 
-    // Modo prueba: el destinatario es SIEMPRE el admin autenticado (no se confía
-    // en un testUserId que venga del cliente).
-    const audience = req.body.audience.test === true
-      ? { ...req.body.audience, testUserId: adminId }
-      : req.body.audience;
+    // Resuelve destinatario único (prueba o email dirigido). testUserId lo pone
+    // el servidor, nunca el cliente.
+    const resolved = await resolveTargeting(req.body.audience, adminId);
+    if (resolved.error) return res.status(400).json({ message: resolved.error, error: 'Bad request' });
+    const audience = resolved.audience;
 
     const broadcast = await prisma.broadcast.create({
       data: {
@@ -101,12 +123,9 @@ export const previewBroadcast = async (req: Request, res: Response) => {
     const audienceError = validateAudience(req.body.audience);
     if (audienceError) return res.status(400).json({ message: audienceError, error: 'Bad request' });
 
-    const filters: AudienceFilters = {
-      ...req.body.audience,
-      type: req.body.type,
-      // En prueba, el destinatario es el admin autenticado.
-      ...(req.body.audience?.test === true ? { testUserId: adminId } : {}),
-    };
+    const resolved = await resolveTargeting(req.body.audience, adminId || '');
+    if (resolved.error) return res.status(400).json({ message: resolved.error, error: 'Bad request' });
+    const filters: AudienceFilters = { ...resolved.audience, type: req.body.type };
     const result = await BroadcastService.previewAudience(filters);
     return res.json({ message: 'Audiencia calculada', data: result });
   } catch (error) {
