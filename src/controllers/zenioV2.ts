@@ -13,6 +13,7 @@ import OpenAI from 'openai';
 import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
+import { stripFileCitations } from '../utils/stripFileCitations';
 import { ZENIO_SYSTEM_PROMPT, ZENIO_MODEL, ZENIO_TEMPERATURE, ZENIO_VECTOR_STORE_ID } from '../config/zenioPrompt';
 import { ZENIO_FUNCTION_TOOLS, ZENIO_ONBOARDING_V21_TOOLS } from '../config/zenioTools';
 import { ZENIO_ONBOARDING_V21_PROMPT } from '../config/zenioOnboardingV21';
@@ -1337,8 +1338,8 @@ export const chatWithZenioV2 = async (req: Request, res: Response) => {
       logger.warn('[ZenioV2] Límite máximo de tool call iteraciones alcanzado');
     }
 
-    // 11. Obtener respuesta final
-    const assistantResponse = response.output_text || 'No se pudo obtener respuesta del asistente.';
+    // 11. Obtener respuesta final (limpiando los marcadores de citación de file_search)
+    const assistantResponse = stripFileCitations(response.output_text) || 'No se pudo obtener respuesta del asistente.';
 
     // 12. Incrementar contador de consultas
     let zenioUsage = { used: 0, limit: 15, remaining: 15 };

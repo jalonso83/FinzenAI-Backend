@@ -14,6 +14,7 @@ import OpenAI from 'openai';
 import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
+import { stripFileCitations } from '../utils/stripFileCitations';
 import { ZENIO_MODEL, ZENIO_TEMPERATURE } from '../config/zenioPrompt';
 import { OpenAiUsageService } from '../services/openAiUsageService';
 import { calculateOpenAICost } from '../config/openaiPricing';
@@ -831,8 +832,8 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
       }
     }
 
-    // 11. Obtener respuesta final
-    const assistantResponse = response.output_text || 'No se pudo obtener respuesta.';
+    // 11. Obtener respuesta final (limpiando los marcadores de citación de file_search)
+    const assistantResponse = stripFileCitations(response.output_text) || 'No se pudo obtener respuesta.';
 
     // 12. Incrementar contador
     let zenioUsage = { used: 0, limit: 15, remaining: 15 };
