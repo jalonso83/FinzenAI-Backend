@@ -1448,6 +1448,7 @@ export class AdminService {
           _count: {
             select: {
               transactions: true,
+              goals: true,
             },
           },
         },
@@ -1463,9 +1464,10 @@ export class AdminService {
     let lastActivityMap: Record<string, Date> = {};
     let platformMap: Record<string, 'Android' | 'iOS' | 'Desconocido'> = {};
     let zenioQueriesMap: Record<string, number> = {};
+    let goalContributionsMap: Record<string, number> = {};
 
     if (userIds.length > 0) {
-      const [lastActivities, registrationUAs, zenioUsage] = await Promise.all([
+      const [lastActivities, registrationUAs, zenioUsage, goalContributions] = await Promise.all([
         prisma.$queryRawUnsafe<{ userId: string; lastActivity: Date }[]>(
           `SELECT "userId", MAX("createdAt") as "lastActivity"
            FROM gamification_events
@@ -1491,6 +1493,12 @@ export class AdminService {
            GROUP BY "userId"`,
           userIds
         ),
+        // Total de contribuciones a metas por usuario (suma del contador por meta).
+        prisma.goal.groupBy({
+          by: ['userId'],
+          where: { userId: { in: userIds } },
+          _sum: { contributionsCount: true },
+        }),
       ]);
 
       lastActivities.forEach(a => {
@@ -1499,6 +1507,10 @@ export class AdminService {
 
       zenioUsage.forEach(z => {
         zenioQueriesMap[z.userId] = Number(z.zenioQueries) || 0;
+      });
+
+      goalContributions.forEach(g => {
+        goalContributionsMap[g.userId] = g._sum.contributionsCount || 0;
       });
 
       registrationUAs.forEach(r => {
@@ -1532,6 +1544,8 @@ export class AdminService {
         currentPeriodEnd: u.subscription?.currentPeriodEnd || null,
         transactionCount: u._count.transactions,
         zenioQueries: zenioQueriesMap[u.id] || 0,
+        goalCount: u._count.goals,
+        goalContributions: goalContributionsMap[u.id] || 0,
         lastActivity: lastActivityMap[u.id] || null,
         cohort,
       };
