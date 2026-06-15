@@ -228,7 +228,7 @@ model GamificationEvent {
   @@map("gamification_events")
 }
 
-// FinScore Histórico  
+// FinScore Histórico
 model FinScoreHistory {
   id           String   @id @default(cuid())
   userId       String
@@ -365,6 +365,10 @@ model Subscription {
   // Contador de consultas de Zenio AI
   zenioQueriesUsed    Int      @default(0)
   zenioQueriesResetAt DateTime @default(now())
+  // Acumulado de por vida de mensajes REALES del usuario a Zenio (no se resetea
+  // mensual; excluye saludos automáticos y onboarding). Métrica de engagement
+  // para el dashboard, en lugar de contar llamadas al modelo.
+  zenioMessagesTotal  Int      @default(0)
 
   // RevenueCat (In-App Purchases)
   paymentProvider       PaymentProvider @default(STRIPE)
@@ -1200,13 +1204,15 @@ model AttributionEvent {
 // correctamente en Postgres (NULLs no son iguales entre sí).
 
 model CampaignCost {
-  id        String   @id @default(cuid())
-  source    String
-  campaign  String   @default("")
-  costUSD   Decimal  @db.Decimal(10, 2)
-  notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(cuid())
+  source       String
+  campaign     String    @default("")
+  costUSD      Decimal   @db.Decimal(10, 2)
+  notes        String?
+  // Fecha de inicio de la campaña (informativa). Nullable: filas antiguas no la tienen.
+  campaignDate DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@unique([source, campaign])
   @@index([source])

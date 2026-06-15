@@ -1443,6 +1443,7 @@ export class AdminService {
               status: true,
               trialEndsAt: true,
               currentPeriodEnd: true,
+              zenioMessagesTotal: true,
             },
           },
           _count: {
@@ -1463,11 +1464,10 @@ export class AdminService {
     const userIds = users.map(u => u.id);
     let lastActivityMap: Record<string, Date> = {};
     let platformMap: Record<string, 'Android' | 'iOS' | 'Desconocido'> = {};
-    let zenioQueriesMap: Record<string, number> = {};
     let goalContributionsMap: Record<string, number> = {};
 
     if (userIds.length > 0) {
-      const [lastActivities, registrationUAs, zenioUsage, goalContributions] = await Promise.all([
+      const [lastActivities, registrationUAs, goalContributions] = await Promise.all([
         prisma.$queryRawUnsafe<{ userId: string; lastActivity: Date }[]>(
           `SELECT "userId", MAX("createdAt") as "lastActivity"
            FROM gamification_events
@@ -1484,15 +1484,6 @@ export class AdminService {
            ORDER BY "userId", "eventTime" DESC`,
           userIds
         ),
-        // Consultas de chat con Zenio (acumulado de por vida, sin voz/transcripción).
-        prisma.$queryRawUnsafe<{ userId: string; zenioQueries: number }[]>(
-          `SELECT "userId", SUM("totalCallCount")::int AS "zenioQueries"
-           FROM user_model_usage
-           WHERE "userId" = ANY($1::text[])
-             AND feature IN ('zenio_v2', 'zenio_agents')
-           GROUP BY "userId"`,
-          userIds
-        ),
         // Total de contribuciones a metas por usuario (suma del contador por meta).
         prisma.goal.groupBy({
           by: ['userId'],
@@ -1503,10 +1494,6 @@ export class AdminService {
 
       lastActivities.forEach(a => {
         lastActivityMap[a.userId] = a.lastActivity;
-      });
-
-      zenioUsage.forEach(z => {
-        zenioQueriesMap[z.userId] = Number(z.zenioQueries) || 0;
       });
 
       goalContributions.forEach(g => {
@@ -1543,7 +1530,7 @@ export class AdminService {
         trialEndsAt: u.subscription?.trialEndsAt || null,
         currentPeriodEnd: u.subscription?.currentPeriodEnd || null,
         transactionCount: u._count.transactions,
-        zenioQueries: zenioQueriesMap[u.id] || 0,
+        zenioQueries: u.subscription?.zenioMessagesTotal || 0,
         goalCount: u._count.goals,
         goalContributions: goalContributionsMap[u.id] || 0,
         lastActivity: lastActivityMap[u.id] || null,
@@ -1928,6 +1915,7 @@ export class AdminService {
       campaign: string;
       costUSD: number;
       notes: string | null;
+      campaignDate: string | null; // ISO; solo filas con costo manual la tienen
       visitors: number;
       leads: number;
       registrations: number;
@@ -1948,6 +1936,7 @@ export class AdminService {
         campaign: m.campaign,
         costUSD: 0,
         notes: null,
+        campaignDate: null,
         visitors: Number(m.visitors),
         leads: Number(m.leads),
         registrations: Number(m.registrations),
@@ -1967,6 +1956,7 @@ export class AdminService {
         existing.id = c.id;
         existing.costUSD = cost;
         existing.notes = c.notes;
+        existing.campaignDate = c.campaignDate ? c.campaignDate.toISOString() : null;
         existing.cpv = existing.visitors > 0 ? Math.round((cost / existing.visitors) * 100) / 100 : null;
         existing.cpl = existing.leads > 0 ? Math.round((cost / existing.leads) * 100) / 100 : null;
         existing.cac = existing.registrations > 0 ? Math.round((cost / existing.registrations) * 100) / 100 : null;
@@ -1978,6 +1968,7 @@ export class AdminService {
           campaign: c.campaign,
           costUSD: cost,
           notes: c.notes,
+          campaignDate: c.campaignDate ? c.campaignDate.toISOString() : null,
           visitors: 0,
           leads: 0,
           registrations: 0,
@@ -2022,6 +2013,7 @@ export class AdminService {
     campaign?: string | null;
     costUSD: number;
     notes?: string | null;
+    campaignDate?: string | null;
   }) {
     const source = input.source.trim();
     if (!source) throw new Error('source es requerido');
@@ -2033,10 +2025,18 @@ export class AdminService {
     }
     const notes = input.notes?.trim() || null;
 
+    // Fecha de inicio (informativa). Acepta "YYYY-MM-DD" o ISO; "" / null la limpian.
+    let campaignDate: Date | null = null;
+    if (input.campaignDate) {
+      const parsed = new Date(input.campaignDate);
+      if (isNaN(parsed.getTime())) throw new Error('campaignDate inválida');
+      campaignDate = parsed;
+    }
+
     return prisma.campaignCost.upsert({
       where: { source_campaign: { source, campaign } },
-      create: { source, campaign, costUSD, notes },
-      update: { costUSD, notes },
+      create: { source, campaign, costUSD, notes, campaignDate },
+      update: { costUSD, notes, campaignDate },
     });
   }
 

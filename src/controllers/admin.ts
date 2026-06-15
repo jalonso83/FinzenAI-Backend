@@ -279,7 +279,7 @@ export const getCampaignCosts = async (_req: Request, res: Response) => {
 
 export const upsertCampaignCost = async (req: Request, res: Response) => {
   try {
-    const { source, campaign, costUSD, notes } = req.body ?? {};
+    const { source, campaign, costUSD, notes, campaignDate } = req.body ?? {};
     if (typeof source !== 'string' || !source.trim()) {
       return res.status(400).json({ message: 'source es requerido', error: 'Bad request' });
     }
@@ -292,6 +292,7 @@ export const upsertCampaignCost = async (req: Request, res: Response) => {
       campaign: campaign ?? '',
       costUSD: cost,
       notes,
+      campaignDate: typeof campaignDate === 'string' ? campaignDate : null,
     });
     return res.json({ message: 'Campaign cost saved', data });
   } catch (error) {

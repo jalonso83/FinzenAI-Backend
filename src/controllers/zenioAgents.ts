@@ -839,7 +839,9 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
     let zenioUsage = { used: 0, limit: 15, remaining: 15 };
     try {
       if (!autoGreeting && !isOnboarding) {
-        const updatedSub = await prisma.subscription.update({ where: { userId }, data: { zenioQueriesUsed: { increment: 1 } } });
+        // zenioQueriesUsed = cuota mensual (se resetea); zenioMessagesTotal = acumulado
+        // de por vida para la métrica de engagement del dashboard.
+        const updatedSub = await prisma.subscription.update({ where: { userId }, data: { zenioQueriesUsed: { increment: 1 }, zenioMessagesTotal: { increment: 1 } } });
         const limit = zenioLimit;
         zenioUsage = { used: updatedSub.zenioQueriesUsed, limit, remaining: limit === -1 ? -1 : Math.max(0, limit - updatedSub.zenioQueriesUsed) };
       }
