@@ -2424,6 +2424,19 @@ export const chatWithZenio = async (req: Request, res: Response) => {
       throw new Error('No se pudo determinar el usuario autenticado.');
     }
 
+    // 1.1. INSTRUMENTACIÓN (temporal): medir tráfico al endpoint legacy.
+    // Todo el código actual de las apps llama a /zenio/v2/chat o /zenio/agents/chat,
+    // así que cualquier request que llegue acá viene de una app en versión vieja.
+    // Marcador greppable '[ZENIO-LEGACY-HIT]' + userId + User-Agent (Expo incluye
+    // info de build) para contar usuarios/tráfico real antes de deprecar la ruta.
+    // Se usa logger.error a propósito: en prod el logger solo emite errores.
+    // TODO: quitar esta instrumentación una vez decidida la deprecación.
+    logger.error('[ZENIO-LEGACY-HIT]', {
+      userId,
+      userAgent: req.headers['user-agent'] || 'unknown',
+      platform: req.headers['x-platform'] || req.headers['sec-ch-ua-platform'] || 'unknown',
+    });
+
     // 2. Obtener información del usuario
     let userName = 'Usuario';
     let user = null;
@@ -2690,7 +2703,12 @@ export const chatWithZenio = async (req: Request, res: Response) => {
           const updatedSubscription = await prisma.subscription.update({
             where: { userId },
             data: {
+              // zenioQueriesUsed = cuota mensual (se resetea); zenioMessagesTotal = acumulado
+              // de por vida para la métrica de engagement del dashboard. Debe incrementarse
+              // igual que en zenioV2.ts y zenioAgents.ts para que los 3 endpoints queden
+              // alineados (las apps en versión vieja siguen pegándole a este endpoint legacy).
               zenioQueriesUsed: { increment: 1 },
+              zenioMessagesTotal: { increment: 1 },
             },
           });
 
