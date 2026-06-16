@@ -1211,6 +1211,10 @@ model CampaignCost {
   notes        String?
   // Fecha de inicio de la campaña (informativa). Nullable: filas antiguas no la tienen.
   campaignDate DateTime?
+  // Borrado lógico: oculta la campaña (source+campaign) del dashboard de Costos.
+  // Para ocultar campañas que solo existen como tráfico (sin costo manual) se crea
+  // una fila marcadora con costUSD 0 y hidden=true.
+  hidden       Boolean   @default(false)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

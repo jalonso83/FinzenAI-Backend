@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
 import { authenticateAdminOrPdfToken } from '../middlewares/adminAuth';
 import { strictApiLimiter } from '../config/rateLimiter';
-import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf, getCampaignCosts, upsertCampaignCost, deleteCampaignCost } from '../controllers/admin';
+import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf, getCampaignCosts, upsertCampaignCost, deleteCampaignCost, setCampaignHidden } from '../controllers/admin';
 import { getFeedbackList, updateFeedback } from '../controllers/feedback';
 import { createBroadcast, listBroadcasts, previewBroadcast, sendBroadcast } from '../controllers/broadcasts';
 
@@ -40,6 +40,7 @@ router.post('/broadcasts/:id/send', sendBroadcast);
 // Campaign costs (manual cost entry per source/campaign — lifetime, no date filter)
 router.get('/campaign-costs', getCampaignCosts);
 router.put('/campaign-costs', upsertCampaignCost);
+router.post('/campaign-costs/hidden', setCampaignHidden);
 router.delete('/campaign-costs/:id', deleteCampaignCost);
 
 export default router;

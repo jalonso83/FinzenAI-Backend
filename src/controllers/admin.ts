@@ -268,9 +268,10 @@ export const generateDashboardPdf = async (req: Request, res: Response) => {
 
 // ─── Campaign Costs ─────────────────────────────────────
 
-export const getCampaignCosts = async (_req: Request, res: Response) => {
+export const getCampaignCosts = async (req: Request, res: Response) => {
   try {
-    const data = await AdminService.getCampaignCosts();
+    const includeHidden = req.query.includeHidden === 'true';
+    const data = await AdminService.getCampaignCosts(includeHidden);
     return res.json({ message: 'Campaign costs retrieved', data });
   } catch (error) {
     return handleError(res, 'campaign costs', error);
@@ -310,5 +311,25 @@ export const deleteCampaignCost = async (req: Request, res: Response) => {
     return res.json({ message: 'Campaign cost deleted' });
   } catch (error) {
     return handleError(res, 'delete campaign cost', error);
+  }
+};
+
+export const setCampaignHidden = async (req: Request, res: Response) => {
+  try {
+    const { source, campaign, hidden } = req.body ?? {};
+    if (typeof source !== 'string' || !source.trim()) {
+      return res.status(400).json({ message: 'source es requerido', error: 'Bad request' });
+    }
+    if (typeof hidden !== 'boolean') {
+      return res.status(400).json({ message: 'hidden (boolean) es requerido', error: 'Bad request' });
+    }
+    const data = await AdminService.setCampaignHidden({
+      source,
+      campaign: campaign ?? '',
+      hidden,
+    });
+    return res.json({ message: 'Campaign visibility updated', data });
+  } catch (error) {
+    return handleError(res, 'set campaign hidden', error);
   }
 };

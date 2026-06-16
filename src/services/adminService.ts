@@ -1791,6 +1791,8 @@ export class AdminService {
           -- que llegan literales cuando el advertiser previsualiza el ad o un bot
           -- toca la URL antes del replacement.
           AND ("campaign" IS NULL OR "campaign" NOT LIKE '\\_\\_%\\_\\_' ESCAPE '\\')
+          -- Filtra macros Meta no resueltas (ej. {{campaign.name}}).
+          AND ("campaign" IS NULL OR "campaign" NOT LIKE '%{{%')
           -- Filtra clicks de preview de TikTok (ttclid contiene "Preview_").
           AND ("ttclid" IS NULL OR "ttclid" NOT LIKE '%Preview\\_%' ESCAPE '\\')
       ),
@@ -1825,22 +1827,42 @@ export class AdminService {
       `,
     );
 
-    const bySource = bySourceRaw.map(row => {
-      const visitors = Number(row.visitors);
-      const registrations = Number(row.registrations);
-      return {
-        source: row.source ?? 'Directo',
-        campaign: row.campaign ?? null,
-        visitors,
-        leads: Number(row.leads),
-        registrations,
-        subscriptions: Number(row.subscriptions),
-        revenue: Number(row.revenue ?? 0),
-        // CR% = atribuidos (Lead) / visitantes. Refleja qué % de quienes vieron
-        // la landing decidieron descargar la app — métrica útil de campaña.
-        conversionRate: visitors > 0 ? Math.round((registrations / visitors) * 10000) / 100 : 0,
-      };
-    });
+    // Cruce con costos manuales por (source, campaña): inversión + fecha de inicio.
+    // Respeta el borrado lógico (hidden) para ser consistente con la pantalla Costos.
+    const acqCosts = await prisma.campaignCost.findMany();
+    const costKey = (s: string, c: string | null) => `${s}::${c ?? ''}`;
+    const costMap = new Map<string, { costUSD: number; campaignDate: string | null }>();
+    const hiddenSet = new Set<string>();
+    for (const c of acqCosts) {
+      const k = costKey(c.source, c.campaign);
+      costMap.set(k, {
+        costUSD: Number(c.costUSD),
+        campaignDate: c.campaignDate ? c.campaignDate.toISOString() : null,
+      });
+      if (c.hidden) hiddenSet.add(k);
+    }
+
+    const bySource = bySourceRaw
+      .filter(row => !hiddenSet.has(costKey(row.source ?? 'Directo', row.campaign)))
+      .map(row => {
+        const visitors = Number(row.visitors);
+        const registrations = Number(row.registrations);
+        const cost = costMap.get(costKey(row.source ?? 'Directo', row.campaign));
+        return {
+          source: row.source ?? 'Directo',
+          campaign: row.campaign ?? null,
+          visitors,
+          leads: Number(row.leads),
+          registrations,
+          subscriptions: Number(row.subscriptions),
+          revenue: Number(row.revenue ?? 0),
+          // CR% = atribuidos (Lead) / visitantes. Refleja qué % de quienes vieron
+          // la landing decidieron descargar la app — métrica útil de campaña.
+          conversionRate: visitors > 0 ? Math.round((registrations / visitors) * 10000) / 100 : 0,
+          costUSD: cost?.costUSD ?? 0,
+          campaignDate: cost?.campaignDate ?? null,
+        };
+      });
 
     return {
       kpis: {
@@ -1875,7 +1897,7 @@ export class AdminService {
    * OR un costo ingresado manualmente. Por cada par incluye métricas lifetime
    * (visitors, leads, registros) y, si hay costo, también CPL/CAC/CPV.
    */
-  static async getCampaignCosts() {
+  static async getCampaignCosts(includeHidden = false) {
     // 1. Métricas lifetime por (source, campaign) desde attribution_events.
     //    Mismo criterio que la tabla Top Sources: filtra bots HeadlessChrome.
     //    NOTA: 'Directo' (source NULL) NO se incluye — no tiene sentido asignarle
@@ -1899,6 +1921,8 @@ export class AdminService {
         AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
         -- Filtra macros TikTok no resueltas (__CAMPAIGN_NAME__, __AID_NAME__, etc.).
         AND ("campaign" IS NULL OR "campaign" NOT LIKE '\\_\\_%\\_\\_' ESCAPE '\\')
+        -- Filtra macros Meta no resueltas (ej. {{campaign.name}}).
+        AND ("campaign" IS NULL OR "campaign" NOT LIKE '%{{%')
         -- Filtra clicks de preview de TikTok (ttclid contiene "Preview_").
         AND ("ttclid" IS NULL OR "ttclid" NOT LIKE '%Preview\\_%' ESCAPE '\\')
       GROUP BY "source", COALESCE("campaign", '')
@@ -1916,6 +1940,7 @@ export class AdminService {
       costUSD: number;
       notes: string | null;
       campaignDate: string | null; // ISO; solo filas con costo manual la tienen
+      hidden: boolean; // borrado lógico
       visitors: number;
       leads: number;
       registrations: number;
@@ -1937,6 +1962,7 @@ export class AdminService {
         costUSD: 0,
         notes: null,
         campaignDate: null,
+        hidden: false,
         visitors: Number(m.visitors),
         leads: Number(m.leads),
         registrations: Number(m.registrations),
@@ -1957,6 +1983,7 @@ export class AdminService {
         existing.costUSD = cost;
         existing.notes = c.notes;
         existing.campaignDate = c.campaignDate ? c.campaignDate.toISOString() : null;
+        existing.hidden = c.hidden;
         existing.cpv = existing.visitors > 0 ? Math.round((cost / existing.visitors) * 100) / 100 : null;
         existing.cpl = existing.leads > 0 ? Math.round((cost / existing.leads) * 100) / 100 : null;
         existing.cac = existing.registrations > 0 ? Math.round((cost / existing.registrations) * 100) / 100 : null;
@@ -1969,6 +1996,7 @@ export class AdminService {
           costUSD: cost,
           notes: c.notes,
           campaignDate: c.campaignDate ? c.campaignDate.toISOString() : null,
+          hidden: c.hidden,
           visitors: 0,
           leads: 0,
           registrations: 0,
@@ -1981,16 +2009,20 @@ export class AdminService {
       }
     }
 
-    const rows = Array.from(map.values()).sort((a, b) => {
+    const allRows = Array.from(map.values()).sort((a, b) => {
       // Primero las que tienen inversión, después por visitors desc.
       if (a.costUSD > 0 && b.costUSD === 0) return -1;
       if (a.costUSD === 0 && b.costUSD > 0) return 1;
       return b.visitors - a.visitors;
     });
 
-    // 4. Resumen para el banner KPI.
-    const totalInvested = rows.reduce((sum, r) => sum + r.costUSD, 0);
-    const totalRegistrations = rows.reduce((sum, r) => sum + (r.costUSD > 0 ? r.registrations : 0), 0);
+    // Las ocultas nunca cuentan en los KPIs. La tabla las muestra solo si se pide.
+    const visibleRows = allRows.filter(r => !r.hidden);
+    const rows = includeHidden ? allRows : visibleRows;
+
+    // 4. Resumen para el banner KPI (siempre sobre las visibles, no las ocultas).
+    const totalInvested = visibleRows.reduce((sum, r) => sum + r.costUSD, 0);
+    const totalRegistrations = visibleRows.reduce((sum, r) => sum + (r.costUSD > 0 ? r.registrations : 0), 0);
     const avgCAC = totalRegistrations > 0
       ? Math.round((totalInvested / totalRegistrations) * 100) / 100
       : null;
@@ -2045,5 +2077,26 @@ export class AdminService {
    */
   static async deleteCampaignCost(id: string) {
     return prisma.campaignCost.delete({ where: { id } });
+  }
+
+  /**
+   * Oculta/restaura una campaña (borrado lógico) por (source, campaign).
+   * Si la campaña solo existe como tráfico (sin costo manual), crea una fila
+   * marcadora con costo 0. Si ya tiene costo, solo cambia el flag (lo preserva).
+   */
+  static async setCampaignHidden(input: {
+    source: string;
+    campaign?: string | null;
+    hidden: boolean;
+  }) {
+    const source = input.source.trim();
+    if (!source) throw new Error('source es requerido');
+    const campaign = (input.campaign ?? '').trim();
+
+    return prisma.campaignCost.upsert({
+      where: { source_campaign: { source, campaign } },
+      create: { source, campaign, costUSD: 0, hidden: input.hidden },
+      update: { hidden: input.hidden },
+    });
   }
 }
