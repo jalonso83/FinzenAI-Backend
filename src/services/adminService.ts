@@ -1862,6 +1862,14 @@ export class AdminService {
           costUSD: cost?.costUSD ?? 0,
           campaignDate: cost?.campaignDate ?? null,
         };
+      })
+      .sort((a, b) => {
+        // Orden por fecha de inicio desc. Las sin fecha van al final, y entre
+        // ellas se mantiene el orden por visitors desc.
+        if (a.campaignDate && b.campaignDate) return b.campaignDate.localeCompare(a.campaignDate);
+        if (a.campaignDate) return -1;
+        if (b.campaignDate) return 1;
+        return b.visitors - a.visitors;
       });
 
     return {
