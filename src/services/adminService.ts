@@ -704,6 +704,7 @@ export class AdminService {
       streakActiveUsersData,
       activeAnyActivityData,
       timeToFirstTxData,
+      zenioMessagesAgg,
     ] = await Promise.all([
       // Total transactions in period
       prisma.transaction.count({
@@ -821,6 +822,17 @@ export class AdminService {
         LEFT JOIN first_tx ft ON ft."userId" = c.id
         WHERE ft.first_tx_at IS NOT NULL
       `, from, to),
+
+      // Mensajes a Zenio sumados sobre TODAS las suscripciones.
+      // Estos son contadores corridos en la fila de suscripción (se incrementan
+      // +1 por cada mensaje real en zenioV2), por lo que NO respetan el filtro
+      // de período (from/to):
+      //   - zenioMessagesTotal = acumulado de por vida (misma fuente que la
+      //     columna "Zenio" de la tabla de Usuarios).
+      //   - zenioQueriesUsed   = cuota del mes en curso (se resetea cada mes).
+      prisma.subscription.aggregate({
+        _sum: { zenioMessagesTotal: true, zenioQueriesUsed: true },
+      }),
     ]);
 
     const activeUsers = Number(activeUsersWithTx[0]?.cnt ?? 0);
@@ -930,6 +942,11 @@ export class AdminService {
       streakActiveUsers,
       streakActiveRate,
       timeToFirstTx,
+      // Mensajes a Zenio (contadores corridos, all-time / mes en curso — no
+      // filtrados por período). zenioMessagesTotal coincide con el total de la
+      // columna "Zenio" en la tabla de Usuarios.
+      zenioMessagesTotal: zenioMessagesAgg._sum.zenioMessagesTotal ?? 0,
+      zenioMessagesThisMonth: zenioMessagesAgg._sum.zenioQueriesUsed ?? 0,
       referrals: {
         total: referralsMade,
         converted: referralsConvertedFromCohort,
