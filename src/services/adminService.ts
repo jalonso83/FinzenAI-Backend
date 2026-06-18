@@ -293,10 +293,21 @@ export class AdminService {
     const retentionD7 = retentionPct(retentionD7Data[0]);
     const retentionD30 = retentionPct(retentionD30Data[0]);
 
+    // #8: marcar cuando el período de comparación ("vs período anterior") cruza el
+    // inicio del tracking limpio. Si prevFrom cae antes del primer dato confiable,
+    // la base previa es parcial → las comparaciones MoM quedan infladas (ej. +625%).
+    // El flag es idéntico para todas las métricas de cambio (depende solo del rango),
+    // así que el frontend lo lee una vez desde pulse y muestra un disclaimer global.
+    // No se oculta el %; solo se advierte.
+    const trackingStart = await AdminService.getTrackingStartDate();
+    const prevPeriodTruncated = !!(trackingStart && prevFrom < trackingStart);
+
     return {
       totalUsers,
       newRegistrations,
       registrationChange: pctChange(newRegistrations, prevRegistrations),
+      prevPeriodTruncated,
+      trackingStart: trackingStart ? trackingStart.toISOString() : null,
       activatedUsers: Number(activatedUsers[0]?.cnt ?? 0),
       planDistribution: planCounts,
       churnRate,
@@ -326,6 +337,8 @@ export class AdminService {
       retainedD7,
       totalTrialStarted,
       totalPaid,
+      cohortD1Raw,
+      cohortD7Raw,
     ] = await Promise.all([
       // Registrations by day
       prisma.$queryRawUnsafe<{ day: string; count: bigint }[]>(`
@@ -397,6 +410,23 @@ export class AdminService {
         WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
           AND p.status = 'SUCCEEDED'
       `, from, to),
+
+      // Denominador maduro para % de retención D1: usuarios del período con edad
+      // suficiente para haber podido cumplir D1 (registrados hace ≥1 día). DEBE
+      // coincidir con la cohorte del numerador retainedD1 (mismo LEAST), para que
+      // el % no se divida contra `registered` crudo (que incluye users <1 día).
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(*)::bigint as cnt FROM users
+        WHERE "createdAt" >= $1
+          AND "createdAt" <= LEAST($2::timestamp, NOW() - interval '1 day')
+      `, from, to),
+
+      // Denominador maduro para % de retención D7 (registrados hace ≥7 días).
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(*)::bigint as cnt FROM users
+        WHERE "createdAt" >= $1
+          AND "createdAt" <= LEAST($2::timestamp, NOW() - interval '7 days')
+      `, from, to),
     ]);
 
     // Cohort analysis: weekly retention
@@ -449,6 +479,11 @@ export class AdminService {
         activated: Number(totalActivated[0]?.cnt ?? 0),
         retainedD1: activated,
         retainedD7: retainedD7[0] ? Number(retainedD7[0].cnt) : 0,
+        // Denominadores maduros para los % de retención (cohorte evaluable, NO
+        // `registered` crudo). El frontend debe dividir retainedD1/cohortD1 y
+        // retainedD7/cohortD7 para evitar inflar el denominador con users sin edad.
+        cohortD1: Number(cohortD1Raw[0]?.cnt ?? 0),
+        cohortD7: Number(cohortD7Raw[0]?.cnt ?? 0),
         trialStarted: Number(totalTrialStarted[0]?.cnt ?? 0),
         paid: Number(totalPaid[0]?.cnt ?? 0),
       },
@@ -702,7 +737,6 @@ export class AdminService {
       referralsConvertedFromCohort,
       registrationsByChannel,
       streakActiveUsersData,
-      activeAnyActivityData,
       timeToFirstTxData,
       zenioMessagesAgg,
     ] = await Promise.all([
@@ -776,19 +810,6 @@ export class AdminService {
         WHERE "currentStreak" > 0
           AND "lastActivityDate" >= $1
           AND "lastActivityDate" <= $2
-      `, from, to),
-
-      // Denominador de "Racha Activa": usuarios activos por CUALQUIER actividad
-      // en el período (no solo transacciones). Usamos gamification_events sin
-      // excluir tipos: todo evento de racha (add_tx, daily_open, create_budget,
-      // goal_contrib, email_sync_daily, email_tx_imported) crea un registro acá,
-      // por lo que este conjunto SIEMPRE contiene al numerador de racha → el
-      // ratio queda acotado a ≤100%.
-      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT "userId")::bigint as cnt
-        FROM gamification_events
-        WHERE "createdAt" >= $1
-          AND "createdAt" <= $2
       `, from, to),
 
       // Time-to-first-transaction (median hours) and first-tx adoption rate
@@ -906,14 +927,21 @@ export class AdminService {
       ? Math.round((cohortWithZenio / adoptionCohortSize) * 10000) / 100
       : 0;
 
-    // % Racha Activa: de los usuarios activos por CUALQUIER actividad en el
-    // período, qué % mantiene una racha viva. Denominador = activeAnyActivity
-    // (no `activeUsers`, que solo cuenta quien transó) — así el numerador
-    // (con racha) es subconjunto del denominador y el ratio nunca supera 100%.
+    // % Racha Activa: de los usuarios que REALMENTE usan la app (≥1 transacción
+    // en el período), qué % mantiene una racha viva. Mide adopción real de hábito.
+    //
+    // OJO — por qué el denominador NO es `activeAnyActivity` (gamification_events):
+    // ese conjunto está acoplado a la mecánica de racha — el MISMO evento que
+    // inserta en gamification_events dispara updateUserStreak, dejando currentStreak>0
+    // + lastActivityDate=ahora. Resultado: numerador ≈ denominador casi por
+    // construcción → el ratio daba ~99.7% (artefacto, no señal). Usar `activeUsers`
+    // (≥1 tx) lo desacopla y lo hace interpretable.
+    //
+    // Como el numerador (racha viva) puede incluir users con racha por daily_open /
+    // email_sync sin transacción, puede superar al denominador → capamos a 100%.
     const streakActiveUsers = Number(streakActiveUsersData[0]?.cnt ?? 0);
-    const activeAnyActivity = Number(activeAnyActivityData[0]?.cnt ?? 0);
-    const streakActiveRate = activeAnyActivity > 0
-      ? Math.round((streakActiveUsers / activeAnyActivity) * 10000) / 100
+    const streakActiveRate = activeUsers > 0
+      ? Math.min(100, Math.round((streakActiveUsers / activeUsers) * 10000) / 100)
       : 0;
 
     // Time-to-first-transaction
