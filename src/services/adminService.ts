@@ -802,12 +802,17 @@ export class AdminService {
         take: 10,
       }),
 
-      // Users with active daily streak in period.
-      // Active = currentStreak > 0 AND lastActivityDate touched the period.
+      // Users con racha de HÁBITO real en el período.
+      // currentStreak >= 2 (NO > 0): una racha de 1 la crea cualquier actividad
+      // única (ej. una sola transacción dispara add_tx → currentStreak=1), así que
+      // contar > 0 mide "tocó la app una vez", no hábito. Exigir >= 2 significa que
+      // el usuario volvió en días consecutivos — señal real de retorno/hábito.
+      // (Este es el fix del numerador; cambiar solo el denominador no alcanzaba
+      // porque la transacción que cuenta al usuario como activo crea la racha igual.)
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
         SELECT COUNT(DISTINCT "userId")::bigint as cnt
         FROM user_streaks
-        WHERE "currentStreak" > 0
+        WHERE "currentStreak" >= 2
           AND "lastActivityDate" >= $1
           AND "lastActivityDate" <= $2
       `, from, to),
@@ -927,18 +932,19 @@ export class AdminService {
       ? Math.round((cohortWithZenio / adoptionCohortSize) * 10000) / 100
       : 0;
 
-    // % Racha Activa: de los usuarios que REALMENTE usan la app (≥1 transacción
-    // en el período), qué % mantiene una racha viva. Mide adopción real de hábito.
+    // % Racha de Hábito: de los usuarios que REALMENTE usan la app (≥1 transacción
+    // en el período), qué % mantiene una racha de HÁBITO real (currentStreak >= 2).
     //
-    // OJO — por qué el denominador NO es `activeAnyActivity` (gamification_events):
-    // ese conjunto está acoplado a la mecánica de racha — el MISMO evento que
-    // inserta en gamification_events dispara updateUserStreak, dejando currentStreak>0
-    // + lastActivityDate=ahora. Resultado: numerador ≈ denominador casi por
-    // construcción → el ratio daba ~99.7% (artefacto, no señal). Usar `activeUsers`
-    // (≥1 tx) lo desacopla y lo hace interpretable.
+    // Dos correcciones combinadas (el bug original daba ~99.7%, un artefacto):
+    //  1. NUMERADOR (clave): `currentStreak >= 2`, no `> 0`. Una racha de 1 la crea
+    //     cualquier actividad única (la propia transacción dispara add_tx →
+    //     currentStreak=1), así que `> 0` contaba a casi todos. Exigir >= 2 = el
+    //     usuario volvió en días consecutivos → señal real de retorno.
+    //  2. DENOMINADOR: `activeUsers` (≥1 tx), no `gamification_events` (que está
+    //     acoplado a la mecánica de racha y hacía num ≈ denom por construcción).
     //
-    // Como el numerador (racha viva) puede incluir users con racha por daily_open /
-    // email_sync sin transacción, puede superar al denominador → capamos a 100%.
+    // El numerador puede incluir users con racha por daily_open/email_sync sin tx,
+    // así que puede superar al denominador → capamos a 100%.
     const streakActiveUsers = Number(streakActiveUsersData[0]?.cnt ?? 0);
     const streakActiveRate = activeUsers > 0
       ? Math.min(100, Math.round((streakActiveUsers / activeUsers) * 10000) / 100)
