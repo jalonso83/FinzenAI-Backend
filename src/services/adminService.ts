@@ -100,6 +100,8 @@ export class AdminService {
       retentionD1Data,
       retentionD7Data,
       retentionD30Data,
+      trialsStarted,
+      trialConversionsData,
     ] = await Promise.all([
       // Total users
       prisma.user.count(),
@@ -242,6 +244,25 @@ export class AdminService {
         WHERE u."createdAt" >= $1
           AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '30 days')
       `, from, to),
+
+      // Trials iniciados en el período (por fecha real de inicio del trial).
+      // A diferencia del funnel (que filtra por cohorte de registro), aquí
+      // contamos los trials que ARRANCARON dentro de [from, to].
+      prisma.subscription.count({
+        where: { trialStartedAt: { gte: from, lte: to } },
+      }),
+
+      // Conversiones de esos trials: usuarios cuyo trial inició en el período Y
+      // que tienen ≥1 pago SUCCEEDED (convirtieron a plan de pago). Nota: un trial
+      // iniciado al final del período puede convertir DESPUÉS, así que en rangos
+      // recientes esta tasa puede subir con el tiempo (lag de conversión).
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT s."userId")::bigint as cnt
+        FROM subscriptions s
+        JOIN payments p ON p."userId" = s."userId"
+        WHERE s."trialStartedAt" >= $1 AND s."trialStartedAt" <= $2
+          AND p.status = 'SUCCEEDED'
+      `, from, to),
     ]);
 
     // Plan distribution (ACTIVE + TRIALING — para visualización)
@@ -293,6 +314,13 @@ export class AdminService {
     const retentionD7 = retentionPct(retentionD7Data[0]);
     const retentionD30 = retentionPct(retentionD30Data[0]);
 
+    // Conversión Trial → Pago: de los trials iniciados en el período, qué % llegó
+    // a tener un pago exitoso. Si no hubo trials en el período, 0%.
+    const trialConversions = Number(trialConversionsData[0]?.cnt ?? 0);
+    const trialConversionRate = trialsStarted > 0
+      ? Math.round((trialConversions / trialsStarted) * 10000) / 100
+      : 0;
+
     // #8: marcar cuando el período de comparación ("vs período anterior") cruza el
     // inicio del tracking limpio. Si prevFrom cae antes del primer dato confiable,
     // la base previa es parcial → las comparaciones MoM quedan infladas (ej. +625%).
@@ -312,6 +340,8 @@ export class AdminService {
       planDistribution: planCounts,
       churnRate,
       trialsActive,
+      trialsStarted,
+      trialConversionRate,
       mrrEstimated: Math.round(mrrEstimated * 100) / 100,
       dau: dauAvg,
       mau,
