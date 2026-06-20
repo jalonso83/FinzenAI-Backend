@@ -918,9 +918,15 @@ export class AdminService {
       cohort_size: bigint;
       with_tx: bigint;
       with_zenio: bigint;
+      with_zenio_real: bigint;
+      skipped: bigint;
+      unfinished: bigint;
+      completed_chat: bigint;
+      tx_skipped: bigint;
+      tx_completed: bigint;
     }[]>(`
       WITH cohort AS (
-        SELECT id
+        SELECT id, "createdAt"::date AS reg_day, "onboardingMethod", "onboardingCompleted"
         FROM users
         WHERE "createdAt" >= $1
           AND "createdAt" <= LEAST($2::timestamp, NOW() - interval '1 hour')
@@ -941,26 +947,67 @@ export class AdminService {
             OR COALESCE((o."costByFeature" ->> 'zenio_agents')::float, 0) > 0
             OR COALESCE((o."costByFeature" ->> 'zenio_transcription')::float, 0) > 0
           )
+      ),
+      -- Adopción Zenio REAL: uso de Zenio en un día POSTERIOR al registro
+      -- (excluye el onboarding conversacional, que cae en el día de registro).
+      zenio_real_users AS (
+        SELECT DISTINCT o."userId"
+        FROM openai_daily_usage o
+        INNER JOIN cohort c ON c.id = o."userId"
+        WHERE o."date" > c.reg_day
+          AND (
+            COALESCE((o."costByFeature" ->> 'zenio_v2')::float, 0) > 0
+            OR COALESCE((o."costByFeature" ->> 'zenio_agents')::float, 0) > 0
+            OR COALESCE((o."costByFeature" ->> 'zenio_transcription')::float, 0) > 0
+          )
       )
       SELECT
         (SELECT COUNT(*) FROM cohort)::bigint as cohort_size,
         (SELECT COUNT(*) FROM tx_users)::bigint as with_tx,
-        (SELECT COUNT(*) FROM zenio_users)::bigint as with_zenio
+        (SELECT COUNT(*) FROM zenio_users)::bigint as with_zenio,
+        (SELECT COUNT(*) FROM zenio_real_users)::bigint as with_zenio_real,
+        (SELECT COUNT(*) FROM cohort WHERE "onboardingMethod" = 'skipped')::bigint as skipped,
+        (SELECT COUNT(*) FROM cohort WHERE "onboardingCompleted" = false)::bigint as unfinished,
+        (SELECT COUNT(*) FROM cohort
+           WHERE "onboardingCompleted" = true AND "onboardingMethod" IS DISTINCT FROM 'skipped')::bigint as completed_chat,
+        (SELECT COUNT(*) FROM tx_users tu JOIN cohort c ON c.id = tu."userId"
+           WHERE c."onboardingMethod" = 'skipped')::bigint as tx_skipped,
+        (SELECT COUNT(*) FROM tx_users tu JOIN cohort c ON c.id = tu."userId"
+           WHERE c."onboardingCompleted" = true AND c."onboardingMethod" IS DISTINCT FROM 'skipped')::bigint as tx_completed
     `, from, to);
 
     const adoptionCohortSize = Number(adoptionData[0]?.cohort_size ?? 0);
     const cohortWithTx = Number(adoptionData[0]?.with_tx ?? 0);
     const cohortWithZenio = Number(adoptionData[0]?.with_zenio ?? 0);
+    const cohortWithZenioReal = Number(adoptionData[0]?.with_zenio_real ?? 0);
+    const cohortSkipped = Number(adoptionData[0]?.skipped ?? 0);
+    const cohortUnfinished = Number(adoptionData[0]?.unfinished ?? 0);
+    const cohortCompletedChat = Number(adoptionData[0]?.completed_chat ?? 0);
+    const txSkipped = Number(adoptionData[0]?.tx_skipped ?? 0);
+    const txCompleted = Number(adoptionData[0]?.tx_completed ?? 0);
+
+    const pct = (num: number, den: number) =>
+      den > 0 ? Math.round((num / den) * 10000) / 100 : 0;
 
     // % Adopción Tx: del cohort registrado en el período, cuántos hicieron ≥1 tx
-    const txAdoptionRate = adoptionCohortSize > 0
-      ? Math.round((cohortWithTx / adoptionCohortSize) * 10000) / 100
-      : 0;
+    const txAdoptionRate = pct(cohortWithTx, adoptionCohortSize);
 
-    // % Adopción Zenio: del cohort registrado en el período, cuántos usaron Zenio
-    const zenioAdoptionRate = adoptionCohortSize > 0
-      ? Math.round((cohortWithZenio / adoptionCohortSize) * 10000) / 100
-      : 0;
+    // % Adopción Zenio (incl. onboarding): del cohort, cuántos generaron uso de
+    // Zenio en el período. NOTA: incluye el onboarding conversacional → inflado.
+    const zenioAdoptionRate = pct(cohortWithZenio, adoptionCohortSize);
+
+    // % Adopción Zenio REAL: cuántos usaron Zenio en un día posterior al registro
+    // (uso voluntario, excluye onboarding).
+    const zenioRealAdoptionRate = pct(cohortWithZenioReal, adoptionCohortSize);
+
+    // ─── Onboarding: skip / sin terminar / activación por método ───
+    // El skip está tras feature flag por usuario, así que estas tasas son sobre
+    // TODO el cohort, no solo sobre quienes tenían la opción disponible.
+    const skipRate = pct(cohortSkipped, adoptionCohortSize);
+    const onboardingUnfinishedRate = pct(cohortUnfinished, adoptionCohortSize);
+    // Activación (≥1 tx) según el camino de onboarding: ¿saltar ayuda o estorba?
+    const txAdoptionSkipped = pct(txSkipped, cohortSkipped);
+    const txAdoptionCompleted = pct(txCompleted, cohortCompletedChat);
 
     // % Racha de Hábito: de los usuarios que REALMENTE usan la app (≥1 transacción
     // en el período), qué % mantiene una racha de HÁBITO real (currentStreak >= 2).
@@ -1002,10 +1049,23 @@ export class AdminService {
       onboardingRate,
       zenioActiveUsers,
       zenioAdoptionRate,
+      zenioRealAdoptionRate,
       txAdoptionRate,
       streakActiveUsers,
       streakActiveRate,
       timeToFirstTx,
+      // Onboarding: skip y activación por método (saltó vs completó por chat).
+      // skipRate / onboardingUnfinishedRate son sobre TODO el cohort (el skip está
+      // tras feature flag, así que no todos tenían la opción disponible).
+      onboarding: {
+        skipRate,
+        skippedCount: cohortSkipped,
+        unfinishedRate: onboardingUnfinishedRate,
+        unfinishedCount: cohortUnfinished,
+        completedChatCount: cohortCompletedChat,
+        txAdoptionSkipped,
+        txAdoptionCompleted,
+      },
       // Mensajes a Zenio (contadores corridos, all-time / mes en curso — no
       // filtrados por período). zenioMessagesTotal coincide con el total de la
       // columna "Zenio" en la tabla de Usuarios.
