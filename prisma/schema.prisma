@@ -29,6 +29,12 @@ model User {
   onboardingCompleted Boolean   @default(false)
   onboardingMethod    String?
   onboardingSkippedAt DateTime?
+  // H10: primera vez que el user llegó al dashboard ("entró a la app"). Señal de
+  // entrada para el experimento de onboarding no bloqueante (la variante entra SIN
+  // completar onboarding, así que onboardingCompleted no sirve). NULL en usuarios
+  // viejos; backfill solo para los que tienen transacciones (= createdAt). Solo
+  // interpretarlo para el cohorte del experimento (createdAt >= fecha de arranque).
+  firstAppEntryAt     DateTime?
 
   // SSO (Sign in with Apple / Google)
   // password puede ser null para users que se registran solo vía SSO.
