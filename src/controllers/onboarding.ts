@@ -225,6 +225,8 @@ export const completeOnboarding = async (req: Request, res: Response) => {
       data: {
         onboarding: true,
         onboardingCompleted: true,
+        // Llenó el perfil → marca el camino real, incluso si venía de 'nonblocking'.
+        onboardingMethod: 'completed',
       },
       select: SKIP_RESPONSE_SELECT,
     });

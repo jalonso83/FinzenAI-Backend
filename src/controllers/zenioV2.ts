@@ -274,7 +274,7 @@ async function executeOnboardingFinanciero(args: any, userId: string, userName: 
 
   await prisma.user.update({
     where: { id: userId },
-    data: { onboarding: true, onboardingCompleted: true },
+    data: { onboarding: true, onboardingCompleted: true, onboardingMethod: 'completed' },
   });
 
   return {
@@ -398,10 +398,14 @@ async function executeOnboardingV21(args: any, userId: string, userName: string,
   await prisma.user.update({
     where: { id: userId },
     data: isRePersonalization
-      ? { onboarding: true }
+      // Re-personalización: el user (incluido el que entró por 'nonblocking') llenó
+      // su perfil → marca el camino real. No tocar onboardingCompleted (ya está true).
+      ? { onboarding: true, onboardingMethod: 'completed' }
       : {
           onboarding: true,
           onboardingCompleted: isCompleted,
+          // Solo marcar 'completed' si de verdad completó (no en parcial/abandonado).
+          ...(isCompleted ? { onboardingMethod: 'completed' } : {}),
         },
   });
 

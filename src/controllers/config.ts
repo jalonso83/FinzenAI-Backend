@@ -135,10 +135,24 @@ export const markAppEntered = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
     }
 
+    // Señal de entrada (idempotente: solo la primera vez).
     await prisma.user.updateMany({
       where: { id: userId, firstAppEntryAt: null },
       data: { firstAppEntryAt: new Date() },
     });
+
+    // Variante no-bloqueante (H10): el usuario entró SIN completar onboarding.
+    // Preservamos la invariante "está en la app ⇒ onboardingCompleted=true" para no
+    // dejar el flag en false (evita gate frágil, re-disparo del onboarding en Zenio y
+    // mala clasificación en admin). onboardingMethod='nonblocking' distingue este camino;
+    // cuando el user complete su perfil después, ese method pasará a 'completed'.
+    // Idempotente: solo si todavía no estaba completado.
+    if (isOnboardingNonblockingEnabled(userId)) {
+      await prisma.user.updateMany({
+        where: { id: userId, onboardingCompleted: false },
+        data: { onboardingCompleted: true, onboardingMethod: 'nonblocking' },
+      });
+    }
 
     return res.json({ ok: true });
   } catch (error) {
