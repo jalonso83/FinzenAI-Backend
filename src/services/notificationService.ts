@@ -164,7 +164,10 @@ export class NotificationService {
       const unreadCount = await prisma.notificationLog.count({
         where: {
           userId,
-          status: { not: 'READ' }
+          status: { not: 'READ' },
+          // No contar holdout ni slot-only hacia el badge de push.
+          holdout: false,
+          surface: { not: 'slot' }
         }
       });
       const badgeCount = unreadCount + 1; // +1 por la notificación que estamos enviando
@@ -223,7 +226,10 @@ export class NotificationService {
       const unreadCount = await prisma.notificationLog.count({
         where: {
           userId,
-          status: { not: 'READ' }
+          status: { not: 'READ' },
+          // No contar holdout ni slot-only hacia el badge de push.
+          holdout: false,
+          surface: { not: 'slot' }
         }
       });
       const badgeCount = unreadCount + 1;
@@ -823,7 +829,9 @@ export class NotificationService {
    */
   static async getNotificationHistory(userId: string, limit: number = 50) {
     return prisma.notificationLog.findMany({
-      where: { userId },
+      // La campanita NO muestra: filas de holdout (control) ni mensajes solo-slot
+      // (esos viven en el slot del dashboard, no en la campanita de push).
+      where: { userId, holdout: false, surface: { not: 'slot' } },
       orderBy: { createdAt: 'desc' },
       take: limit
     });

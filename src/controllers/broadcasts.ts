@@ -70,12 +70,19 @@ export const createBroadcast = async (req: Request, res: Response) => {
     if (resolved.error) return res.status(400).json({ message: resolved.error, error: 'Bad request' });
     const audience = resolved.audience;
 
+    // Superficie (dónde aparece) y holdout (% de control para medir efecto).
+    const surface = ['push', 'slot', 'both'].includes(req.body.surface) ? req.body.surface : 'push';
+    const holdoutRaw = Math.floor(Number(req.body.holdoutPct));
+    const holdoutPct = Number.isFinite(holdoutRaw) ? Math.max(0, Math.min(100, holdoutRaw)) : 0;
+
     const broadcast = await prisma.broadcast.create({
       data: {
         title: req.body.title,
         body: req.body.body,
         type: req.body.type,
         data: req.body.data ?? undefined,
+        surface,
+        holdoutPct,
         audience,
         status: 'DRAFT',
         createdBy: adminId,
@@ -148,5 +155,17 @@ export const sendBroadcast = async (req: Request, res: Response) => {
     // Errores de estado/no-encontrado → 400; resto → 500
     const status = /no encontrado|no está en estado/.test(msg) ? 400 : 500;
     return res.status(status).json({ message: msg, error: status === 400 ? 'Bad request' : 'Internal server error' });
+  }
+};
+
+// GET /api/admin/broadcasts/:id/stats — métricas de efecto de la campaña:
+// funnel (expuestos → impresión → click) + activación expuestos vs holdout en 7d.
+export const getBroadcastStats = async (req: Request, res: Response) => {
+  try {
+    const stats = await BroadcastService.campaignStats(req.params.id);
+    return res.json({ message: 'Métricas calculadas', data: stats });
+  } catch (error) {
+    logger.error('[Broadcast] Error calculando stats:', error);
+    return res.status(500).json({ message: 'Error calculando métricas', error: 'Internal server error' });
   }
 };

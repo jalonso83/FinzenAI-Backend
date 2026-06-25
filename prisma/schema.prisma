@@ -683,6 +683,12 @@ model NotificationLog {
   readAt       DateTime?
   errorMessage String?
   broadcastId  String?            // si vino de un broadcast masivo (para tasa de apertura)
+  // Medición de campañas (surface slot / holdout). holdout=true = control: la fila
+  // existe para medir, pero al usuario NUNCA se le muestra el mensaje.
+  surface      String             @default("push") // push | slot | both — dónde se entregó esta fila
+  holdout      Boolean            @default(false)
+  impressedAt  DateTime?          // slot: cuándo se mostró el banner en pantalla
+  clickedAt    DateTime?          // slot: cuándo se tocó el CTA
   createdAt    DateTime           @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -699,11 +705,14 @@ model Broadcast {
   id           String    @id @default(cuid())
   title        String
   body         String
-  data         Json?     // deeplink / pantalla destino al tocar
+  data         Json?     // deeplink / pantalla destino al tocar; para slot: { cta, variant, icon, ... }
   type         NotificationType // MARKETING | ANNOUNCEMENT | SYSTEM
+  surface      String    @default("push") // push | slot | both — dónde aparece el mensaje
+  holdoutPct   Int       @default(0)      // 0-100: % de la audiencia elegible que NO recibe (control para medir efecto causal)
   audience     Json      // filtros de segmentación serializados (planes, plataformas, país, segmentos, umbral)
   status       String    @default("DRAFT") // DRAFT | SENDING | SENT | FAILED
-  targetCount  Int?      // usuarios distintos alcanzados (calculado al enviar)
+  targetCount  Int?      // usuarios distintos EXPUESTOS (calculado al enviar)
+  holdoutCount Int?      // usuarios en el holdout (control, no recibieron)
   successCount Int?      // tokens entregados
   failureCount Int?      // tokens fallidos
   createdBy    String    // userId del admin que lo creó (auditoría)

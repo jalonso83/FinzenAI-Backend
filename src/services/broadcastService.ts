@@ -1,6 +1,7 @@
 import { NotificationType, NotificationStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
+import { userBucket } from '../lib/userBucket';
 import { NotificationService, NotificationPayload } from './notificationService';
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -108,6 +109,63 @@ export class BroadcastService {
     return { sql, params };
   }
 
+  /**
+   * Métricas de una campaña para medir su EFECTO:
+   *  - Funnel descriptivo: expuestos → impresión → click.
+   *  - Causal: % con ≥1 transacción en los 7 días posteriores al envío,
+   *    comparando EXPUESTOS vs HOLDOUT (control que NO recibió el mensaje).
+   * liftPts = puntos porcentuales que el mensaje sumó sobre el control.
+   */
+  static async campaignStats(broadcastId: string): Promise<{
+    exposed: number; holdout: number; impressions: number; clicks: number;
+    exposedTx: number; holdoutTx: number;
+    exposedTxRate: number; holdoutTxRate: number; liftPts: number;
+  }> {
+    const rows = await prisma.$queryRawUnsafe<{
+      exposed: number; holdout: number; impressions: number; clicks: number;
+      exposed_tx: number; holdout_tx: number;
+    }[]>(
+      `
+      WITH b AS (SELECT "sentAt" FROM broadcasts WHERE id = $1),
+      cohort AS (
+        SELECT nl."userId", nl.holdout, nl."impressedAt", nl."clickedAt"
+        FROM notification_logs nl
+        WHERE nl."broadcastId" = $1
+      ),
+      tx AS (
+        SELECT DISTINCT c."userId"
+        FROM cohort c
+        JOIN transactions t ON t."userId" = c."userId"
+        JOIN b ON true
+        WHERE b."sentAt" IS NOT NULL
+          AND t.date >= b."sentAt"
+          AND t.date <= b."sentAt" + interval '7 days'
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE NOT holdout)::int AS exposed,
+        COUNT(*) FILTER (WHERE holdout)::int AS holdout,
+        COUNT(*) FILTER (WHERE NOT holdout AND "impressedAt" IS NOT NULL)::int AS impressions,
+        COUNT(*) FILTER (WHERE NOT holdout AND "clickedAt" IS NOT NULL)::int AS clicks,
+        COUNT(*) FILTER (WHERE NOT holdout AND "userId" IN (SELECT "userId" FROM tx))::int AS exposed_tx,
+        COUNT(*) FILTER (WHERE holdout AND "userId" IN (SELECT "userId" FROM tx))::int AS holdout_tx
+      FROM cohort
+      `,
+      broadcastId,
+    );
+
+    const r = rows[0] ?? { exposed: 0, holdout: 0, impressions: 0, clicks: 0, exposed_tx: 0, holdout_tx: 0 };
+    const rate = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 10000) / 100 : 0);
+    const exposedTxRate = rate(Number(r.exposed_tx), Number(r.exposed));
+    const holdoutTxRate = rate(Number(r.holdout_tx), Number(r.holdout));
+    return {
+      exposed: Number(r.exposed), holdout: Number(r.holdout),
+      impressions: Number(r.impressions), clicks: Number(r.clicks),
+      exposedTx: Number(r.exposed_tx), holdoutTx: Number(r.holdout_tx),
+      exposedTxRate, holdoutTxRate,
+      liftPts: Math.round((exposedTxRate - holdoutTxRate) * 100) / 100,
+    };
+  }
+
   /** Cuenta sin enviar: usuarios alcanzados + cuántos se excluyen por opt-out. */
   static async previewAudience(f: AudienceFilters): Promise<{ target: number; optedOut: number }> {
     if (!f.test && (!f.segments || f.segments.length === 0 || f.plans.length === 0 || f.platforms.length === 0)) {
@@ -150,7 +208,7 @@ export class BroadcastService {
    * campanita). Badge real por usuario vía un solo groupBy.
    */
   static async sendBroadcast(broadcastId: string): Promise<{
-    targetCount: number; successCount: number; failureCount: number; suppressed: number;
+    targetCount: number; holdoutCount: number; successCount: number; failureCount: number; suppressed: number;
   }> {
     const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
     if (!broadcast) throw new Error('Broadcast no encontrado');
@@ -170,6 +228,9 @@ export class BroadcastService {
         type: broadcast.type,
       };
       const isTest = filters.test === true;
+      const surface = broadcast.surface ?? 'push';
+      const holdoutPct = Math.max(0, Math.min(100, broadcast.holdoutPct ?? 0));
+      const shouldPush = surface === 'push' || surface === 'both';
       const rows = await this.resolveAudience(filters);
 
       // Agrupar por usuario → tokens + quiet hours.
@@ -179,22 +240,35 @@ export class BroadcastService {
         u.tokens.push(r.token);
         byUser.set(r.userId, u);
       }
-      const userIds = [...byUser.keys()];
+      const allUserIds = [...byUser.keys()];
 
-      if (userIds.length === 0) {
+      if (allUserIds.length === 0) {
         await prisma.broadcast.update({
           where: { id: broadcastId },
-          data: { status: 'SENT', targetCount: 0, successCount: 0, failureCount: 0, sentAt: new Date() },
+          data: { status: 'SENT', targetCount: 0, holdoutCount: 0, successCount: 0, failureCount: 0, sentAt: new Date() },
         });
-        return { targetCount: 0, successCount: 0, failureCount: 0, suppressed: 0 };
+        return { targetCount: 0, holdoutCount: 0, successCount: 0, failureCount: 0, suppressed: 0 };
       }
 
-      // Badge real: 1 sola consulta para toda la audiencia (no una por usuario).
-      const unread = await prisma.notificationLog.groupBy({
-        by: ['userId'],
-        where: { userId: { in: userIds }, status: { not: 'READ' } },
-        _count: true,
-      });
+      // Split EXPUESTOS / HOLDOUT. El holdout (control) reusa userBucket namespaced
+      // por broadcastId: NUNCA recibe el mensaje (ni push, ni slot, ni campanita);
+      // existe solo como fila de medición para comparar el efecto. En modo prueba o
+      // holdoutPct=0 no hay holdout.
+      const exposedIds: string[] = [];
+      const holdoutIds: string[] = [];
+      for (const uid of allUserIds) {
+        const inHoldout = !isTest && holdoutPct > 0 && userBucket(uid, broadcast.id) >= (100 - holdoutPct);
+        (inHoldout ? holdoutIds : exposedIds).push(uid);
+      }
+
+      // Badge real (solo expuestos; excluye holdout/slot): 1 sola consulta.
+      const unread = exposedIds.length > 0
+        ? await prisma.notificationLog.groupBy({
+            by: ['userId'],
+            where: { userId: { in: exposedIds }, status: { not: 'READ' }, holdout: false, surface: { not: 'slot' } },
+            _count: true,
+          })
+        : [];
       const unreadMap = new Map<string, number>();
       for (const r of unread) unreadMap.set(r.userId, typeof r._count === 'number' ? r._count : 0);
 
@@ -204,34 +278,39 @@ export class BroadcastService {
         data: (broadcast.data as Record<string, string> | null) ?? undefined,
       };
 
-      // Separar push vs suprimidos por quiet hours, y agrupar tokens por badge.
+      // Push solo a EXPUESTOS y solo si la superficie lo incluye. Quiet hours suprime
+      // el push (el slot/campanita igual queda registrado).
       const suppressed = new Set<string>();
-      const tokensByBadge = new Map<number, string[]>();
-      for (const [userId, info] of byUser) {
-        // En modo prueba ignoramos quiet hours para que el test siempre llegue.
-        if (!isTest && isInQuietHours(info.qhStart, info.qhEnd)) {
-          suppressed.add(userId);
-          continue;
-        }
-        const badge = (unreadMap.get(userId) ?? 0) + 1;
-        const arr = tokensByBadge.get(badge) ?? [];
-        arr.push(...info.tokens);
-        tokensByBadge.set(badge, arr);
-      }
-
-      // Enviar: una llamada por valor de badge (reutiliza el batch de Expo).
       let successCount = 0;
       let failureCount = 0;
-      for (const [badge, tokens] of tokensByBadge) {
-        const res = await NotificationService.sendBroadcastChunk(tokens, payload, badge);
-        successCount += res.successCount;
-        failureCount += res.failureCount;
+      if (shouldPush) {
+        const tokensByBadge = new Map<number, string[]>();
+        for (const userId of exposedIds) {
+          const info = byUser.get(userId)!;
+          // En modo prueba ignoramos quiet hours para que el test siempre llegue.
+          if (!isTest && isInQuietHours(info.qhStart, info.qhEnd)) {
+            suppressed.add(userId);
+            continue;
+          }
+          const badge = (unreadMap.get(userId) ?? 0) + 1;
+          const arr = tokensByBadge.get(badge) ?? [];
+          arr.push(...info.tokens);
+          tokensByBadge.set(badge, arr);
+        }
+        for (const [badge, tokens] of tokensByBadge) {
+          const res = await NotificationService.sendBroadcastChunk(tokens, payload, badge);
+          successCount += res.successCount;
+          failureCount += res.failureCount;
+        }
       }
 
-      // Campanita: una fila por usuario (pusheado = SENT; suprimido = PENDING).
+      // NotificationLog: una fila por usuario (medición + entrega).
+      //  - Expuestos: surface de la campaña, holdout=false. SENT salvo push suprimido
+      //    por quiet hours (PENDING). En 'slot' el row queda SENT (activo para el slot).
+      //  - Holdout: surface de la campaña, holdout=true, PENDING, sin entrega.
       const now = new Date();
-      await prisma.notificationLog.createMany({
-        data: userIds.map((uid) => ({
+      const logRows = [
+        ...exposedIds.map((uid) => ({
           userId: uid,
           type: broadcast.type,
           title: broadcast.title,
@@ -239,16 +318,32 @@ export class BroadcastService {
           data: broadcast.data === null ? undefined : (broadcast.data as any),
           status: suppressed.has(uid) ? NotificationStatus.PENDING : NotificationStatus.SENT,
           sentAt: suppressed.has(uid) ? null : now,
+          surface,
+          holdout: false,
           broadcastId: broadcast.id,
         })),
-      });
+        ...holdoutIds.map((uid) => ({
+          userId: uid,
+          type: broadcast.type,
+          title: broadcast.title,
+          body: broadcast.body,
+          data: broadcast.data === null ? undefined : (broadcast.data as any),
+          status: NotificationStatus.PENDING,
+          sentAt: null,
+          surface,
+          holdout: true,
+          broadcastId: broadcast.id,
+        })),
+      ];
+      await prisma.notificationLog.createMany({ data: logRows });
 
-      const finalStatus = successCount === 0 && failureCount > 0 ? 'FAILED' : 'SENT';
+      const finalStatus = shouldPush && successCount === 0 && failureCount > 0 ? 'FAILED' : 'SENT';
       await prisma.broadcast.update({
         where: { id: broadcastId },
         data: {
           status: finalStatus,
-          targetCount: userIds.length,
+          targetCount: exposedIds.length,
+          holdoutCount: holdoutIds.length,
           successCount,
           failureCount,
           sentAt: now,
@@ -256,9 +351,9 @@ export class BroadcastService {
       });
 
       logger.log(
-        `[Broadcast] ${broadcastId}: ${userIds.length} usuarios, ${successCount} ok, ${failureCount} fallos, ${suppressed.size} suprimidos por quiet hours`,
+        `[Broadcast] ${broadcastId} (${surface}, holdout ${holdoutPct}%): ${exposedIds.length} expuestos, ${holdoutIds.length} holdout, ${successCount} ok, ${failureCount} fallos, ${suppressed.size} suprimidos por quiet hours`,
       );
-      return { targetCount: userIds.length, successCount, failureCount, suppressed: suppressed.size };
+      return { targetCount: exposedIds.length, holdoutCount: holdoutIds.length, successCount, failureCount, suppressed: suppressed.size };
     } catch (error) {
       // Si algo explota a mitad, dejamos rastro y marcamos FAILED para no dejarlo colgado en SENDING.
       logger.error(`[Broadcast] Error enviando ${broadcastId}:`, error);
