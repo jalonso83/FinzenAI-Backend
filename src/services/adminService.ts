@@ -102,6 +102,7 @@ export class AdminService {
       retentionD30Data,
       trialsStarted,
       trialConversionsData,
+      trialsByMonthData,
     ] = await Promise.all([
       // Total users
       prisma.user.count(),
@@ -245,24 +246,38 @@ export class AdminService {
           AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '30 days')
       `, from, to),
 
-      // Trials iniciados en el período (por fecha real de inicio del trial).
-      // A diferencia del funnel (que filtra por cohorte de registro), aquí
-      // contamos los trials que ARRANCARON dentro de [from, to].
-      prisma.subscription.count({
-        where: { trialStartedAt: { gte: from, lte: to } },
+      // Trials iniciados en el período. FUENTE: trial_device_registry.usedAt,
+      // que se escribe en el momento de activar el trial y NUNCA se borra.
+      // NO usar subscription.trialStartedAt: el cron lo pone a null al terminar
+      // el trial (7 días) o al convertir, así que subcontaba ~10x en rangos > 7d.
+      prisma.trialDeviceRegistry.count({
+        where: { usedAt: { gte: from, lte: to } },
       }),
 
       // Conversiones de esos trials: usuarios cuyo trial inició en el período Y
       // que tienen ≥1 pago SUCCEEDED (convirtieron a plan de pago). Nota: un trial
       // iniciado al final del período puede convertir DESPUÉS, así que en rangos
       // recientes esta tasa puede subir con el tiempo (lag de conversión).
+      // Mismo cambio de fuente: ventana sobre trial_device_registry.usedAt.
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT s."userId")::bigint as cnt
-        FROM subscriptions s
-        JOIN payments p ON p."userId" = s."userId"
-        WHERE s."trialStartedAt" >= $1 AND s."trialStartedAt" <= $2
+        SELECT COUNT(DISTINCT t."usedByUserId")::bigint as cnt
+        FROM trial_device_registry t
+        JOIN payments p ON p."userId" = t."usedByUserId"
+        WHERE t."usedAt" >= $1 AND t."usedAt" <= $2
           AND p.status = 'SUCCEEDED'
       `, from, to),
+
+      // Serie mensual de trials iniciados (últimos 12 meses). Independiente del
+      // filtro de rango para que la tendencia siempre muestre la evolución
+      // completa. Misma fuente inmutable (usedAt).
+      prisma.$queryRawUnsafe<{ mes: string; trials: bigint }[]>(`
+        SELECT to_char(date_trunc('month', "usedAt"), 'YYYY-MM') as mes,
+               COUNT(*)::bigint as trials
+        FROM trial_device_registry
+        WHERE "usedAt" >= date_trunc('month', NOW()) - interval '11 months'
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `),
     ]);
 
     // Plan distribution (ACTIVE + TRIALING — para visualización)
@@ -321,6 +336,12 @@ export class AdminService {
       ? Math.round((trialConversions / trialsStarted) * 10000) / 100
       : 0;
 
+    // Serie mensual de trials para el gráfico de tendencia.
+    const trialsByMonth = trialsByMonthData.map(r => ({
+      month: r.mes,
+      trials: Number(r.trials),
+    }));
+
     // #8: marcar cuando el período de comparación ("vs período anterior") cruza el
     // inicio del tracking limpio. Si prevFrom cae antes del primer dato confiable,
     // la base previa es parcial → las comparaciones MoM quedan infladas (ej. +625%).
@@ -342,6 +363,7 @@ export class AdminService {
       trialsActive,
       trialsStarted,
       trialConversionRate,
+      trialsByMonth,
       mrrEstimated: Math.round(mrrEstimated * 100) / 100,
       dau: dauAvg,
       mau,
@@ -423,12 +445,18 @@ export class AdminService {
       `, from, to),
 
       // Funnel: cohort users that started a trial (any time after registration).
-      // Filter by USER's createdAt, not trialStartedAt — must belong to the cohort.
+      // Filter by USER's createdAt — must belong to the cohort.
+      // NO usar subscription.trialStartedAt: el cron lo pone a null al terminar el
+      // trial, así que subcontaba el escalón. Señal inmutable: existir en
+      // trial_device_registry, o hasUsedTrial=true (cubre trials de fallback sin
+      // fila de dispositivo).
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
         SELECT COUNT(DISTINCT u.id)::bigint as cnt FROM users u
-        JOIN subscriptions s ON s."userId" = u.id
         WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
-          AND s."trialStartedAt" IS NOT NULL
+          AND (
+            u."hasUsedTrial" = true
+            OR EXISTS (SELECT 1 FROM trial_device_registry t WHERE t."usedByUserId" = u.id)
+          )
       `, from, to),
 
       // Funnel: cohort users that converted to paid (≥1 successful payment).
