@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { prisma } from '../lib/prisma';
+import { getOrStampExperimentStart } from '../lib/experimentStart';
 
 /**
  * Hash determinístico de userId → bucket 0-99.
@@ -106,6 +107,15 @@ export const getFeatures = async (req: Request, res: Response) => {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
+    }
+
+    // Auto-determinación de la fecha de inicio del experimento: la primera vez que
+    // el flag se ve prendido (cualquier usuario consulta features), se estampa
+    // `startedAt` en la tabla `experiments`. Inmutable. Reemplaza la env var manual.
+    // Fire-and-forget para no añadir latencia a la respuesta de features.
+    if (process.env.ONBOARDING_NONBLOCKING_ENABLED === 'true') {
+      getOrStampExperimentStart('onboarding-nonblocking').catch((e) =>
+        logger.error('[Config] Error estampando inicio de experimento:', e));
     }
 
     return res.json({

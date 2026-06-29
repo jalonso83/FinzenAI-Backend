@@ -452,6 +452,22 @@ model TrialDeviceRegistry {
   @@map("trial_device_registry")
 }
 
+// Registro de experimentos (A/B, feature flags medibles). `startedAt` se estampa
+// AUTOMÁTICAMENTE la primera vez que el experimento se observa "live" (primer hit
+// al gate con el flag prendido) — auto-determinación de la fecha de inicio, sin
+// variable de entorno manual. Inmutable una vez creado. El panel de stats lee
+// `startedAt` de aquí para anclar la cohorte.
+model Experiment {
+  id        String    @id @default(cuid())
+  key       String    @unique // ej. 'onboarding-nonblocking'
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("experiments")
+}
+
 // =============================================
 // MODELOS DE EMAIL SYNC (Importacion de Gastos)
 // =============================================

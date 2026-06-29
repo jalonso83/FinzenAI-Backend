@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { userBucket } from '../lib/userBucket';
+import { getExperimentStart } from '../lib/experimentStart';
 
 // Experimento H10 — "Entrada libre" (onboarding no bloqueante).
 // Mide variante (entra sin muro) vs control (ve el muro) sobre la cohorte de
@@ -27,43 +28,29 @@ export const getH10Stats = async (req: Request, res: Response) => {
       .split(',').map((s) => s.trim()).filter(Boolean);
     const whitelist = new Set(whitelistArr);
 
-    // Inicio del experimento AUTO-DETECTADO: el PRIMER MOMENTO en que alguien entró
-    // de verdad por el camino 'nonblocking' (firstAppEntryAt más antiguo), excluyendo
-    // la whitelist de QA. OJO: se ancla por `firstAppEntryAt`, NO por `createdAt` —
-    // un usuario viejo que nunca completó onboarding y entra ahora por la variante
-    // recibe `onboardingMethod='nonblocking'` con un `createdAt` antiguo; anclar por
-    // su registro arrastraría semanas de usuarios pre-experimento a la cohorte e
-    // inflaría/diluiría el resultado. `firstAppEntryAt` marca cuándo ocurrió el
-    // tratamiento (≈ flag+build vivos). La cohorte (`createdAt >= experimentStart`)
-    // excluye así a ese usuario viejo y a todo lo pre-experimento. Si todavía no hay
-    // ningún 'nonblocking' (flag apagado o nadie entró aún) → null.
-    const firstNB = await prisma.user.findFirst({
-      where: {
-        onboardingMethod: 'nonblocking',
-        firstAppEntryAt: { not: null },
-        ...(whitelistArr.length ? { id: { notIn: whitelistArr } } : {}),
-      },
-      orderBy: { firstAppEntryAt: 'asc' },
-      select: { firstAppEntryAt: true },
-    });
-    const experimentStart = firstNB?.firstAppEntryAt ?? null;
+    // Inicio del experimento: se lee de la tabla `experiments` (auto-estampado la
+    // primera vez que el flag se vio live; ver lib/experimentStart). NO env var, NO
+    // auto-detect sobre datos de usuarios. Si todavía no está estampado → null y NO
+    // se mide (cohorte vacía + aviso), para no inflar con pre-experimento.
+    const experimentStart = await getExperimentStart(FEATURE);
 
     let from = req.query.from ? new Date(String(req.query.from)) : null;
     if (from && isNaN(from.getTime())) from = null;
     let to = req.query.to ? new Date(String(req.query.to)) : new Date();
     if (isNaN(to.getTime())) to = new Date();
 
-    // La cohorte arranca en el MÁS TARDÍO entre el período pedido y el inicio del flag.
-    let effectiveFrom = from;
-    if (experimentStart && (!effectiveFrom || effectiveFrom < experimentStart)) {
-      effectiveFrom = experimentStart;
-    }
+    // La cohorte arranca SIEMPRE en el inicio explícito del experimento. Si el período
+    // pedido (from) es más tardío, se respeta el más tardío. Sin experimentStart no
+    // hay cohorte (no medimos pre-experimento).
+    let effectiveFrom = experimentStart;
+    if (from && experimentStart && from > experimentStart) effectiveFrom = from;
 
-    const where: any = { createdAt: effectiveFrom ? { gte: effectiveFrom, lte: to } : { lte: to } };
-    const users = await prisma.user.findMany({
-      where,
-      select: { id: true, createdAt: true, firstAppEntryAt: true },
-    });
+    const users = experimentStart
+      ? await prisma.user.findMany({
+          where: { createdAt: { gte: effectiveFrom as Date, lte: to } },
+          select: { id: true, createdAt: true, firstAppEntryAt: true },
+        })
+      : [];
 
     // Excluir whitelist (QA/dogfood no es asignación aleatoria).
     const cohort = users.filter((u) => !whitelist.has(u.id));
