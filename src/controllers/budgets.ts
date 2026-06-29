@@ -4,6 +4,7 @@ import { GamificationService } from '../services/gamificationService';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
+import { recalculateBudgetSpent } from './transactions';
 // Tipos para las peticiones
 interface CreateBudgetRequest {
   name: string;
@@ -290,11 +291,17 @@ export const createBudget = async (req: Request, res: Response) => {
       }
     });
 
+    // Inicializar `spent` con las transacciones que YA existen en el período.
+    // Sin esto, un presupuesto creado después de registrar gastos nace en 0 y
+    // se queda así hasta la próxima transacción (bug: budget muestra 0 gastado).
+    await recalculateBudgetSpent(userId, category_id, startDate);
+    const refreshed = await prisma.budget.findUnique({ where: { id: budget.id }, select: { spent: true } });
+
     // Serializar budget antes de enviar
     const serializedBudget = {
       ...budget,
       amount: Number(budget.amount),
-      spent: Number(budget.spent || 0),
+      spent: Number(refreshed?.spent ?? budget.spent ?? 0),
       alert_percentage: budget.alert_percentage ? Number(budget.alert_percentage) : null
     };
 
@@ -386,9 +393,18 @@ export const updateBudget = async (req: Request, res: Response) => {
       }
     }
 
-    // Preparar datos para actualización
-    const dataToUpdate: any = { ...updateData };
-    
+    // Preparar datos para actualización. WHITELIST explícita: NUNCA hacer
+    // `{ ...updateData }` — eso permitiría que el cliente sobrescriba campos
+    // controlados por el servidor como `spent` (mass-assignment). `spent` solo
+    // se calcula vía recalculateBudgetSpent, jamás desde el body.
+    const dataToUpdate: any = {};
+    if (updateData.name !== undefined) dataToUpdate.name = updateData.name;
+    if (updateData.category_id !== undefined) dataToUpdate.category_id = updateData.category_id;
+    if (updateData.amount !== undefined) dataToUpdate.amount = updateData.amount;
+    if (updateData.period !== undefined) dataToUpdate.period = updateData.period;
+    if (updateData.alert_percentage !== undefined) dataToUpdate.alert_percentage = updateData.alert_percentage;
+    if (updateData.is_active !== undefined) dataToUpdate.is_active = updateData.is_active;
+
     if (updateData.start_date) {
       dataToUpdate.start_date = new Date(updateData.start_date);
     }
@@ -425,11 +441,16 @@ export const updateBudget = async (req: Request, res: Response) => {
       }
     });
 
+    // Recalcular `spent` tras el update: si cambiaron fechas o categoría, el
+    // gasto del período pudo cambiar. Usamos una fecha dentro del período actual.
+    await recalculateBudgetSpent(budget.user_id, budget.category_id, budget.start_date);
+    const refreshed = await prisma.budget.findUnique({ where: { id: budget.id }, select: { spent: true } });
+
     // Serializar budget antes de enviar
     const serializedBudget = {
       ...budget,
       amount: Number(budget.amount),
-      spent: Number(budget.spent || 0),
+      spent: Number(refreshed?.spent ?? budget.spent ?? 0),
       alert_percentage: budget.alert_percentage ? Number(budget.alert_percentage) : null
     };
 
