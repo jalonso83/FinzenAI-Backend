@@ -373,9 +373,16 @@ export const getTransactions = async (req: Request, res: Response) => {
     const userId = req.user!.id;
     const { page, limit, type, category_id, startDate, endDate } = req.query;
 
-    // Sanitizar paginación con límite máximo de 100
+    // Honramos el límite que pide el cliente, SIN tope artificial. El dashboard y
+    // la lista necesitan TODAS las transacciones del usuario para sumar el balance
+    // correctamente (antes el cap de 100 truncaba y el balance "bailaba" según qué
+    // 100 entraban). La query ya está acotada por `userId`, así que el máximo real
+    // es la cantidad de transacciones del propio usuario — dinámico, no un número fijo.
     const pageNum = sanitizePage(page as string);
-    const limitNum = sanitizeLimit(limit as string, PAGINATION.MAX_LIMITS.TRANSACTIONS);
+    const requestedLimit = parseInt(limit as string, 10);
+    const limitNum = Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? requestedLimit
+      : PAGINATION.DEFAULT_LIMIT;
     const skip = (pageNum - 1) * limitNum;
 
     // Construir filtros
@@ -401,7 +408,10 @@ export const getTransactions = async (req: Request, res: Response) => {
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
         where,
-        orderBy: { date: 'desc' },
+        // Desempate estable: muchas transacciones comparten el mismo `date`
+        // (mediodía). Sin desempate, el orden es no-determinístico y el corte
+        // por paginación variaba entre cargas. createdAt + id lo fijan.
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limitNum,
         include: {
