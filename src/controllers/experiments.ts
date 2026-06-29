@@ -27,20 +27,26 @@ export const getH10Stats = async (req: Request, res: Response) => {
       .split(',').map((s) => s.trim()).filter(Boolean);
     const whitelist = new Set(whitelistArr);
 
-    // Inicio del experimento AUTO-DETECTADO: el registro más antiguo de un usuario que
-    // entró por el camino 'nonblocking' (solo ocurre con el flag prendido y para
-    // usuarios nuevos), excluyendo la whitelist de QA. Anclar la cohorte aquí evita
-    // incluir usuarios pre-experimento, que diluirían el lift y podrían ocultar un
-    // rollback. Si todavía no hay ninguno (flag apagado o nadie entró aún) → null.
+    // Inicio del experimento AUTO-DETECTADO: el PRIMER MOMENTO en que alguien entró
+    // de verdad por el camino 'nonblocking' (firstAppEntryAt más antiguo), excluyendo
+    // la whitelist de QA. OJO: se ancla por `firstAppEntryAt`, NO por `createdAt` —
+    // un usuario viejo que nunca completó onboarding y entra ahora por la variante
+    // recibe `onboardingMethod='nonblocking'` con un `createdAt` antiguo; anclar por
+    // su registro arrastraría semanas de usuarios pre-experimento a la cohorte e
+    // inflaría/diluiría el resultado. `firstAppEntryAt` marca cuándo ocurrió el
+    // tratamiento (≈ flag+build vivos). La cohorte (`createdAt >= experimentStart`)
+    // excluye así a ese usuario viejo y a todo lo pre-experimento. Si todavía no hay
+    // ningún 'nonblocking' (flag apagado o nadie entró aún) → null.
     const firstNB = await prisma.user.findFirst({
       where: {
         onboardingMethod: 'nonblocking',
+        firstAppEntryAt: { not: null },
         ...(whitelistArr.length ? { id: { notIn: whitelistArr } } : {}),
       },
-      orderBy: { createdAt: 'asc' },
-      select: { createdAt: true },
+      orderBy: { firstAppEntryAt: 'asc' },
+      select: { firstAppEntryAt: true },
     });
-    const experimentStart = firstNB?.createdAt ?? null;
+    const experimentStart = firstNB?.firstAppEntryAt ?? null;
 
     let from = req.query.from ? new Date(String(req.query.from)) : null;
     if (from && isNaN(from.getTime())) from = null;
