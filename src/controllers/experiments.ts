@@ -11,6 +11,9 @@ import { getExperimentStart } from '../lib/experimentStart';
 const FEATURE = 'onboarding-nonblocking';
 const ACTIVATION_WINDOW_DAYS = 7;
 const ROLLBACK_THRESHOLD_PTS = 3; // si la activación de la variante cae ≥3 pts vs control
+// Muestra mínima por brazo antes de mostrar veredicto (rollback / no-inferioridad).
+// Por debajo, cualquier "lift" es ruido (ej. 1 vs 1 da ±100 pts sin significar nada).
+const MIN_SAMPLE_PER_ARM = 30;
 
 /**
  * GET /api/admin/experiments/h10/stats?from=ISO&to=ISO
@@ -38,6 +41,10 @@ export const getH10Stats = async (req: Request, res: Response) => {
     if (from && isNaN(from.getTime())) from = null;
     let to = req.query.to ? new Date(String(req.query.to)) : new Date();
     if (isNaN(to.getTime())) to = new Date();
+    // `to` llega como 'YYYY-MM-DD' → new Date() lo pone a las 00:00 (inicio del día),
+    // lo que se comía TODO el día final (ej. los registros de hoy). Lo llevamos al
+    // final del día para incluirlo completo.
+    to.setUTCHours(23, 59, 59, 999);
 
     // La cohorte arranca SIEMPRE en el inicio explícito del experimento. Si el período
     // pedido (from) es más tardío, se respeta el más tardío. Sin experimentStart no
@@ -98,6 +105,11 @@ export const getH10Stats = async (req: Request, res: Response) => {
     const control = build(acc.control);
     const activationLiftPts = Math.round((variant.activationRate - control.activationRate) * 100) / 100;
 
+    // Guard de muestra mínima: sin suficiente n por brazo, NO se emite veredicto
+    // (rollback ni no-inferioridad) — el lift es ruido. El frontend muestra
+    // "acumulando muestra" en gris en vez de rojo/verde.
+    const sufficientSample = variant.n >= MIN_SAMPLE_PER_ARM && control.n >= MIN_SAMPLE_PER_ARM;
+
     return res.json({
       data: {
         enabled,
@@ -107,8 +119,10 @@ export const getH10Stats = async (req: Request, res: Response) => {
         experimentStart: experimentStart ? experimentStart.toISOString() : null,
         activationWindowDays: ACTIVATION_WINDOW_DAYS,
         rollbackThresholdPts: ROLLBACK_THRESHOLD_PTS,
-        // El daño dispara rollback si la variante cae ≥ umbral vs control.
-        rollbackTriggered: activationLiftPts <= -ROLLBACK_THRESHOLD_PTS,
+        minSamplePerArm: MIN_SAMPLE_PER_ARM,
+        sufficientSample,
+        // El rollback SOLO se declara con muestra suficiente (si no, es ruido).
+        rollbackTriggered: sufficientSample && activationLiftPts <= -ROLLBACK_THRESHOLD_PTS,
         variant,
         control,
         activationLiftPts,
