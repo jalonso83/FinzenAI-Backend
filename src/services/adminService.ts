@@ -1070,6 +1070,71 @@ export class AdminService {
       cohortSize,
     };
 
+    // ── Uso de funcionalidades extra (tabla feature_usage), scoped al período ──
+    // Base de adopción según elegibilidad: features de todos los planes vs 'activos';
+    // Skip vs Save (Plus+) vs 'base con acceso' = pagando (PREMIUM/PRO activo) + trial.
+    const [antRows, calcRows, calcFreeUsersData, accessBaseData] = await Promise.all([
+      prisma.$queryRawUnsafe<{ action: string; calls: bigint; users: bigint }[]>(`
+        SELECT action, COUNT(*)::bigint as calls, COUNT(DISTINCT "userId")::bigint as users
+        FROM feature_usage
+        WHERE feature = 'ant_expense' AND "createdAt" >= $1 AND "createdAt" <= $2
+        GROUP BY action
+      `, from, to),
+      prisma.$queryRawUnsafe<{ action: string; calls: bigint; users: bigint }[]>(`
+        SELECT action, COUNT(*)::bigint as calls, COUNT(DISTINCT "userId")::bigint as users
+        FROM feature_usage
+        WHERE feature = 'calculadora' AND "createdAt" >= $1 AND "createdAt" <= $2
+        GROUP BY action
+      `, from, to),
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT "userId")::bigint as cnt
+        FROM feature_usage
+        WHERE feature = 'calculadora' AND action IN ('inversion','meta','inflacion')
+          AND "createdAt" >= $1 AND "createdAt" <= $2
+      `, from, to),
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(*)::bigint as cnt FROM subscriptions
+        WHERE (status = 'ACTIVE' AND plan IN ('PREMIUM','PRO')) OR status = 'TRIALING'
+      `),
+    ]);
+
+    const antByAction: Record<string, { calls: number; users: number }> = {};
+    for (const r of antRows) antByAction[r.action] = { calls: Number(r.calls), users: Number(r.users) };
+    const calcByAction: Record<string, { calls: number; users: number }> = {};
+    for (const r of calcRows) calcByAction[r.action] = { calls: Number(r.calls), users: Number(r.users) };
+
+    const antAnalysisUsers = antByAction['analysis']?.users ?? 0;
+    const antConfigUsers = antByAction['config']?.users ?? 0;
+    const calcFreeUsers = Number(calcFreeUsersData[0]?.cnt ?? 0);
+    const calcFreeCalls = ['inversion', 'meta', 'inflacion'].reduce((s, a) => s + (calcByAction[a]?.calls ?? 0), 0);
+    const accessBase = Number(accessBaseData[0]?.cnt ?? 0);
+
+    const featureUsage = {
+      antExpense: {
+        users: antAnalysisUsers,                          // corrieron análisis
+        calls: antByAction['analysis']?.calls ?? 0,
+        openedUsers: antConfigUsers,                       // abrieron la pantalla
+        adoptionRate: pct(antAnalysisUsers, activeUsers),  // vs activos
+        openedToUsedRate: pct(antAnalysisUsers, antConfigUsers), // embudo abrió→usó
+      },
+      calculatorsFree: {
+        users: calcFreeUsers,
+        calls: calcFreeCalls,
+        adoptionRate: pct(calcFreeUsers, activeUsers),     // vs activos (son gratis)
+        breakdown: [
+          { key: 'inversion', label: 'Inversión', calls: calcByAction['inversion']?.calls ?? 0 },
+          { key: 'meta', label: 'Meta', calls: calcByAction['meta']?.calls ?? 0 },
+          { key: 'inflacion', label: 'Inflación', calls: calcByAction['inflacion']?.calls ?? 0 },
+        ],
+      },
+      skipVsSave: {
+        users: calcByAction['skip_vs_save']?.users ?? 0,
+        calls: calcByAction['skip_vs_save']?.calls ?? 0,
+        accessBase,                                        // pagando + trial
+        adoptionRate: pct(calcByAction['skip_vs_save']?.users ?? 0, accessBase),
+      },
+    };
+
     return {
       transactionsPerActiveUser,
       totalTransactions,
@@ -1108,6 +1173,7 @@ export class AdminService {
         country: r.country,
         count: r._count.country,
       })),
+      featureUsage,
       period: { from, to },
     };
   }

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { getReferencePrices, forceUpdatePrices, initializeDefaultPrices } from '../services/referencePriceService';
 
 import { logger } from '../utils/logger';
+import { recordFeatureUsage } from '../lib/featureUsage';
 // Tipos para el simulador de inversión
 interface InvestmentCalculationRequest {
   monthlyAmount: number;
@@ -153,6 +154,7 @@ function generateMilestones(monthlyBreakdown: MonthlyData[]): Milestone[] {
 
 export const calculateInvestment = async (req: Request, res: Response) => {
   try {
+    { const userId = req.user?.id; if (userId) recordFeatureUsage(userId, 'calculadora', 'inversion'); }
     const { monthlyAmount, years, annualInterestRate, riskLevel }: InvestmentCalculationRequest = req.body;
 
     // Validaciones
@@ -366,9 +368,10 @@ function calculateGoalSavings(
 // Endpoint principal para calcular metas
 export const calculateGoal = async (req: Request, res: Response) => {
   try {
-    const { 
-      goalType, 
-      totalValue, 
+    { const userId = req.user?.id; if (userId) recordFeatureUsage(userId, 'calculadora', 'meta'); }
+    const {
+      goalType,
+      totalValue,
       percentage, 
       timeframe, 
       investmentReturn = 0 
@@ -633,6 +636,7 @@ function calculateSkipVsAve(
 // Endpoint principal para Skip vs Save Challenge
 export const calculateSkipVsSave = async (req: Request, res: Response) => {
   try {
+    { const userId = req.user?.id; if (userId) recordFeatureUsage(userId, 'calculadora', 'skip_vs_save'); }
     const {
       dailyExpense,
       frequency,
@@ -814,9 +818,10 @@ function generateInflationExamples(
 // Endpoint principal para calcular inflación
 export const calculateInflation = async (req: Request, res: Response) => {
   try {
-    const { 
-      currentAmount, 
-      years, 
+    { const userId = req.user?.id; if (userId) recordFeatureUsage(userId, 'calculadora', 'inflacion'); }
+    const {
+      currentAmount,
+      years,
       inflationRate = 7 // Inflación promedio RD histórica
     }: InflationCalculationRequest = req.body;
 
