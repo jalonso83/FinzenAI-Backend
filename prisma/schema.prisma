@@ -468,6 +468,21 @@ model Experiment {
   @@map("experiments")
 }
 
+// Registro de uso de funcionalidades (para medir llamadas/adopción de features
+// extra sin tocar la app: la app ya pega a sus endpoints y el backend registra).
+// Genérica: `feature` = 'ant_expense', etc.; `action` = 'analysis' | 'config'.
+model FeatureUsage {
+  id        String   @id @default(cuid())
+  userId    String
+  feature   String
+  action    String
+  createdAt DateTime @default(now())
+
+  @@index([feature, createdAt])
+  @@index([userId])
+  @@map("feature_usage")
+}
+
 // =============================================
 // MODELOS DE EMAIL SYNC (Importacion de Gastos)
 // =============================================

@@ -11,6 +11,7 @@ import { antExpenseService } from '../services/antExpenseService';
 import { subscriptionService } from '../services/subscriptionService';
 import { PLANS } from '../config/stripe';
 import { logger } from '../utils/logger';
+import { recordFeatureUsage } from '../lib/featureUsage';
 import {
   AntExpenseConfig,
   DEFAULT_ANT_EXPENSE_CONFIG,
@@ -371,6 +372,9 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
     const analysisType = planLimits.antExpenseAnalysis || 'basic';
     const isBasicAnalysis = analysisType === 'basic';
 
+    // Medición de uso (fire-and-forget, no toca la app): corrió un análisis = uso real.
+    recordFeatureUsage(userId, 'ant_expense', 'analysis');
+
     logger.log(`[AntDetective] Usuario ${userId}, Plan: ${subscription.plan}, Análisis: ${analysisType}`);
 
     // Obtener configuración de query params
@@ -498,6 +502,9 @@ export const getAntExpenseConfig = async (req: Request, res: Response) => {
         error: 'Usuario no autenticado',
       });
     }
+
+    // Medición de uso (fire-and-forget, no toca la app): abrió la funcionalidad.
+    recordFeatureUsage(userId, 'ant_expense', 'config');
 
     // Obtener info del historial del usuario
     const userHistory = await antExpenseService.getUserHistoryInfo(userId);
