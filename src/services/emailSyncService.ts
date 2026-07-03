@@ -526,6 +526,20 @@ export class EmailSyncService {
       // Usar categoryId del mapeo si ya viene, sino buscar por nombre
       let categoryId = parsed.categoryId;
 
+      // Blindaje: un mapeo de comercio viejo puede apuntar a una categoría
+      // cancelada (isDefault: false). Si es así, la descartamos y dejamos que
+      // el flujo de IA/fallback resuelva una categoría activa.
+      if (categoryId) {
+        const mappedCategory = await prisma.category.findFirst({
+          where: { id: categoryId, isDefault: true, type: 'EXPENSE' },
+          select: { id: true }
+        });
+        if (!mappedCategory) {
+          logger.error(`[EmailSync] Mapeo de comercio apunta a categoría inactiva (${categoryId}); usando IA/fallback`);
+          categoryId = undefined;
+        }
+      }
+
       if (!categoryId) {
         categoryId = await EmailParserService.findCategoryByName(parsed.category);
       }

@@ -135,8 +135,10 @@ export class EmailParserService {
       }
 
       // Obtener categorías de GASTOS de la base de datos
+      // Solo categorías activas (isDefault: true); las canceladas (isDefault: false)
+      // no se muestran en la app y NO deben ofrecerse a la IA.
       const expenseCategories = await prisma.category.findMany({
-        where: { type: 'EXPENSE' },
+        where: { type: 'EXPENSE', isDefault: true },
         select: { name: true }
       });
       const categoryNames = expenseCategories.map(c => c.name);
@@ -404,7 +406,8 @@ Responde SOLO con este JSON:
           contains: categoryName,
           mode: 'insensitive'
         },
-        type: 'EXPENSE'
+        type: 'EXPENSE',
+        isDefault: true // no resolver a categorías canceladas
       }
     });
 
@@ -423,15 +426,16 @@ Responde SOLO con este JSON:
           contains: 'otro',
           mode: 'insensitive'
         },
-        type: 'EXPENSE'
+        type: 'EXPENSE',
+        isDefault: true // solo categorías activas
       }
     });
 
     if (otrosCategory) return otrosCategory.id;
 
-    // Si no existe, buscar cualquier categoria de gasto
+    // Si no existe, buscar cualquier categoria de gasto activa
     const anyCategory = await prisma.category.findFirst({
-      where: { type: 'EXPENSE' }
+      where: { type: 'EXPENSE', isDefault: true }
     });
 
     return anyCategory?.id || '';
