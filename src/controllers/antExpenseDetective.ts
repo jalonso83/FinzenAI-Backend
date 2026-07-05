@@ -276,7 +276,7 @@ function generateFallbackCategorySuggestions(calculations: AntExpenseCalculation
   const suggestions: Array<{category: string; suggestions: string[]}> = [];
 
   const categoryTips: Record<string, string[]> = {
-    'Comida y restaurantes': [
+    'Restaurantes': [
       'Prepara almuerzo en casa al menos 3 días a la semana',
       'Lleva snacks saludables para evitar compras impulsivas',
       'Usa apps de delivery solo con cupones de descuento',
@@ -301,7 +301,7 @@ function generateFallbackCategorySuggestions(calculations: AntExpenseCalculation
       'Compara precios en al menos 3 lugares',
       'Considera si realmente necesitas la última versión',
     ],
-    'Delivery': [
+    'Comida a domicilio': [
       'Cocinar en casa puede ahorrarte hasta 70% vs delivery',
       'Limita el delivery a 1-2 veces por semana',
       'Revisa si los cargos de envío justifican el pedido',
