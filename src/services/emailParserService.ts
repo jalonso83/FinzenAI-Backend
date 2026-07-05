@@ -277,6 +277,23 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
         }
       }
 
+      // ============================================
+      // REGLAS DE COMERCIO CONOCIDO (deterministas)
+      // Sobrescriben la categoría de la IA / mapeo global para comercios de
+      // alto volumen (Uber Eats, PedidosYa, Uber). NO sobrescriben un mapeo
+      // personal del usuario (si el usuario ya lo corrigió, su elección gana).
+      // ============================================
+      if (categorySource !== 'mapping_user') {
+        const ruleCategory = this.applyKnownMerchantRules(merchant);
+        if (ruleCategory) {
+          if (ruleCategory !== category) {
+            logger.log(`[EmailParser] Regla de comercio: "${merchant}" -> "${ruleCategory}" (antes: "${category}")`);
+          }
+          category = ruleCategory;
+          categoryId = undefined; // resolver por nombre a la categoría activa (isDefault:true)
+        }
+      }
+
       const transaction: ParsedTransaction = {
         amount: Math.abs(Number(parsed.amount)),
         currency: this.normalizeCurrency(parsed.currency),
@@ -300,6 +317,28 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
         error: error.message || 'Unknown parsing error'
       };
     }
+  }
+
+  /**
+   * Reglas deterministas para comercios conocidos de alto volumen.
+   * Devuelve el NOMBRE de la categoría (que debe existir y estar activa) o null.
+   * El ORDEN importa: las reglas específicas van ANTES que las genéricas,
+   * para que "Uber Eats" no caiga en la regla genérica de "Uber" (Transporte).
+   */
+  private static applyKnownMerchantRules(merchant: string): string | null {
+    const m = (merchant || '').toLowerCase();
+    if (!m) return null;
+
+    // PedidosYa Market = compra de supermercado (excepción antes de la genérica)
+    if (m.includes('pedidosya') && m.includes('market')) return 'Supermercado';
+    // PedidosYa (resto) = delivery de comida
+    if (m.includes('pedidosya')) return 'Comida a domicilio';
+    // Uber Eats = delivery de comida (ANTES que la regla genérica de Uber)
+    if (m.includes('uber') && m.includes('eat')) return 'Comida a domicilio';
+    // Uber (Rides, viajes, etc.) = transporte
+    if (m.includes('uber')) return 'Transporte';
+
+    return null;
   }
 
   /**

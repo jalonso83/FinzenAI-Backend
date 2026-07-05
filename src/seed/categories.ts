@@ -16,7 +16,7 @@ const defaultCategories = [
   { id: "eb7a96d7-b53b-4e2c-b3b2-a7c4935028c3", name: "Vivienda y alquiler", type: "EXPENSE" as const, icon: "🏠", isDefault: true },
   { id: "8cd3584b-146a-4c32-8b6c-7a0ac2486fac", name: "Supermercado", type: "EXPENSE" as const, icon: "🛒", isDefault: true },
   { id: "605eb26b-a2e3-4316-aed9-af4c4a761b7b", name: "Comida y restaurantes", type: "EXPENSE" as const, icon: "🍽️", isDefault: true },
-  { name: "Delivery", type: "EXPENSE" as const, icon: "🛵", isDefault: true },
+  { id: "cmnrn2q230000126gbzy40jld", name: "Comida a domicilio", type: "EXPENSE" as const, icon: "🛵", isDefault: true },
   { id: "1a9478b7-52e7-409b-aa84-7c64bb6ff42f", name: "Transporte", type: "EXPENSE" as const, icon: "🚗", isDefault: true },
   { name: "Comunicaciones", type: "EXPENSE" as const, icon: "📱", isDefault: true },
   { id: "5e3a5d25-5a81-4c26-8b72-7e7cb0580cf0", name: "Servicios del hogar", type: "EXPENSE" as const, icon: "⚡", isDefault: true },
