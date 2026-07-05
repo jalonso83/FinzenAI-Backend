@@ -720,6 +720,7 @@ model NotificationLog {
   holdout      Boolean            @default(false)
   impressedAt  DateTime?          // slot: cuándo se mostró el banner en pantalla
   clickedAt    DateTime?          // slot: cuándo se tocó el CTA
+  dismissedAt  DateTime?          // slot: cuándo el usuario descartó el banner (≠ readAt, que es leer el push/notificación)
   createdAt    DateTime           @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

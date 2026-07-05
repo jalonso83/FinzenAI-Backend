@@ -16,7 +16,8 @@ function variantForType(type: string, dataVariant?: string): string {
 /**
  * GET /api/announcements
  * Mensajes activos del SLOT del dashboard para el usuario autenticado.
- * Filtra: surface slot/both, NO holdout (control), NO descartado (readAt null).
+ * Filtra: surface slot/both, NO holdout (control), NO descartado del slot (dismissedAt null).
+ * Nota: usamos dismissedAt (no readAt) para que LEER el push/notificación no oculte el slot.
  * Devuelve el contrato SlotMessage que la app (AnnouncementSlot) ya sabe pintar.
  */
 export const getAnnouncements = async (req: Request, res: Response) => {
@@ -29,7 +30,7 @@ export const getAnnouncements = async (req: Request, res: Response) => {
         userId,
         holdout: false,
         surface: { in: ['slot', 'both'] },
-        readAt: null, // no descartado
+        dismissedAt: null, // no descartado del slot (leer el push ya NO lo oculta)
         broadcastId: { not: null },
       },
       orderBy: { createdAt: 'desc' },
@@ -82,11 +83,11 @@ export const trackAnnouncementEvent = async (req: Request, res: Response) => {
     const data =
       event === 'impression' ? { impressedAt: now } :
       event === 'click' ? { clickedAt: now } :
-      { status: 'READ' as const, readAt: now };
+      { dismissedAt: now }; // descartar el slot ≠ leer la notificación (readAt lo maneja otro flujo)
     const nullGuard =
       event === 'impression' ? { impressedAt: null } :
       event === 'click' ? { clickedAt: null } :
-      { readAt: null };
+      { dismissedAt: null };
 
     await prisma.notificationLog.updateMany({
       // holdout:false + surface slot/both = defensa en profundidad: un evento del
