@@ -134,16 +134,20 @@ export class BroadcastService {
    *  - Funnel descriptivo: expuestos → impresión → click.
    *  - Causal: % con ≥1 transacción en los 7 días posteriores al envío,
    *    comparando EXPUESTOS vs HOLDOUT (control que NO recibió el mensaje).
+   *  - Pre/post: % de expuestos con ≥1 tx en los 7 días ANTERIORES al envío
+   *    (cada usuario como su propio control). Referencia descriptiva para
+   *    campañas sin holdout — NO es medición causal.
    * liftPts = puntos porcentuales que el mensaje sumó sobre el control.
    */
   static async campaignStats(broadcastId: string): Promise<{
     exposed: number; holdout: number; impressions: number; clicks: number;
     exposedTx: number; holdoutTx: number;
     exposedTxRate: number; holdoutTxRate: number; liftPts: number;
+    exposedTxBefore: number; exposedTxBeforeRate: number; prePostPts: number;
   }> {
     const rows = await prisma.$queryRawUnsafe<{
       exposed: number; holdout: number; impressions: number; clicks: number;
-      exposed_tx: number; holdout_tx: number;
+      exposed_tx: number; holdout_tx: number; exposed_tx_before: number;
     }[]>(
       `
       WITH b AS (SELECT "sentAt" FROM broadcasts WHERE id = $1),
@@ -160,6 +164,15 @@ export class BroadcastService {
         WHERE b."sentAt" IS NOT NULL
           AND t.date >= b."sentAt"
           AND t.date <= b."sentAt" + interval '7 days'
+      ),
+      tx_before AS (
+        SELECT DISTINCT c."userId"
+        FROM cohort c
+        JOIN transactions t ON t."userId" = c."userId"
+        JOIN b ON true
+        WHERE b."sentAt" IS NOT NULL
+          AND t.date >= b."sentAt" - interval '7 days'
+          AND t.date < b."sentAt"
       )
       SELECT
         COUNT(*) FILTER (WHERE NOT holdout)::int AS exposed,
@@ -167,22 +180,27 @@ export class BroadcastService {
         COUNT(*) FILTER (WHERE NOT holdout AND "impressedAt" IS NOT NULL)::int AS impressions,
         COUNT(*) FILTER (WHERE NOT holdout AND "clickedAt" IS NOT NULL)::int AS clicks,
         COUNT(*) FILTER (WHERE NOT holdout AND "userId" IN (SELECT "userId" FROM tx))::int AS exposed_tx,
-        COUNT(*) FILTER (WHERE holdout AND "userId" IN (SELECT "userId" FROM tx))::int AS holdout_tx
+        COUNT(*) FILTER (WHERE holdout AND "userId" IN (SELECT "userId" FROM tx))::int AS holdout_tx,
+        COUNT(*) FILTER (WHERE NOT holdout AND "userId" IN (SELECT "userId" FROM tx_before))::int AS exposed_tx_before
       FROM cohort
       `,
       broadcastId,
     );
 
-    const r = rows[0] ?? { exposed: 0, holdout: 0, impressions: 0, clicks: 0, exposed_tx: 0, holdout_tx: 0 };
+    const r = rows[0] ?? { exposed: 0, holdout: 0, impressions: 0, clicks: 0, exposed_tx: 0, holdout_tx: 0, exposed_tx_before: 0 };
     const rate = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 10000) / 100 : 0);
     const exposedTxRate = rate(Number(r.exposed_tx), Number(r.exposed));
     const holdoutTxRate = rate(Number(r.holdout_tx), Number(r.holdout));
+    const exposedTxBeforeRate = rate(Number(r.exposed_tx_before), Number(r.exposed));
     return {
       exposed: Number(r.exposed), holdout: Number(r.holdout),
       impressions: Number(r.impressions), clicks: Number(r.clicks),
       exposedTx: Number(r.exposed_tx), holdoutTx: Number(r.holdout_tx),
       exposedTxRate, holdoutTxRate,
       liftPts: Math.round((exposedTxRate - holdoutTxRate) * 100) / 100,
+      exposedTxBefore: Number(r.exposed_tx_before),
+      exposedTxBeforeRate,
+      prePostPts: Math.round((exposedTxRate - exposedTxBeforeRate) * 100) / 100,
     };
   }
 
