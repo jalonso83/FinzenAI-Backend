@@ -10,13 +10,18 @@ import { NotificationService, NotificationPayload } from './notificationService'
 // ─────────────────────────────────────────────────────────────────────────
 
 export type LifecycleSegment = 'never_activated' | 'dormant' | 'active';
+// Segmentos de comportamiento adicionales (Agent API / capa semántica):
+//  - budget_exceeded: ≥1 presupuesto vigente con spent > amount.
+//  - trial_ending: suscripción TRIALING que vence dentro de trialEndingDays.
+export type AudienceSegment = LifecycleSegment | 'budget_exceeded' | 'trial_ending';
 
 export interface AudienceFilters {
   plans: string[];               // ['FREE','PREMIUM','PRO']
   platforms: string[];           // ['IOS','ANDROID'] (plataforma del DISPOSITIVO)
   country?: string;              // undefined o 'Todos' = todos los países
-  segments: LifecycleSegment[];  // combinados con OR
+  segments: AudienceSegment[];   // combinados con OR
   dormantDays?: number;          // umbral "dormido", default 14
+  trialEndingDays?: number;      // ventana de trial_ending, default 3
   type: string;                  // NotificationType (para opt-out)
   // Modo prueba / envío dirigido a un solo usuario. Ignora la segmentación y
   // envía SOLO a testUserId. testUserId lo inyecta el controller (admin o el
@@ -51,6 +56,8 @@ export class BroadcastService {
    *  - dormant: tiene ≥1 tx, pero su última actividad (gamification_events) es
    *    anterior al umbral, o nunca registró actividad.
    *  - active: tiene ≥1 tx y actividad dentro del umbral.
+   *  - budget_exceeded: ≥1 presupuesto vigente (is_active, en período) con spent > amount.
+   *  - trial_ending: suscripción TRIALING que vence dentro de trialEndingDays.
    */
   private static audienceBody(f: AudienceFilters, applyOptOut: boolean): { sql: string; params: any[] } {
     // Modo prueba: solo el admin. Ignora segmentos, planes, opt-out y país.
@@ -70,15 +77,18 @@ export class BroadcastService {
 
     const country = !f.country || f.country === 'Todos' ? 'ALL' : f.country;
     const params = [
-      f.plans,                                // $1
-      f.platforms,                            // $2
-      country,                                // $3
-      f.segments.includes('never_activated'), // $4
-      f.segments.includes('dormant'),         // $5
-      f.segments.includes('active'),          // $6
-      f.dormantDays ?? 14,                    // $7
-      f.type,                                 // $8
-      applyOptOut,                            // $9
+      f.plans,                                 // $1
+      f.platforms,                             // $2
+      country,                                 // $3
+      f.segments.includes('never_activated'),  // $4
+      f.segments.includes('dormant'),          // $5
+      f.segments.includes('active'),           // $6
+      f.dormantDays ?? 14,                     // $7
+      f.type,                                  // $8
+      applyOptOut,                             // $9
+      f.segments.includes('budget_exceeded'),  // $10
+      f.segments.includes('trial_ending'),     // $11
+      f.trialEndingDays ?? 3,                  // $12
     ];
     const sql = `
       FROM users u
@@ -98,6 +108,16 @@ export class BroadcastService {
               AND (la.last_at IS NULL OR la.last_at < NOW() - make_interval(days => $7::int)))
           OR ($6::boolean AND COALESCE(tc.tx_count, 0) > 0
               AND la.last_at >= NOW() - make_interval(days => $7::int))
+          OR ($10::boolean AND EXISTS (
+              SELECT 1 FROM budgets b
+              WHERE b.user_id = u.id
+                AND b.is_active = true
+                AND b.start_date <= NOW() AND b.end_date >= NOW()
+                AND b.spent > b.amount))
+          OR ($11::boolean AND s.status::text = 'TRIALING'
+              AND s."trialEndsAt" IS NOT NULL
+              AND s."trialEndsAt" > NOW()
+              AND s."trialEndsAt" <= NOW() + make_interval(days => $12::int))
         )
         AND (
           NOT $9::boolean

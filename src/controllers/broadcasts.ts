@@ -158,6 +158,44 @@ export const sendBroadcast = async (req: Request, res: Response) => {
   }
 };
 
+// POST /api/admin/broadcasts/:id/approve — aprueba un borrador del agente de
+// crecimiento: PENDING_APPROVAL → DRAFT. A partir de ahí sigue el flujo normal
+// (el admin lo envía con /send + confirm). Update condicionado por status para
+// que no se pueda "aprobar" algo ya enviado.
+export const approveBroadcast = async (req: Request, res: Response) => {
+  try {
+    const result = await prisma.broadcast.updateMany({
+      where: { id: req.params.id, status: 'PENDING_APPROVAL' },
+      data: { status: 'DRAFT' },
+    });
+    if (result.count === 0) {
+      return res.status(400).json({ message: 'El broadcast no está en estado PENDING_APPROVAL', error: 'Bad request' });
+    }
+    return res.json({ message: 'Broadcast aprobado (ahora en DRAFT, listo para enviar)' });
+  } catch (error) {
+    logger.error('[Broadcast] Error aprobando broadcast:', error);
+    return res.status(500).json({ message: 'Error aprobando broadcast', error: 'Internal server error' });
+  }
+};
+
+// POST /api/admin/broadcasts/:id/reject — rechaza un borrador del agente:
+// PENDING_APPROVAL → REJECTED (queda en el historial para auditoría).
+export const rejectBroadcast = async (req: Request, res: Response) => {
+  try {
+    const result = await prisma.broadcast.updateMany({
+      where: { id: req.params.id, status: 'PENDING_APPROVAL' },
+      data: { status: 'REJECTED' },
+    });
+    if (result.count === 0) {
+      return res.status(400).json({ message: 'El broadcast no está en estado PENDING_APPROVAL', error: 'Bad request' });
+    }
+    return res.json({ message: 'Broadcast rechazado' });
+  } catch (error) {
+    logger.error('[Broadcast] Error rechazando broadcast:', error);
+    return res.status(500).json({ message: 'Error rechazando broadcast', error: 'Internal server error' });
+  }
+};
+
 // GET /api/admin/broadcasts/:id/stats — métricas de efecto de la campaña:
 // funnel (expuestos → impresión → click) + activación expuestos vs holdout en 7d.
 export const getBroadcastStats = async (req: Request, res: Response) => {

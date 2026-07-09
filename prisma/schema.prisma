@@ -742,12 +742,12 @@ model Broadcast {
   surface      String    @default("push") // push | slot | both — dónde aparece el mensaje
   holdoutPct   Int       @default(0)      // 0-100: % de la audiencia elegible que NO recibe (control para medir efecto causal)
   audience     Json      // filtros de segmentación serializados (planes, plataformas, país, segmentos, umbral)
-  status       String    @default("DRAFT") // DRAFT | SENDING | SENT | FAILED
+  status       String    @default("DRAFT") // PENDING_APPROVAL (agente, requiere aprobación) | REJECTED | DRAFT | SENDING | SENT | FAILED
   targetCount  Int?      // usuarios distintos EXPUESTOS (calculado al enviar)
   holdoutCount Int?      // usuarios en el holdout (control, no recibieron)
   successCount Int?      // tokens entregados
   failureCount Int?      // tokens fallidos
-  createdBy    String    // userId del admin que lo creó (auditoría)
+  createdBy    String    // userId del admin que lo creó, o 'growth-agent' si lo propuso el agente (auditoría)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   sentAt       DateTime?

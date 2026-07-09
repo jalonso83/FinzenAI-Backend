@@ -52,6 +52,7 @@ import eventsRoutes from './routes/events';
 import feedbackRoutes from './routes/feedback';
 import configRoutes from './routes/config';
 import announcementsRoutes from './routes/announcements';
+import agentRoutes from './routes/agent';
 
 // Importar webhooks
 import { handleStripeWebhook } from './webhooks/stripeWebhook';
@@ -180,6 +181,7 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/announcements', announcementsRoutes);
+app.use('/api/agent', agentRoutes); // Agent API (agente de crecimiento, auth por x-agent-key)
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
