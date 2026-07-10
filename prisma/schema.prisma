@@ -748,6 +748,7 @@ model Broadcast {
   successCount Int?      // tokens entregados
   failureCount Int?      // tokens fallidos
   createdBy    String    // userId del admin que lo creó, o 'growth-agent' si lo propuso el agente (auditoría)
+  hiddenAt     DateTime? // soft delete de campañas ENVIADAS (se ocultan del historial; la medición en notification_logs sobrevive)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   sentAt       DateTime?

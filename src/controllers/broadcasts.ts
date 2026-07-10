@@ -95,19 +95,22 @@ export const createBroadcast = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/admin/broadcasts — historial paginado
+// GET /api/admin/broadcasts — historial paginado (excluye ocultas salvo ?includeHidden=true)
 export const listBroadcasts = async (req: Request, res: Response) => {
   try {
     const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? '20'), 10) || 20));
+    const includeHidden = req.query.includeHidden === 'true';
+    const where = includeHidden ? {} : { hiddenAt: null };
 
     const [items, total] = await Promise.all([
       prisma.broadcast.findMany({
+        where,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
       }),
-      prisma.broadcast.count(),
+      prisma.broadcast.count({ where }),
     ]);
 
     return res.json({
@@ -193,6 +196,37 @@ export const rejectBroadcast = async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('[Broadcast] Error rechazando broadcast:', error);
     return res.status(500).json({ message: 'Error rechazando broadcast', error: 'Internal server error' });
+  }
+};
+
+// DELETE /api/admin/broadcasts/:id — quita una campaña del historial.
+//  - Nunca enviada (PENDING_APPROVAL | REJECTED | DRAFT): borrado real — no hay
+//    datos de medición que perder.
+//  - Ya enviada / con envío en curso (SENT | FAILED | SENDING): soft delete
+//    (hiddenAt) — desaparece del historial pero notification_logs y las métricas
+//    de campaña (lift, KPIs del agente) sobreviven.
+export const deleteBroadcast = async (req: Request, res: Response) => {
+  try {
+    const broadcast = await prisma.broadcast.findUnique({ where: { id: req.params.id } });
+    if (!broadcast) {
+      return res.status(404).json({ message: 'Broadcast no encontrado', error: 'Not found' });
+    }
+
+    const neverSent = ['PENDING_APPROVAL', 'REJECTED', 'DRAFT'].includes(broadcast.status);
+    if (neverSent) {
+      // Guard extra: si por alguna razón hubiera logs (no debería), ocultar en vez de borrar.
+      const logCount = await prisma.notificationLog.count({ where: { broadcastId: broadcast.id } });
+      if (logCount === 0) {
+        await prisma.broadcast.delete({ where: { id: broadcast.id } });
+        return res.json({ message: 'Broadcast eliminado', data: { action: 'deleted' } });
+      }
+    }
+
+    await prisma.broadcast.update({ where: { id: broadcast.id }, data: { hiddenAt: new Date() } });
+    return res.json({ message: 'Broadcast ocultado del historial (la medición se conserva)', data: { action: 'hidden' } });
+  } catch (error) {
+    logger.error('[Broadcast] Error eliminando broadcast:', error);
+    return res.status(500).json({ message: 'Error eliminando broadcast', error: 'Internal server error' });
   }
 };
 

@@ -4,7 +4,7 @@ import { authenticateAdminOrPdfToken } from '../middlewares/adminAuth';
 import { strictApiLimiter } from '../config/rateLimiter';
 import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf, getCampaignCosts, upsertCampaignCost, deleteCampaignCost, setCampaignHidden } from '../controllers/admin';
 import { getFeedbackList, updateFeedback } from '../controllers/feedback';
-import { createBroadcast, listBroadcasts, previewBroadcast, sendBroadcast, getBroadcastStats, approveBroadcast, rejectBroadcast } from '../controllers/broadcasts';
+import { createBroadcast, listBroadcasts, previewBroadcast, sendBroadcast, getBroadcastStats, approveBroadcast, rejectBroadcast, deleteBroadcast } from '../controllers/broadcasts';
 import { getH10Stats } from '../controllers/experiments';
 
 const router: ExpressRouter = Router();
@@ -39,6 +39,7 @@ router.post('/broadcasts/preview', previewBroadcast);
 router.post('/broadcasts/:id/send', sendBroadcast);
 router.post('/broadcasts/:id/approve', approveBroadcast); // agente: PENDING_APPROVAL → DRAFT
 router.post('/broadcasts/:id/reject', rejectBroadcast);   // agente: PENDING_APPROVAL → REJECTED
+router.delete('/broadcasts/:id', deleteBroadcast);        // nunca enviada: borra; enviada: oculta (soft)
 router.get('/broadcasts/:id/stats', getBroadcastStats);
 
 // Experimentos
