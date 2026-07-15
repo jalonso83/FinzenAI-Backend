@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { prisma } from '../lib/prisma';
 import { getOrStampExperimentStart } from '../lib/experimentStart';
+import { BroadcastService } from '../services/broadcastService';
 
 /**
  * Hash determinístico de userId → bucket 0-99.
@@ -146,10 +147,19 @@ export const markAppEntered = async (req: Request, res: Response) => {
     }
 
     // Señal de entrada (idempotente: solo la primera vez).
-    await prisma.user.updateMany({
+    const entryMark = await prisma.user.updateMany({
       where: { id: userId, firstAppEntryAt: null },
       data: { firstAppEntryAt: new Date() },
     });
+    const isFirstEntry = entryMark.count === 1;
+
+    // Inscripción en la campaña evergreen de bienvenida — SOLO en la primera entrada.
+    // Best-effort dentro del propio helper (nunca lanza); la doble red de idempotencia
+    // (este guard + la unique (userId, broadcastId)) evita filas duplicadas aunque
+    // markAppEntered se llame en cada carga del dashboard.
+    if (isFirstEntry) {
+      await BroadcastService.enrollInEvergreen(userId, 'first_app_entry');
+    }
 
     // Variante no-bloqueante (H10): el usuario entró SIN completar onboarding.
     // Preservamos la invariante "está en la app ⇒ onboardingCompleted=true" para no

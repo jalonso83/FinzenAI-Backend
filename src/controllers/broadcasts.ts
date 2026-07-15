@@ -75,6 +75,18 @@ export const createBroadcast = async (req: Request, res: Response) => {
     const holdoutRaw = Math.floor(Number(req.body.holdoutPct));
     const holdoutPct = Number.isFinite(holdoutRaw) ? Math.max(0, Math.min(100, holdoutRaw)) : 0;
 
+    // Modo: ONE_SHOT (default) o EVERGREEN (siempre encendida). Una evergreen
+    // requiere un trigger que la inscriba; v1 solo soporta 'first_app_entry'.
+    const mode = req.body.mode === 'EVERGREEN' ? 'EVERGREEN' : 'ONE_SHOT';
+    const VALID_TRIGGERS = ['first_app_entry'];
+    let trigger: string | null = null;
+    if (mode === 'EVERGREEN') {
+      trigger = VALID_TRIGGERS.includes(req.body.trigger) ? req.body.trigger : null;
+      if (!trigger) {
+        return res.status(400).json({ message: `Una campaña evergreen requiere un trigger válido (${VALID_TRIGGERS.join(', ')})`, error: 'Bad request' });
+      }
+    }
+
     const broadcast = await prisma.broadcast.create({
       data: {
         title: req.body.title,
@@ -84,6 +96,8 @@ export const createBroadcast = async (req: Request, res: Response) => {
         surface,
         holdoutPct,
         audience,
+        mode,
+        trigger,
         status: 'DRAFT',
         createdBy: adminId,
       },
@@ -227,6 +241,65 @@ export const deleteBroadcast = async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('[Broadcast] Error eliminando broadcast:', error);
     return res.status(500).json({ message: 'Error eliminando broadcast', error: 'Internal server error' });
+  }
+};
+
+// POST /api/admin/broadcasts/:id/activate — enciende una campaña evergreen.
+// DRAFT → ACTIVE (empieza a inscribir usuarios cuando dispara su trigger).
+// Guard: no puede haber dos evergreen ACTIVE con el mismo trigger (el slot solo
+// muestra una; la otra inscribiría en vano).
+export const activateBroadcast = async (req: Request, res: Response) => {
+  try {
+    const broadcast = await prisma.broadcast.findUnique({ where: { id: req.params.id } });
+    if (!broadcast) return res.status(404).json({ message: 'Broadcast no encontrado', error: 'Not found' });
+    if (broadcast.mode !== 'EVERGREEN') {
+      return res.status(400).json({ message: 'Solo las campañas evergreen se activan; las puntuales se envían con /send', error: 'Bad request' });
+    }
+    if (broadcast.status !== 'DRAFT') {
+      return res.status(400).json({ message: `No se puede activar: la campaña está en estado ${broadcast.status} (debe estar en DRAFT)`, error: 'Bad request' });
+    }
+    // Guard "una evergreen activa por trigger".
+    const alreadyActive = await prisma.broadcast.findFirst({
+      where: { mode: 'EVERGREEN', status: 'ACTIVE', trigger: broadcast.trigger, hiddenAt: null },
+      select: { id: true, title: true },
+    });
+    if (alreadyActive) {
+      return res.status(409).json({
+        message: `Ya hay una campaña evergreen activa para este disparador ("${alreadyActive.title}"). Apágala antes de activar otra.`,
+        error: 'Conflict',
+      });
+    }
+    // Transición condicionada por status (evita carreras de doble activación).
+    const result = await prisma.broadcast.updateMany({
+      where: { id: broadcast.id, status: 'DRAFT' },
+      data: { status: 'ACTIVE', activatedAt: new Date() },
+    });
+    if (result.count === 0) {
+      return res.status(400).json({ message: 'No se pudo activar (¿estado cambió?)', error: 'Bad request' });
+    }
+    return res.json({ message: 'Campaña evergreen activada (inscribiendo usuarios nuevos)' });
+  } catch (error) {
+    logger.error('[Broadcast] Error activando evergreen:', error);
+    return res.status(500).json({ message: 'Error activando campaña', error: 'Internal server error' });
+  }
+};
+
+// POST /api/admin/broadcasts/:id/deactivate — apaga una campaña evergreen.
+// ACTIVE → ENDED. Deja de inscribir usuarios nuevos; las filas ya inscritas
+// siguen mostrándose y contando para las métricas.
+export const deactivateBroadcast = async (req: Request, res: Response) => {
+  try {
+    const result = await prisma.broadcast.updateMany({
+      where: { id: req.params.id, mode: 'EVERGREEN', status: 'ACTIVE' },
+      data: { status: 'ENDED', endedAt: new Date() },
+    });
+    if (result.count === 0) {
+      return res.status(400).json({ message: 'La campaña no está activa (o no es evergreen)', error: 'Bad request' });
+    }
+    return res.json({ message: 'Campaña evergreen apagada (dejó de inscribir; la medición se conserva)' });
+  } catch (error) {
+    logger.error('[Broadcast] Error apagando evergreen:', error);
+    return res.status(500).json({ message: 'Error apagando campaña', error: 'Internal server error' });
   }
 };
 

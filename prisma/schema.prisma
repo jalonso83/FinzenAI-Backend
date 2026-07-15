@@ -725,6 +725,7 @@ model NotificationLog {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, broadcastId]) // idempotencia: un usuario, una fila por campaña (clave para evergreen). Postgres permite múltiples NULL, no rompe filas sin broadcastId.
   @@index([userId, createdAt])
   @@index([type, status])
   @@index([broadcastId])
@@ -742,7 +743,14 @@ model Broadcast {
   surface      String    @default("push") // push | slot | both — dónde aparece el mensaje
   holdoutPct   Int       @default(0)      // 0-100: % de la audiencia elegible que NO recibe (control para medir efecto causal)
   audience     Json      // filtros de segmentación serializados (planes, plataformas, país, segmentos, umbral)
-  status       String    @default("DRAFT") // PENDING_APPROVAL (agente, requiere aprobación) | REJECTED | DRAFT | SENDING | SENT | FAILED
+  // Modo de la campaña:
+  //  - ONE_SHOT (default): calcula la audiencia y escribe todas las filas al enviar (sendBroadcast). Ciclo DRAFT→SENDING→SENT.
+  //  - EVERGREEN: siempre encendida; inscribe 1 fila por usuario cuando dispara `trigger`. Ciclo DRAFT→ACTIVE→ENDED. `sentAt` queda null; el alcance se cuenta en vivo desde notification_logs.
+  mode         String    @default("ONE_SHOT") // ONE_SHOT | EVERGREEN
+  trigger      String?   // solo EVERGREEN — evento que inscribe al usuario. v1: 'first_app_entry'
+  activatedAt  DateTime? // EVERGREEN: cuándo se encendió (empezó a inscribir)
+  endedAt      DateTime? // EVERGREEN: cuándo se apagó (dejó de inscribir; las filas ya inscritas siguen midiéndose)
+  status       String    @default("DRAFT") // PENDING_APPROVAL | REJECTED | DRAFT | SENDING | SENT | FAILED | ACTIVE (evergreen) | ENDED (evergreen)
   targetCount  Int?      // usuarios distintos EXPUESTOS (calculado al enviar)
   holdoutCount Int?      // usuarios en el holdout (control, no recibieron)
   successCount Int?      // tokens entregados

@@ -144,7 +144,37 @@ export class BroadcastService {
     exposedTx: number; holdoutTx: number;
     exposedTxRate: number; holdoutTxRate: number; liftPts: number;
     exposedTxBefore: number; exposedTxBeforeRate: number; prePostPts: number;
+    mode: string; enrolled: number;
   }> {
+    const broadcast = await prisma.broadcast.findUnique({
+      where: { id: broadcastId },
+      select: { mode: true },
+    });
+    const isEvergreen = broadcast?.mode === 'EVERGREEN';
+
+    // La ventana de 7 días se ancla distinto según el modo:
+    //  - ONE_SHOT: a `broadcasts.sentAt` (un instante único para toda la campaña).
+    //  - EVERGREEN: a `nl."createdAt"` de CADA fila (cuando ese usuario se inscribió
+    //    = entró a la app). Así un usuario inscrito en agosto no se mide contra una
+    //    fecha global. Ramificar aquí garantiza CERO regresión en campañas históricas.
+    const cohortSelect = isEvergreen
+      ? `SELECT nl."userId", nl.holdout, nl."impressedAt", nl."clickedAt", nl."createdAt"`
+      : `SELECT nl."userId", nl.holdout, nl."impressedAt", nl."clickedAt"`;
+
+    const txJoin = isEvergreen
+      ? `WHERE t.date >= c."createdAt" AND t.date <= c."createdAt" + interval '7 days'`
+      : `JOIN b ON true
+         WHERE b."sentAt" IS NOT NULL
+           AND t.date >= b."sentAt"
+           AND t.date <= b."sentAt" + interval '7 days'`;
+
+    const txBeforeJoin = isEvergreen
+      ? `WHERE t.date >= c."createdAt" - interval '7 days' AND t.date < c."createdAt"`
+      : `JOIN b ON true
+         WHERE b."sentAt" IS NOT NULL
+           AND t.date >= b."sentAt" - interval '7 days'
+           AND t.date < b."sentAt"`;
+
     const rows = await prisma.$queryRawUnsafe<{
       exposed: number; holdout: number; impressions: number; clicks: number;
       exposed_tx: number; holdout_tx: number; exposed_tx_before: number;
@@ -152,7 +182,7 @@ export class BroadcastService {
       `
       WITH b AS (SELECT "sentAt" FROM broadcasts WHERE id = $1),
       cohort AS (
-        SELECT nl."userId", nl.holdout, nl."impressedAt", nl."clickedAt"
+        ${cohortSelect}
         FROM notification_logs nl
         WHERE nl."broadcastId" = $1
       ),
@@ -160,19 +190,13 @@ export class BroadcastService {
         SELECT DISTINCT c."userId"
         FROM cohort c
         JOIN transactions t ON t."userId" = c."userId"
-        JOIN b ON true
-        WHERE b."sentAt" IS NOT NULL
-          AND t.date >= b."sentAt"
-          AND t.date <= b."sentAt" + interval '7 days'
+        ${txJoin}
       ),
       tx_before AS (
         SELECT DISTINCT c."userId"
         FROM cohort c
         JOIN transactions t ON t."userId" = c."userId"
-        JOIN b ON true
-        WHERE b."sentAt" IS NOT NULL
-          AND t.date >= b."sentAt" - interval '7 days'
-          AND t.date < b."sentAt"
+        ${txBeforeJoin}
       )
       SELECT
         COUNT(*) FILTER (WHERE NOT holdout)::int AS exposed,
@@ -201,7 +225,82 @@ export class BroadcastService {
       exposedTxBefore: Number(r.exposed_tx_before),
       exposedTxBeforeRate,
       prePostPts: Math.round((exposedTxRate - exposedTxBeforeRate) * 100) / 100,
+      // Evergreen: alcance vivo = expuestos + holdout (todas las filas inscritas).
+      mode: broadcast?.mode ?? 'ONE_SHOT',
+      enrolled: Number(r.exposed) + Number(r.holdout),
     };
+  }
+
+  /**
+   * Inscribe a UN usuario en la campaña evergreen activa para un trigger dado.
+   * Se llama desde markAppEntered cuando el usuario entra por primera vez al
+   * dashboard. Escribe una fila en notification_logs (idempotente por la unique
+   * (userId, broadcastId)); NO envía push si surface='slot'. Best-effort: nunca
+   * lanza — si algo falla, el usuario igual entra a la app.
+   *
+   * Devuelve el id de la campaña en la que se inscribió (o null si no había
+   * ninguna activa / ya estaba inscrito / falló).
+   */
+  static async enrollInEvergreen(userId: string, trigger: string): Promise<string | null> {
+    try {
+      const broadcast = await prisma.broadcast.findFirst({
+        where: { mode: 'EVERGREEN', status: 'ACTIVE', trigger, hiddenAt: null },
+        orderBy: { activatedAt: 'desc' }, // por si el guard de "una por trigger" fallara, la más reciente gana
+      });
+      if (!broadcast) return null;
+
+      const surface = broadcast.surface ?? 'slot';
+      const holdoutPct = Math.max(0, Math.min(100, broadcast.holdoutPct ?? 0));
+      const inHoldout = holdoutPct > 0 && userBucket(userId, broadcast.id) >= (100 - holdoutPct);
+      const shouldPush = (surface === 'push' || surface === 'both') && !inHoldout;
+
+      // Idempotente: la unique (userId, broadcastId) evita duplicados aunque
+      // markAppEntered se llame de más. createMany + skipDuplicates no lanza si ya existe.
+      const created = await prisma.notificationLog.createMany({
+        data: [{
+          userId,
+          type: broadcast.type,
+          title: broadcast.title,
+          body: broadcast.body,
+          data: broadcast.data ?? undefined,
+          status: NotificationStatus.SENT,
+          sentAt: new Date(),
+          surface,
+          holdout: inHoldout,
+          broadcastId: broadcast.id,
+        }],
+        skipDuplicates: true,
+      });
+
+      // Si no se creó fila (ya estaba inscrito), no hacemos nada más.
+      if (created.count === 0) return broadcast.id;
+
+      // Push opcional (solo si la evergreen es push/both y el usuario no es holdout).
+      if (shouldPush) {
+        try {
+          const devices = await prisma.userDevice.findMany({
+            where: { userId, isActive: true },
+            select: { fcmToken: true },
+          });
+          const tokens = devices.map((d) => d.fcmToken).filter(Boolean) as string[];
+          if (tokens.length > 0) {
+            const payload: NotificationPayload = {
+              title: broadcast.title,
+              body: broadcast.body,
+              data: (broadcast.data as Record<string, any>) ?? {},
+            };
+            await NotificationService.sendBroadcastChunk(tokens, payload, 1);
+          }
+        } catch (pushErr) {
+          logger.error('[Broadcast] enrollInEvergreen: fallo al enviar push (fila ya escrita):', pushErr);
+        }
+      }
+
+      return broadcast.id;
+    } catch (err) {
+      logger.error('[Broadcast] enrollInEvergreen falló (no bloquea la entrada a la app):', err);
+      return null;
+    }
   }
 
   /** Cuenta sin enviar: usuarios alcanzados + cuántos se excluyen por opt-out. */
@@ -373,7 +472,10 @@ export class BroadcastService {
           broadcastId: broadcast.id,
         })),
       ];
-      await prisma.notificationLog.createMany({ data: logRows });
+      // skipDuplicates: defensa en profundidad ante la unique (userId, broadcastId).
+      // Con el lock DRAFT→SENDING no debería haber duplicados, pero evita un P2002
+      // fatal si por alguna razón ya existiera una fila de esta campaña.
+      await prisma.notificationLog.createMany({ data: logRows, skipDuplicates: true });
 
       const finalStatus = shouldPush && successCount === 0 && failureCount > 0 ? 'FAILED' : 'SENT';
       await prisma.broadcast.update({
