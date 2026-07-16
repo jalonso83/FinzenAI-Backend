@@ -1371,13 +1371,21 @@ export class AdminService {
       : 0;
 
     // ── Cost breakdown para tabla (todos los conceptos) ────────────
+    // Marketing va como type 'marketing' (calculado desde campaign_costs), NO 'fixed':
+    // los fijos son montos hardcodeados; el marketing se calcula del gasto real.
     const breakdownItems = [
-      ...fixedCostItems.map(c => ({
+      ...FIXED_OPERATING_COSTS.map(c => ({
         concepto: c.name,
         category: c.category,
         costo: Math.round(c.monthlyAmount * 100) / 100,
         type: 'fixed' as const,
       })),
+      {
+        concepto: 'Marketing',
+        category: 'marketing' as const,
+        costo: Math.round(marketingMonthly * 100) / 100,
+        type: 'marketing' as const,
+      },
       {
         concepto: 'OpenAI API',
         category: 'variable' as const,
