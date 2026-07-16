@@ -33,7 +33,10 @@ export const FIXED_OPERATING_COSTS: FixedCost[] = [
   { name: 'Claude (dev)', category: 'tools', monthlyAmount: 200.00 },
 
   // ── Marketing ────────────────────────────────────────────────────
-  { name: 'Marketing', category: 'marketing', monthlyAmount: 175.00 },
+  // NO va aquí como monto fijo: el gasto real de marketing se calcula en runtime
+  // sumando los costos de campañas (tabla campaign_costs) cuya campaignDate cae en
+  // el período. Ver AdminService.marketingCostInPeriod (usado por getFinancialHealth
+  // y getUnitEconomics). Campañas sin campaignDate NO se cuentan.
 ];
 
 export const TOTAL_FIXED_MONTHLY = FIXED_OPERATING_COSTS.reduce(

@@ -1179,12 +1179,43 @@ export class AdminService {
   }
 
   // ─── UNIT ECONOMICS ──────────────────────────────────────
+  /**
+   * Gasto REAL de marketing en un período: suma costUSD de las campañas
+   * (tabla campaign_costs) cuya campaignDate cae dentro de [from, to], excluyendo
+   * las ocultas (hidden). Reemplaza el antiguo monto fijo de $175.
+   *
+   * Ojo: las campañas SIN campaignDate NO se cuentan (decisión de producto). Si el
+   * total sin fechar importa, se puede reportar aparte; aquí solo se suman las fechadas.
+   */
+  static async marketingCostInPeriod(from: Date, to: Date): Promise<number> {
+    const agg = await prisma.campaignCost.aggregate({
+      where: {
+        hidden: false,
+        campaignDate: { gte: from, lte: to }, // gte/lte sobre un campo nullable ya excluye los NULL
+      },
+      _sum: { costUSD: true },
+    });
+    return agg._sum.costUSD ? Number(agg._sum.costUSD) : 0;
+  }
+
   static async getUnitEconomics(query: { from?: string; to?: string }) {
     const { from, to } = parseDateRange(query);
 
     // Days in selected period (used to scale variable costs to monthly).
     const periodDays = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000));
     const monthlyScale = 30 / periodDays;
+
+    // Marketing REAL del período (reemplaza el antiguo fijo de $175), escalado a
+    // equivalente mensual como los demás costos. Se fusiona en el bucket "fijo" para
+    // preservar exactamente el tratamiento previo (el marketing ya vivía ahí).
+    const marketingMonthly = (await this.marketingCostInPeriod(from, to)) * monthlyScale;
+    const fixedMonthly = TOTAL_FIXED_MONTHLY + marketingMonthly;
+    const marketingItem = {
+      name: 'Marketing',
+      category: 'marketing' as const,
+      monthlyAmount: Math.round(marketingMonthly * 100) / 100,
+    };
+    const fixedCostItems = [...FIXED_OPERATING_COSTS, marketingItem];
 
     const [
       activeUsersWithTx,
@@ -1279,7 +1310,8 @@ export class AdminService {
     const totalVariableMonthly = openAICostMonthly + stripeFeesMonthly + rcFeesMonthly;
 
     // ── Costo total mensual ────────────────────────────────────────
-    const totalCostMonthly = TOTAL_FIXED_MONTHLY + totalVariableMonthly;
+    // fixedMonthly ya incluye el marketing real del período.
+    const totalCostMonthly = fixedMonthly + totalVariableMonthly;
 
     // ── Métricas derivadas ─────────────────────────────────────────
     const activeUsers = Number(activeUsersWithTx[0]?.cnt ?? 0);
@@ -1289,12 +1321,12 @@ export class AdminService {
     // Por usuario activo (los que generan carga real este período)
     const costPerUser = activeUsers > 0 ? totalCostMonthly / activeUsers : 0;
     const costAIPerUser = activeUsers > 0 ? openAICostMonthly / activeUsers : 0;
-    const costInfraPerUser = activeUsers > 0 ? TOTAL_FIXED_MONTHLY / activeUsers : 0;
+    const costInfraPerUser = activeUsers > 0 ? fixedMonthly / activeUsers : 0;
 
     // Por usuario total (incluye dormidos — vista alternativa más conservadora)
     const costPerTotalUser = totalUsers > 0 ? totalCostMonthly / totalUsers : 0;
     const costAIPerTotalUser = totalUsers > 0 ? openAICostMonthly / totalUsers : 0;
-    const costInfraPerTotalUser = totalUsers > 0 ? TOTAL_FIXED_MONTHLY / totalUsers : 0;
+    const costInfraPerTotalUser = totalUsers > 0 ? fixedMonthly / totalUsers : 0;
 
     // Cash flow mensual: MRR menos costo total
     // Negativo = pérdida (burn), positivo = ganancia
@@ -1331,7 +1363,7 @@ export class AdminService {
     const variableCostPerPayingUser = openAIPerActiveUser + paymentFeePerPayingUser;
     const contribPerUser = arpu - variableCostPerPayingUser;
     const breakEvenUsers = contribPerUser > 0
-      ? Math.ceil(TOTAL_FIXED_MONTHLY / contribPerUser)
+      ? Math.ceil(fixedMonthly / contribPerUser)
       : null; // null = imposible (ARPU no cubre ni los costos variables — revisar pricing)
 
     const progressBreakEven = breakEvenUsers && breakEvenUsers > 0
@@ -1340,7 +1372,7 @@ export class AdminService {
 
     // ── Cost breakdown para tabla (todos los conceptos) ────────────
     const breakdownItems = [
-      ...FIXED_OPERATING_COSTS.map(c => ({
+      ...fixedCostItems.map(c => ({
         concepto: c.name,
         category: c.category,
         costo: Math.round(c.monthlyAmount * 100) / 100,
@@ -1375,10 +1407,10 @@ export class AdminService {
       .sort((a, b) => b.costo - a.costo);
 
     return {
-      // Costos fijos
+      // Costos fijos (incluye el marketing real del período fusionado)
       fixedCosts: {
-        items: FIXED_OPERATING_COSTS,
-        total: Math.round(TOTAL_FIXED_MONTHLY * 100) / 100,
+        items: fixedCostItems,
+        total: Math.round(fixedMonthly * 100) / 100,
       },
       // Costos variables (escalados a equivalente mensual)
       variableCosts: {
@@ -1486,7 +1518,10 @@ export class AdminService {
       0
     );
     const variableExpensesThisMonth = openAIThisMonth + stripeFeesThisMonth + rcFeesThisMonth;
-    const fixedExpensesThisMonth = TOTAL_FIXED_MONTHLY;
+    // Marketing REAL del mes en curso (suma de campañas con fecha en el período),
+    // fusionado en el gasto fijo — reemplaza el antiguo monto fijo de $175.
+    const marketingThisMonth = await AdminService.marketingCostInPeriod(startOfMonth, endOfMonth);
+    const fixedExpensesThisMonth = TOTAL_FIXED_MONTHLY + marketingThisMonth;
     const totalExpensesThisMonth = fixedExpensesThisMonth + variableExpensesThisMonth;
 
     // Cash flow: positivo = profit, negativo = burn
