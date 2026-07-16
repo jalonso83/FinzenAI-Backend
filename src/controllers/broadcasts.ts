@@ -61,19 +61,6 @@ export const createBroadcast = async (req: Request, res: Response) => {
 
     const contentError = validateContent(req.body);
     if (contentError) return res.status(400).json({ message: contentError, error: 'Bad request' });
-    const audienceError = validateAudience(req.body.audience);
-    if (audienceError) return res.status(400).json({ message: audienceError, error: 'Bad request' });
-
-    // Resuelve destinatario único (prueba o email dirigido). testUserId lo pone
-    // el servidor, nunca el cliente.
-    const resolved = await resolveTargeting(req.body.audience, adminId);
-    if (resolved.error) return res.status(400).json({ message: resolved.error, error: 'Bad request' });
-    const audience = resolved.audience;
-
-    // Superficie (dónde aparece) y holdout (% de control para medir efecto).
-    const surface = ['push', 'slot', 'both'].includes(req.body.surface) ? req.body.surface : 'push';
-    const holdoutRaw = Math.floor(Number(req.body.holdoutPct));
-    const holdoutPct = Number.isFinite(holdoutRaw) ? Math.max(0, Math.min(100, holdoutRaw)) : 0;
 
     // Modo: ONE_SHOT (default) o EVERGREEN (siempre encendida). Una evergreen
     // requiere un trigger que la inscriba; v1 solo soporta 'first_app_entry'.
@@ -86,6 +73,26 @@ export const createBroadcast = async (req: Request, res: Response) => {
         return res.status(400).json({ message: `Una campaña evergreen requiere un trigger válido (${VALID_TRIGGERS.join(', ')})`, error: 'Bad request' });
       }
     }
+
+    // Validación de audiencia y targeting: NO aplica a evergreen. Una campaña viva
+    // alcanza a todos los usuarios del disparador (ej. todos los nuevos); su audiencia
+    // se ignora al inscribir (ver BroadcastService.enrollInEvergreen), así que no se
+    // le exige segmento. Para ONE_SHOT sí se valida y resuelve normal.
+    let audience: any = {};
+    if (mode !== 'EVERGREEN') {
+      const audienceError = validateAudience(req.body.audience);
+      if (audienceError) return res.status(400).json({ message: audienceError, error: 'Bad request' });
+      // Resuelve destinatario único (prueba o email dirigido). testUserId lo pone
+      // el servidor, nunca el cliente.
+      const resolved = await resolveTargeting(req.body.audience, adminId);
+      if (resolved.error) return res.status(400).json({ message: resolved.error, error: 'Bad request' });
+      audience = resolved.audience;
+    }
+
+    // Superficie (dónde aparece) y holdout (% de control para medir efecto).
+    const surface = ['push', 'slot', 'both'].includes(req.body.surface) ? req.body.surface : 'push';
+    const holdoutRaw = Math.floor(Number(req.body.holdoutPct));
+    const holdoutPct = Number.isFinite(holdoutRaw) ? Math.max(0, Math.min(100, holdoutRaw)) : 0;
 
     const broadcast = await prisma.broadcast.create({
       data: {
