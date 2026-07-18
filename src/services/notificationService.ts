@@ -838,16 +838,19 @@ export class NotificationService {
   }
 
   /**
-   * Marca una notificación como leída
+   * Marca una notificación como leída o no leída (scoped al dueño)
+   * @param read true = leída (READ + readAt), false = no leída (SENT + readAt null)
+   * @returns true si se actualizó (existe y pertenece al usuario), false si no
    */
-  static async markAsRead(notificationId: string) {
-    return prisma.notificationLog.update({
-      where: { id: notificationId },
+  static async setReadState(notificationId: string, userId: string, read: boolean = true) {
+    const result = await prisma.notificationLog.updateMany({
+      where: { id: notificationId, userId },
       data: {
-        status: 'READ',
-        readAt: new Date()
+        status: read ? 'READ' : 'SENT',
+        readAt: read ? new Date() : null
       }
     });
+    return result.count > 0;
   }
 
   /**

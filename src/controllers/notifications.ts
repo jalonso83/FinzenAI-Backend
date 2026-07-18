@@ -310,8 +310,8 @@ export const getNotificationHistory = async (req: AuthRequest, res: Response) =>
 };
 
 /**
- * Marca una notificación como leída
- * PUT /api/notifications/:id/read
+ * Marca una notificación como leída o no leída
+ * PUT /api/notifications/:id/read  body: { read?: boolean } (default true)
  */
 export const markAsRead = async (req: AuthRequest, res: Response) => {
   try {
@@ -321,15 +321,23 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
     }
 
     const { id } = req.params;
+    const read = req.body?.read ?? true;
 
-    const notification = await NotificationService.markAsRead(id);
+    const updated = await NotificationService.setReadState(id, userId, read);
+
+    if (!updated) {
+      return res.status(404).json({
+        error: 'Not found',
+        message: 'Notificación no encontrada o no tienes permiso para modificarla'
+      });
+    }
 
     return res.status(200).json({
       success: true,
       notification: {
-        id: notification.id,
-        status: notification.status,
-        readAt: notification.readAt
+        id,
+        status: read ? 'READ' : 'SENT',
+        readAt: read ? new Date().toISOString() : null
       }
     });
 

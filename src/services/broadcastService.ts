@@ -157,23 +157,32 @@ export class BroadcastService {
     //  - EVERGREEN: a `nl."createdAt"` de CADA fila (cuando ese usuario se inscribió
     //    = entró a la app). Así un usuario inscrito en agosto no se mide contra una
     //    fecha global. Ramificar aquí garantiza CERO regresión en campañas históricas.
+    //
+    // IMPORTANTE: se ancla al DÍA calendario del anclaje (date_trunc('day', ...)), no
+    // al timestamp exacto. Las transacciones se guardan a mediodía UTC (la app manda
+    // 'T12:00:00.000Z'); comparar contra el instante exacto de inscripción/envío perdía
+    // las activaciones del MISMO día (12:00 UTC = 8am RD < hora real de entrada), que
+    // para una campaña de bienvenida es justo la activación que queremos capturar. La
+    // ventana "después" abarca el día 0 + 7 días (< inicio_día + 8 días).
     const cohortSelect = isEvergreen
       ? `SELECT nl."userId", nl.holdout, nl."impressedAt", nl."clickedAt", nl."createdAt"`
       : `SELECT nl."userId", nl.holdout, nl."impressedAt", nl."clickedAt"`;
 
     const txJoin = isEvergreen
-      ? `WHERE t.date >= c."createdAt" AND t.date <= c."createdAt" + interval '7 days'`
+      ? `WHERE t.date >= date_trunc('day', c."createdAt")
+           AND t.date < date_trunc('day', c."createdAt") + interval '8 days'`
       : `JOIN b ON true
          WHERE b."sentAt" IS NOT NULL
-           AND t.date >= b."sentAt"
-           AND t.date <= b."sentAt" + interval '7 days'`;
+           AND t.date >= date_trunc('day', b."sentAt")
+           AND t.date < date_trunc('day', b."sentAt") + interval '8 days'`;
 
     const txBeforeJoin = isEvergreen
-      ? `WHERE t.date >= c."createdAt" - interval '7 days' AND t.date < c."createdAt"`
+      ? `WHERE t.date >= date_trunc('day', c."createdAt") - interval '7 days'
+           AND t.date < date_trunc('day', c."createdAt")`
       : `JOIN b ON true
          WHERE b."sentAt" IS NOT NULL
-           AND t.date >= b."sentAt" - interval '7 days'
-           AND t.date < b."sentAt"`;
+           AND t.date >= date_trunc('day', b."sentAt") - interval '7 days'
+           AND t.date < date_trunc('day', b."sentAt")`;
 
     const rows = await prisma.$queryRawUnsafe<{
       exposed: number; holdout: number; impressions: number; clicks: number;
