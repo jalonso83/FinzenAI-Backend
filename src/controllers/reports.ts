@@ -194,12 +194,9 @@ export const getCategoryReport = async (req: Request, res: Response): Promise<Re
       }
     });
 
-    // Comparar con período anterior (si es posible)
-    const prevPeriodStart = new Date(dateStart);
-    const prevPeriodEnd = new Date(dateEnd);
-    const periodDiff = dateEnd.getTime() - dateStart.getTime();
-    prevPeriodStart.setTime(prevPeriodStart.getTime() - periodDiff);
-    prevPeriodEnd.setTime(prevPeriodEnd.getTime() - periodDiff);
+    // Período anterior robusto: mes calendario previo si el rango es un mes completo
+    // (dashboard móvil), o ventana de igual duración si es un rango libre (panel web).
+    const { prevPeriodStart, prevPeriodEnd } = getPreviousPeriod(dateStart, dateEnd);
 
     const previousTransactions = await prisma.transaction.findMany({
       where: {
@@ -628,12 +625,9 @@ export const getIncomeReport = async (req: Request, res: Response): Promise<Resp
       }
     });
 
-    // Comparar con período anterior
-    const prevPeriodStart = new Date(dateStart);
-    const prevPeriodEnd = new Date(dateEnd);
-    const periodDiff = dateEnd.getTime() - dateStart.getTime();
-    prevPeriodStart.setTime(prevPeriodStart.getTime() - periodDiff);
-    prevPeriodEnd.setTime(prevPeriodEnd.getTime() - periodDiff);
+    // Período anterior robusto: mes calendario previo si el rango es un mes completo
+    // (dashboard móvil), o ventana de igual duración si es un rango libre (panel web).
+    const { prevPeriodStart, prevPeriodEnd } = getPreviousPeriod(dateStart, dateEnd);
 
     const previousTransactions = await prisma.transaction.findMany({
       where: {
@@ -797,10 +791,11 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
     // Análisis temporal según granularidad
     const timeSeriesData = generateTimeSeries(transactions, granularity as string, dateStart, dateEnd);
 
-    // Comparación con período anterior
-    const periodDuration = dateEnd.getTime() - dateStart.getTime();
-    const prevPeriodStart = new Date(dateStart.getTime() - periodDuration);
-    const prevPeriodEnd = new Date(dateEnd.getTime() - periodDuration);
+    // Período anterior robusto: mes calendario previo si el rango es un mes completo
+    // (dashboard móvil, p.ej. julio → junio 1-30), o ventana de igual duración si es un
+    // rango libre (presets del panel web). Antes se restaba la duración en ms del mes
+    // actual, lo que desalineaba el mes previo (julio daba "31 may → 30 jun").
+    const { prevPeriodStart, prevPeriodEnd } = getPreviousPeriod(dateStart, dateEnd);
 
     const previousTransactions = await prisma.transaction.findMany({
       where: {
@@ -830,10 +825,17 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
     // Análisis de patrones
     const dailyAmounts = Array.from(amountsByDay.values()).map(day => day.expenses + day.income);
     const avgDailyAmount = dailyAmounts.length > 0 ? dailyAmounts.reduce((a, b) => a + b, 0) / dailyAmounts.length : 0;
-    
-    // Volatilidad (desviación estándar)
-    const variance = dailyAmounts.length > 0 ? 
-      dailyAmounts.reduce((sum, amount) => sum + Math.pow(amount - avgDailyAmount, 2), 0) / dailyAmounts.length : 0;
+
+    // Volatilidad (desviación estándar) sobre TODOS los días del período, incluidos los
+    // días en 0. Antes se calculaba solo sobre los días con transacciones, lo que
+    // subestimaba/distorsionaba la volatilidad que alimenta el Vibe.
+    const totalDaysInPeriod = Math.max(1, Math.ceil((dateEnd.getTime() - dateStart.getTime()) / (1000 * 60 * 60 * 24)));
+    const dailyAmountsZeroFilled = [
+      ...dailyAmounts,
+      ...Array(Math.max(0, totalDaysInPeriod - dailyAmounts.length)).fill(0),
+    ];
+    const volMean = dailyAmountsZeroFilled.reduce((a, b) => a + b, 0) / dailyAmountsZeroFilled.length;
+    const variance = dailyAmountsZeroFilled.reduce((sum, amount) => sum + Math.pow(amount - volMean, 2), 0) / dailyAmountsZeroFilled.length;
     const volatility = Math.sqrt(variance);
 
     // Días más activos
@@ -884,13 +886,30 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
       });
     }
 
-    // Burnrate y runway (solo para gastos)
-    const daysInPeriod = (dateEnd.getTime() - dateStart.getTime()) / (1000 * 60 * 60 * 24);
-    const burnRate = totalExpenses / daysInPeriod;
-    
-    // Calcular runway basado en saldo disponible actual, no en ingresos totales
-    const currentBalance = totalIncome - totalExpenses;
-    const runway = (burnRate > 0 && currentBalance > 0) ? Math.ceil(currentBalance / burnRate) : 0;
+    // Burn rate = gasto promedio por día TRANSCURRIDO del mes (no dividido por el largo
+    // completo del período). A principio de mes, con pocos días corridos, esto evita el
+    // número irreal que daba antes. Para un mes ya cerrado usa el mes completo.
+    const elapsedMs = Math.min(dateEnd.getTime(), now.getTime()) - dateStart.getTime();
+    const elapsedDays = Math.max(1, Math.ceil(elapsedMs / (1000 * 60 * 60 * 24)));
+    const burnRate = totalExpenses / elapsedDays;
+
+    // Runway = BALANCE REAL ACUMULADO (ingresos−gastos de TODA la vida del usuario), no
+    // el neto del mes. Es el mismo dinero que muestra el card de balance del dashboard,
+    // así el Vibe deja de saltar cada mes ignorando lo que el usuario realmente tiene.
+    const lifetimeAgg = await prisma.transaction.groupBy({
+      by: ['type'],
+      where: { userId },
+      _sum: { amount: true },
+    });
+    let lifetimeIncome = 0;
+    let lifetimeExpenses = 0;
+    for (const row of lifetimeAgg) {
+      const sum = Number(row._sum.amount ?? 0);
+      if (row.type === 'INCOME') lifetimeIncome = sum;
+      else if (row.type === 'EXPENSE') lifetimeExpenses = sum;
+    }
+    const realBalance = lifetimeIncome - lifetimeExpenses;
+    const runway = (burnRate > 0 && realBalance > 0) ? Math.ceil(realBalance / burnRate) : 0;
     
 
     // Heatmap data (actividad por día de la semana)
@@ -950,6 +969,36 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
     return res.status(500).json({ message: 'Error interno del servidor' });
   }
 };
+
+/**
+ * Período anterior para comparar tendencias.
+ * - Si el rango es un MES calendario completo (caso del dashboard móvil), devuelve el mes
+ *   calendario inmediatamente anterior. Los meses miden distinto (28-31 días), así que
+ *   restar la duración en ms desalineaba el mes previo y torcía todas las tendencias.
+ * - Si es un rango arbitrario / multi-mes (presets del panel web: 3 meses, año, custom),
+ *   devuelve la ventana de IGUAL duración inmediatamente anterior (lo correcto ahí).
+ * Detección independiente del timezone del servidor: el rango mensual siempre empieza el
+ * día 1 (UTC) y dura ~un mes; los rangos libres empiezan otro día o duran más.
+ */
+function getPreviousPeriod(dateStart: Date, dateEnd: Date): { prevPeriodStart: Date; prevPeriodEnd: Date } {
+  const daysSpan = (dateEnd.getTime() - dateStart.getTime()) / (1000 * 60 * 60 * 24);
+  const isSingleMonth = dateStart.getUTCDate() === 1 && daysSpan >= 27 && daysSpan <= 31.5;
+
+  if (isSingleMonth) {
+    const y = dateStart.getUTCFullYear();
+    const m = dateStart.getUTCMonth();
+    return {
+      prevPeriodStart: new Date(Date.UTC(y, m - 1, 1, 0, 0, 0)),
+      prevPeriodEnd: new Date(Date.UTC(y, m, 0, 23, 59, 59)),
+    };
+  }
+
+  const periodDiff = dateEnd.getTime() - dateStart.getTime();
+  return {
+    prevPeriodStart: new Date(dateStart.getTime() - periodDiff),
+    prevPeriodEnd: new Date(dateEnd.getTime() - periodDiff),
+  };
+}
 
 // Función auxiliar para generar series temporales
 function generateTimeSeries(transactions: any[], granularity: string, startDate: Date, endDate: Date) {
