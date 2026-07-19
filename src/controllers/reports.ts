@@ -943,17 +943,21 @@ export const getDateReport = async (req: Request, res: Response): Promise<Respon
         inactiveDays
       },
       patterns: {
+        // La fecha (dayKey 'YYYY-MM-DD') se manda con hora a MEDIODÍA UTC. Así la app,
+        // que hace new Date(str), no la interpreta como medianoche UTC (que en RD/UTC-4
+        // mostraría el día ANTERIOR, p.ej. "30 jun" para el 1 jul). Con mediodía UTC el
+        // día local sale correcto en cualquier huso del continente.
         mostActiveDay: mostActiveDay ? {
-          date: mostActiveDay.date,
+          date: mostActiveDay.date + 'T12:00:00.000Z',
           total: mostActiveDay.total,
           transactions: mostActiveDay.count
         } : null,
         highestExpenseDay: highestExpenseDay ? {
-          date: highestExpenseDay.date,
+          date: highestExpenseDay.date + 'T12:00:00.000Z',
           amount: highestExpenseDay.expenses
         } : null,
         highestIncomeDay: highestIncomeDay ? {
-          date: highestIncomeDay.date,
+          date: highestIncomeDay.date + 'T12:00:00.000Z',
           amount: highestIncomeDay.income
         } : null,
         weekdayActivity
