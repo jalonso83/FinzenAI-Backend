@@ -78,23 +78,31 @@ export class NotificationService {
         }
       });
 
-      // Crear preferencias de notificación si no existen
-      await prisma.notificationPreferences.upsert({
-        where: { userId },
-        update: {},
-        create: {
-          userId,
-          emailSyncEnabled: true,
-          budgetAlertsEnabled: true,
-          goalRemindersEnabled: true,
-          weeklyReportEnabled: true,
-          tipsEnabled: true,
-          budgetAlertThreshold: 80,
-          antExpenseAlertsEnabled: true,
-          antExpenseAlertThreshold: 20,
-          trialNotificationsEnabled: true
-        }
-      });
+      // Crear preferencias de notificación si no existen. El upsert puede chocar con
+      // P2002 (unique en userId) si dos registros de device concurrentes intentan
+      // crear la fila a la vez (race al abrir la app): en ese caso la fila ya quedó
+      // creada por la otra request → lo tratamos como éxito, no como error.
+      try {
+        await prisma.notificationPreferences.upsert({
+          where: { userId },
+          update: {},
+          create: {
+            userId,
+            emailSyncEnabled: true,
+            budgetAlertsEnabled: true,
+            goalRemindersEnabled: true,
+            weeklyReportEnabled: true,
+            tipsEnabled: true,
+            budgetAlertThreshold: 80,
+            antExpenseAlertsEnabled: true,
+            antExpenseAlertThreshold: 20,
+            trialNotificationsEnabled: true
+          }
+        });
+      } catch (prefErr: any) {
+        if (prefErr?.code !== 'P2002') throw prefErr;
+        // P2002: la fila de preferencias ya existe (creada por una request concurrente). OK.
+      }
 
       logger.log(`[NotificationService] Device registered for user ${userId}: ${device.id}`);
       return { success: true, deviceId: device.id };

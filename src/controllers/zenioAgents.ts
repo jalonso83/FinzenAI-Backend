@@ -186,7 +186,7 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
       return { success: true, message: `Transacción registrada: ${tx.category.name} por RD$${amount.toLocaleString('es-DO')}`, transaction: tx, action: 'transaction_created' };
     }
     case 'list': {
-      const where: any = { user_id: userId };
+      const where: any = { userId };
       if (filtros_busqueda?.type) where.type = filtros_busqueda.type === 'gasto' ? 'EXPENSE' : 'INCOME';
       if (filtros_busqueda?.category) {
         const cat = await prisma.category.findFirst({ where: { name: { equals: filtros_busqueda.category, mode: 'insensitive' } } });
@@ -204,7 +204,7 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
     }
     case 'update': {
       if (!transaction_data) throw new Error('Datos de transacción requeridos');
-      if (!criterios_identificacion) throw new Error('Criterios de identificación requeridos para update');
+      if (!criterios_identificacion) return { success: false, message: 'Necesito saber cuál transacción actualizar (indica monto, categoría, fecha o tipo).' };
 
       const where: any = { userId };
       if (criterios_identificacion.amount) where.amount = parseFloat(criterios_identificacion.amount);
@@ -233,7 +233,7 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
       return { success: true, message: 'Transacción actualizada.', transaction: updated, action: 'transaction_updated' };
     }
     case 'delete': {
-      if (!criterios_identificacion) throw new Error('Criterios de identificación requeridos para delete');
+      if (!criterios_identificacion) return { success: false, message: 'Necesito saber cuál transacción eliminar (indica monto, categoría, fecha o tipo).' };
 
       const where: any = { userId };
       if (criterios_identificacion.amount) where.amount = parseFloat(criterios_identificacion.amount);
@@ -405,7 +405,7 @@ async function handleGoal(args: any, userId: string, categories?: any[]): Promis
     case 'update': {
       if (!goal_data) throw new Error('Datos de meta requeridos para update');
       const { criterios_identificacion } = args;
-      if (!criterios_identificacion) throw new Error('Criterios de identificación requeridos para update');
+      if (!criterios_identificacion) return { success: false, message: 'Necesito saber cuál meta actualizar (indica su nombre).' };
 
       const where: any = { userId, isActive: true, isCompleted: false };
       if (criterios_identificacion.name) where.name = { contains: criterios_identificacion.name, mode: 'insensitive' };
@@ -445,7 +445,7 @@ async function handleGoal(args: any, userId: string, categories?: any[]): Promis
     }
     case 'delete': {
       const { criterios_identificacion } = args;
-      if (!criterios_identificacion) throw new Error('Criterios de identificación requeridos para delete');
+      if (!criterios_identificacion) return { success: false, message: 'Necesito saber cuál meta eliminar (indica su nombre).' };
 
       const where: any = { userId, isActive: true, isCompleted: false };
       if (criterios_identificacion.name) where.name = { contains: criterios_identificacion.name, mode: 'insensitive' };
