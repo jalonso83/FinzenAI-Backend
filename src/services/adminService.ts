@@ -2046,6 +2046,7 @@ export class AdminService {
     const bySourceRaw = await prisma.$queryRawUnsafe<
       {
         source: string;
+        medium: string | null;
         campaign: string | null;
         visitors: bigint;
         leads: bigint;
@@ -2058,6 +2059,7 @@ export class AdminService {
       WITH events_lifetime AS (
         SELECT
           COALESCE("source", 'Directo') as source,
+          "medium",
           "campaign",
           "eventName",
           "userId",
@@ -2087,6 +2089,7 @@ export class AdminService {
       )
       SELECT
         e.source,
+        e."medium",
         e."campaign",
         COUNT(DISTINCT CASE WHEN e."eventName" = 'PageView' THEN COALESCE(e."anonymousId", e."userId") END)::bigint as visitors,
         COUNT(CASE WHEN e."eventName" = 'Lead' THEN 1 END)::bigint as leads,
@@ -2100,7 +2103,7 @@ export class AdminService {
       FROM events_lifetime e
       LEFT JOIN revenue_by_source_campaign rs
         ON rs.source = e.source AND rs."campaign" IS NOT DISTINCT FROM e."campaign"
-      GROUP BY e.source, e."campaign", rs.subs, rs.revenue
+      GROUP BY e.source, e."medium", e."campaign", rs.subs, rs.revenue
       ORDER BY visitors DESC
       `,
     );
@@ -2128,6 +2131,7 @@ export class AdminService {
         const cost = costMap.get(costKey(row.source ?? 'Directo', row.campaign));
         return {
           source: row.source ?? 'Directo',
+          medium: row.medium ?? null,
           campaign: row.campaign ?? null,
           visitors,
           leads: Number(row.leads),
