@@ -841,7 +841,17 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
       if (!autoGreeting && !isOnboarding) {
         // zenioQueriesUsed = cuota mensual (se resetea); zenioMessagesTotal = acumulado
         // de por vida para la métrica de engagement del dashboard.
-        const updatedSub = await prisma.subscription.update({ where: { userId }, data: { zenioQueriesUsed: { increment: 1 }, zenioMessagesTotal: { increment: 1 } } });
+        // EXENCIÓN (activación / H13): si el mensaje REGISTRÓ una transacción, NO se
+        // consume la cuota mensual — para no penalizar el hábito de anotar gastos por
+        // Zenio. Igual cuenta como interacción para la métrica de engagement.
+        const registroTransaccion = executedActions.some((a: any) => a.action === 'transaction_created');
+        const updatedSub = await prisma.subscription.update({
+          where: { userId },
+          data: {
+            zenioMessagesTotal: { increment: 1 },
+            ...(registroTransaccion ? {} : { zenioQueriesUsed: { increment: 1 } }),
+          },
+        });
         const limit = zenioLimit;
         zenioUsage = { used: updatedSub.zenioQueriesUsed, limit, remaining: limit === -1 ? -1 : Math.max(0, limit - updatedSub.zenioQueriesUsed) };
       }
