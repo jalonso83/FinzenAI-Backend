@@ -170,7 +170,14 @@ export class OpenAiUsageService {
           });
         }
       });
-    } catch (error) {
+    } catch (error: unknown) {
+      // P2003 (FK violation): el usuario fue BORRADO entre que se acumuló el log en
+      // memoria y este procesamiento batch (cada 5 min). No hay nada que registrar —
+      // la cuenta ya no existe. Se omite en silencio, no es un error.
+      if ((error as { code?: string })?.code === 'P2003') {
+        logger.log(`[OpenAI Usage] Usuario ${userId} ya no existe (borrado); se omite el registro de uso.`);
+        return;
+      }
       logger.error('[OpenAI Usage] Error registrando uso:', error);
       throw error;
     }
