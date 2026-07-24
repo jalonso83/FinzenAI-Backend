@@ -11,6 +11,7 @@
 import { Request, Response } from 'express';
 import OpenAI from 'openai';
 import { prisma } from '../lib/prisma';
+import { onValidTransaction as onValidTransactionH13 } from '../services/h13/h13Service';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
 import { stripFileCitations } from '../utils/stripFileCitations';
@@ -577,6 +578,11 @@ async function insertTransaction(transactionData: any, userId: string, categorie
     const { analyzeAndDispatchTransactionEvents } = await import('./transactions');
     await analyzeAndDispatchTransactionEvents(userId, newTransaction);
   } catch (error) { logger.error('[ZenioV2] Error dispatching gamification event:', error); }
+
+  // H13 · asignar brazo en la 1ª TX válida. IMPORTANTE: el onboarding crea la 1ª TX
+  // por esta ruta (zenioV2), así que sin este hook esos usuarios quedarían fuera del
+  // experimento de forma permanente (sesgo de muestra). Best-effort.
+  try { await onValidTransactionH13(userId, newTransaction.id); } catch {}
 
   const categoryRecord = await prisma.category.findUnique({ where: { id: categoryValidation.categoryId! } });
 

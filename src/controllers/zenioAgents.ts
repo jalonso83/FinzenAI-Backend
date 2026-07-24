@@ -15,6 +15,7 @@ import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
 import { stripFileCitations } from '../utils/stripFileCitations';
+import { onValidTransaction as onValidTransactionH13 } from '../services/h13/h13Service';
 import { ZENIO_MODEL, ZENIO_TEMPERATURE } from '../config/zenioPrompt';
 import { OpenAiUsageService } from '../services/openAiUsageService';
 import { calculateOpenAICost } from '../config/openaiPricing';
@@ -182,6 +183,11 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
       if (type === 'EXPENSE') {
         try { await recalculateBudgetSpent(userId, cv.categoryId!, tx.date); } catch {}
       }
+
+      // H13 · Reto de la Primera Semana: asignar brazo en la 1ª TX válida. MISMO
+      // hook que el controller REST — sin esto, los registros por Zenio (que el
+      // reto incentiva) quedarían fuera del experimento. Best-effort.
+      try { await onValidTransactionH13(userId, tx.id); } catch {}
 
       return { success: true, message: `Transacción registrada: ${tx.category.name} por RD$${amount.toLocaleString('es-DO')}`, transaction: tx, action: 'transaction_created' };
     }

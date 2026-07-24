@@ -5,6 +5,7 @@ import { GamificationService } from '../services/gamificationService';
 import { NotificationService } from '../services/notificationService';
 import { merchantMappingService } from '../services/merchantMappingService';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
+import { onValidTransaction as onValidTransactionH13 } from '../services/h13/h13Service';
 
 import { logger } from '../utils/logger';
 // Función inteligente para analizar y disparar eventos de gamificación
@@ -567,6 +568,13 @@ export const createTransaction = async (req: Request, res: Response) => {
     } catch (error) {
       logger.error('Error dispatching gamification events:', error);
       // No fallar la transacción por error de gamificación
+    }
+
+    // H13 · Reto de la Primera Semana: asignar brazo en la 1ª TX válida (best-effort).
+    try {
+      await onValidTransactionH13(userId, transaction.id);
+    } catch (error) {
+      logger.error('Error en hook H13:', error);
     }
 
     return res.status(201).json({

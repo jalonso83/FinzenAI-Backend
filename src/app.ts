@@ -50,6 +50,7 @@ import exchangeRateRoutes from './routes/exchangeRates';
 import openaiCostsRoutes from './routes/openaiCosts';
 import eventsRoutes from './routes/events';
 import feedbackRoutes from './routes/feedback';
+import h13Routes from './routes/h13';
 import configRoutes from './routes/config';
 import announcementsRoutes from './routes/announcements';
 import agentRoutes from './routes/agent';
@@ -179,6 +180,7 @@ app.use('/api/admin/openai-costs', openaiCostsRoutes);
 app.use('/api/exchange-rates', exchangeRateRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/h13', h13Routes);
 app.use('/api/config', configRoutes);
 app.use('/api/announcements', announcementsRoutes);
 app.use('/api/agent', agentRoutes); // Agent API (agente de crecimiento, auth por x-agent-key)

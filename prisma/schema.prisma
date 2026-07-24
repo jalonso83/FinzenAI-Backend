@@ -107,6 +107,11 @@ model User {
   // Feedback enviado por el usuario desde la app
   feedback Feedback[]
 
+  // Experimentos — tablas GENÉRICAS keyed por experimentKey (no una tabla por
+  // experimento). Un usuario puede participar en varios experimentos a la vez.
+  experimentParticipations ExperimentParticipant[]
+  experimentEvents         ExperimentEvent[]
+
   @@map("users")
 }
 
@@ -1277,6 +1282,51 @@ model CampaignCost {
   @@unique([source, campaign])
   @@index([source])
   @@map("campaign_costs")
+}
+
+// ─── Experimentos (infra GENÉRICA para A/B con estado) ─────────────
+//
+// Dos tablas sirven a TODOS los experimentos, keyed por `experimentKey` ('h13',
+// 'h15', ...). Un experimento nuevo = nuevo key + código, CERO cambios de schema.
+//
+// - Asignación de brazo: se computa por hash determinístico (ver config/h13.ts,
+//   patrón `userBucket`), NO se guarda aquí. Estas tablas son para el ESTADO del
+//   flujo (que no se puede recalcular) y la instrumentación.
+// - experiment_participants: 1 fila por (usuario, experimento). `state` es columna
+//   indexable; `data` (JSON) lleva lo específico del experimento (para H13:
+//   reminderHour, daysWithTx, analysisReportId, etc. — tipado en TS, ver h13Service).
+// - experiment_events: instrumentación cruda del funnel del experimento. Insert
+//   plano, SIN los side-effects de gamification_events.
+
+model ExperimentParticipant {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  experimentKey String   // 'h13', 'h15', ...
+  arm           String   // 'reto' | 'control' | ...
+  state         String?  // estado del flujo (indexable): ASSIGNED|OFFERED|ACTIVE|COMPLETED...
+  data          Json?    // campos específicos del experimento (tipados en el service)
+  assignedAt    DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, experimentKey])
+  @@index([experimentKey, state])
+  @@index([experimentKey, arm])
+  @@map("experiment_participants")
+}
+
+model ExperimentEvent {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  experimentKey String   // 'h13', ...
+  eventType     String   // h13_offer_accepted, h13_cue_sent, ...
+  props         Json?
+  createdAt     DateTime @default(now())
+
+  @@index([experimentKey, eventType, createdAt])
+  @@index([userId, experimentKey])
+  @@map("experiment_events")
 }
 
 // ─── User Feedback ─────────────────────────────────────────────────
