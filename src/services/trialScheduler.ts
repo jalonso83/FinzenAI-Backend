@@ -3,6 +3,7 @@ import { NotificationType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { NotificationService } from './notificationService';
 import { EmailSyncService } from './emailSyncService';
+import { isInActiveReto } from './h13/h13Service';
 
 import { logger } from '../utils/logger';
 // Tipos de notificación de trial y sus días correspondientes
@@ -134,6 +135,14 @@ export class TrialScheduler {
               await this.handleTrialEnded(subscription.id, user.id);
               trialsEnded++;
             }
+            continue;
+          }
+
+          // H13 · Suprimir las notificaciones de onboarding de trial mientras el usuario
+          // está en el Reto de la Primera Semana (evita sobre-notificación). La
+          // expiración (STEP 0 arriba) NO se suprime — ya se procesó.
+          if (await isInActiveReto(user.id)) {
+            skipped++;
             continue;
           }
 

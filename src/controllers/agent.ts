@@ -122,6 +122,46 @@ export const getAgentKpis = async (req: Request, res: Response) => {
   }
 };
 
+// GET /api/agent/acquisition-window?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Adquisición por (source, medium, campaign) de una ventana de días en HORA RD.
+// Sin parámetros: última semana completa lunes→domingo. Alimenta el export
+// semanal de KPIs sociales, que Kaizen escribe como CSV en Drive.
+//
+// OJO — no confundir con kpis.acquisition.by_source: ese es LIFETIME a propósito
+// (ignora from/to porque cruza costos por campaña sin granularidad temporal).
+// Para cualquier métrica "de esta semana" hay que usar ESTE endpoint.
+export const getAgentAcquisitionWindow = async (req: Request, res: Response) => {
+  try {
+    const data = await AdminService.getAcquisitionWindow({
+      from: req.query.from as string | undefined,
+      to: req.query.to as string | undefined,
+    });
+
+    return res.json({
+      window: {
+        start: data.window.from,
+        end: data.window.to,
+        timezone: data.window.timezone,
+      },
+      rows: data.rows.map((r) => ({
+        source: r.source,
+        campaign: r.campaign,
+        medium: r.medium,
+        visitors: r.visitors,
+        leads: r.leads,
+        leads_unicos: r.leadsUnicos,
+      })),
+    });
+  } catch (error: any) {
+    // Validación de from/to → 400 (el consumidor puede corregir y reintentar).
+    if (error instanceof Error && /"from"|"to"|ventana es demasiado amplia/.test(error.message)) {
+      return res.status(400).json({ message: error.message, error: 'Bad request' });
+    }
+    logger.error('[AgentAPI] Error en getAgentAcquisitionWindow:', error);
+    return res.status(500).json({ message: 'Error calculando adquisición', error: 'Internal server error' });
+  }
+};
+
 // GET /api/agent/segments — catálogo de segmentos curados (capa semántica).
 export const listAgentSegments = (_req: Request, res: Response) => {
   return res.json({

@@ -186,10 +186,18 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
 
       // H13 · Reto de la Primera Semana: asignar brazo en la 1ª TX válida. MISMO
       // hook que el controller REST — sin esto, los registros por Zenio (que el
-      // reto incentiva) quedarían fuera del experimento. Best-effort.
-      try { await onValidTransactionH13(userId, tx.id); } catch {}
+      // reto incentiva) quedarían fuera del experimento. Devuelve el micro-insight
+      // si el reto está en curso, para que Zenio lo incluya en su respuesta. Best-effort.
+      let h13Insight: string | undefined;
+      try { const r = await onValidTransactionH13(userId, tx.id); h13Insight = r?.insight; } catch {}
 
-      return { success: true, message: `Transacción registrada: ${tx.category.name} por RD$${amount.toLocaleString('es-DO')}`, transaction: tx, action: 'transaction_created' };
+      const baseMsg = `Transacción registrada: ${tx.category.name} por RD$${amount.toLocaleString('es-DO')}`;
+      return {
+        success: true,
+        message: h13Insight ? `${baseMsg}. ${h13Insight}` : baseMsg,
+        transaction: tx,
+        action: 'transaction_created',
+      };
     }
     case 'list': {
       const where: any = { userId };

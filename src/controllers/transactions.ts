@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
-import { MappingSource } from '@prisma/client';
+import { MappingSource, RecurrenceFrequency } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { NotificationService } from '../services/notificationService';
 import { merchantMappingService } from '../services/merchantMappingService';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 import { onValidTransaction as onValidTransactionH13 } from '../services/h13/h13Service';
+import { VALID_FREQUENCIES, isValidFrequency } from '../config/recurringConfig';
 
 import { logger } from '../utils/logger';
 // Función inteligente para analizar y disparar eventos de gamificación
@@ -352,6 +353,109 @@ export async function recalculateBudgetSpent(userId: string, categoryId: string,
   await prisma.$transaction(updates);
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// NÚCLEO COMPARTIDO DE CREACIÓN DE TRANSACCIONES
+//
+// Toda transacción, venga de donde venga (el usuario desde la app, o el cron
+// de recurrentes), tiene que pasar por aquí. Antes esta lógica vivía inline
+// dentro del handler HTTP `createTransaction`, así que cualquier otro camino
+// que hiciera `prisma.transaction.create()` por su cuenta se saltaba en
+// silencio el recálculo del `spent` de los presupuestos, las alertas y la
+// gamificación — el dinero aparecía en la lista pero el presupuesto seguía
+// diciendo que no habías gastado.
+//
+// `engagementHooks` distingue los dos casos de uso:
+//   - true  (default, usuario real): dispara gamificación + hook de H13.
+//   - false (cron de recurrentes): NO los dispara. Son señales de actividad
+//     del usuario — darle racha y FinScore por un pago que registró un cron
+//     mientras dormía inflaría el score y rompería el significado de la racha.
+//   El impacto financiero (presupuesto, alertas, reportes) SÍ ocurre siempre.
+// ─────────────────────────────────────────────────────────────────────────
+export interface CreateTransactionCoreInput {
+  userId: string;
+  amount: number;
+  type: 'INCOME' | 'EXPENSE';
+  category_id: string;
+  description?: string | null;
+  date?: Date;
+  recurringId?: string | null;
+  engagementHooks?: boolean;
+}
+
+export async function createTransactionCore(
+  input: CreateTransactionCoreInput
+): Promise<{ transaction: any; h13Insight?: string }> {
+  const {
+    userId,
+    amount,
+    type,
+    category_id,
+    description,
+    date,
+    recurringId = null,
+    engagementHooks = true,
+  } = input;
+
+  const transaction = await prisma.transaction.create({
+    data: {
+      userId,
+      amount,
+      type,
+      category_id,
+      description,
+      date: date ?? new Date(),
+      recurringId,
+    },
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          type: true,
+          isDefault: true
+        }
+      }
+    }
+  });
+
+  // Recalcular presupuesto si es gasto
+  if (type === 'EXPENSE') {
+    await recalculateBudgetSpent(userId, category_id, transaction.date);
+
+    // Verificar y enviar alertas de presupuesto
+    try {
+      await NotificationService.checkBudgetAlerts(userId, category_id, amount, transaction.date);
+    } catch (error) {
+      logger.error('Error checking budget alerts:', error);
+    }
+  }
+
+  if (!engagementHooks) {
+    return { transaction };
+  }
+
+  // Analizar y disparar eventos de gamificación inteligentes
+  try {
+    await analyzeAndDispatchTransactionEvents(userId, transaction);
+  } catch (error) {
+    logger.error('Error dispatching gamification events:', error);
+    // No fallar la transacción por error de gamificación
+  }
+
+  // H13 · Reto de la Primera Semana: asignar brazo en la 1ª TX válida y, si el reto
+  // está en curso, obtener el micro-insight para mostrarlo (best-effort).
+  let h13Insight: string | undefined;
+  try {
+    const r = await onValidTransactionH13(userId, transaction.id);
+    h13Insight = r?.insight;
+  } catch (error) {
+    logger.error('Error en hook H13:', error);
+  }
+
+  return { transaction, h13Insight };
+}
+
 // Tipos para las peticiones
 interface CreateTransactionRequest {
   amount: number;
@@ -359,6 +463,9 @@ interface CreateTransactionRequest {
   category_id: string;
   description?: string;
   date?: string;
+  // La frecuencia se tipa desde el enum de Prisma, no como unión literal, para
+  // que agregar una frecuencia al schema no deje este tipo desactualizado.
+  recurrence?: { frequency: RecurrenceFrequency } | null;
 }
 
 interface UpdateTransactionRequest {
@@ -492,7 +599,7 @@ export const getTransactionById = async (req: Request, res: Response) => {
 export const createTransaction = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { amount, type, category_id, description, date }: CreateTransactionRequest = req.body;
+    const { amount, type, category_id, description, date, recurrence }: CreateTransactionRequest = req.body;
 
     // Validaciones
     if (!amount || !type || !category_id) {
@@ -516,6 +623,13 @@ export const createTransaction = async (req: Request, res: Response) => {
       });
     }
 
+    if (recurrence && !isValidFrequency(recurrence.frequency)) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: `Recurrence frequency must be one of: ${VALID_FREQUENCIES.join(', ')}`
+      });
+    }
+
     // Verificar que la categoría existe
     const category = await prisma.category.findUnique({
       where: { id: category_id }
@@ -528,58 +642,57 @@ export const createTransaction = async (req: Request, res: Response) => {
       });
     }
 
-    const transaction = await prisma.transaction.create({
-      data: {
-        userId,
-        amount,
-        type,
-        category_id,
-        description,
-        date: date ? new Date(date) : new Date()
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            icon: true,
-            type: true,
-            isDefault: true
-          }
-        }
-      }
+    const { transaction, h13Insight } = await createTransactionCore({
+      userId,
+      amount,
+      type,
+      category_id,
+      description,
+      date: date ? new Date(date) : new Date(),
     });
 
-    // Recalcular presupuesto si es gasto
-    if (type === 'EXPENSE') {
-      await recalculateBudgetSpent(userId, category_id, transaction.date);
-
-      // Verificar y enviar alertas de presupuesto
+    // Si el usuario marcó "repetir automáticamente", además de la transacción de
+    // hoy queda la regla. La primera ocurrencia generada es la SIGUIENTE — la de
+    // hoy es esta misma, que acabamos de crear.
+    // Best-effort a propósito: si falla la regla, la transacción ya quedó
+    // registrada y no tiene sentido devolverle un error al usuario por eso.
+    let recurringRule = null;
+    if (recurrence) {
       try {
-        await NotificationService.checkBudgetAlerts(userId, category_id, amount, transaction.date);
+        // Import dinámico a propósito: recurringTransactionService importa
+        // `createTransactionCore` de este mismo archivo. Un import estático de
+        // vuelta cerraría el ciclo y, en CommonJS, uno de los dos módulos vería
+        // al otro a medio inicializar. Mismo patrón que ya usa zenioV2.ts.
+        const { createRecurringRule } = await import('../services/recurringTransactionService');
+        recurringRule = await createRecurringRule({
+          userId,
+          amount,
+          type,
+          category_id,
+          description,
+          frequency: recurrence.frequency,
+          startDate: transaction.date,
+        });
+
+        // Vincular la transacción que originó la regla. Sin esto, la app no le
+        // pone el badge 🔄 ni le muestra "Dejar de repetir": el usuario que
+        // acaba de activar la repetición abre justo ESA transacción para
+        // cancelarla y no encuentra el botón.
+        await prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { recurringId: recurringRule.id },
+        });
+        transaction.recurringId = recurringRule.id;
       } catch (error) {
-        logger.error('Error checking budget alerts:', error);
+        logger.error('Error creando regla de recurrencia:', error);
       }
-    }
-
-    // Analizar y disparar eventos de gamificación inteligentes
-    try {
-      await analyzeAndDispatchTransactionEvents(userId, transaction);
-    } catch (error) {
-      logger.error('Error dispatching gamification events:', error);
-      // No fallar la transacción por error de gamificación
-    }
-
-    // H13 · Reto de la Primera Semana: asignar brazo en la 1ª TX válida (best-effort).
-    try {
-      await onValidTransactionH13(userId, transaction.id);
-    } catch (error) {
-      logger.error('Error en hook H13:', error);
     }
 
     return res.status(201).json({
       message: 'Transaction created successfully',
-      transaction
+      transaction,
+      ...(recurringRule ? { recurring: recurringRule } : {}),
+      ...(h13Insight ? { h13Insight } : {}),
     });
   } catch (error) {
     logger.error('Create transaction error:', error);

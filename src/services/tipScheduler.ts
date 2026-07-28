@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { TipEngineService } from './tipEngineService';
 import { logger } from '../utils/logger';
 import { isTargetLocalTime, isInQuietHours, getCurrentLocalTime, getTimezoneByCountry } from '../utils/timezone';
+import { isInActiveReto } from './h13/h13Service';
 
 /**
  * Scheduler para tips financieros
@@ -174,6 +175,13 @@ export class TipScheduler {
           // Verificar horario silencioso
           const prefs = user.notificationPreferences;
           if (prefs && isInQuietHours(user.country, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+            tipsSkipped++;
+            continue;
+          }
+
+          // H13 · Suprimir tips mientras el usuario está en el Reto de la Primera Semana
+          // (evita sobre-notificación durante los 7 días del reto).
+          if (await isInActiveReto(user.id)) {
             tipsSkipped++;
             continue;
           }

@@ -16,8 +16,11 @@ import { BudgetReminderScheduler } from './services/budgetReminderScheduler';
 import { WeeklyReportScheduler } from './services/weeklyReportScheduler';
 import { ExchangeRateScheduler } from './services/exchangeRateScheduler';
 import { AttributionRetryScheduler } from './services/attributionRetryScheduler';
+import { RecurringTransactionScheduler } from './services/recurringTransactionScheduler';
+import { H13CueScheduler } from './services/h13/h13CueScheduler';
 import startOpenAiUsageProcessor from './schedulers/openaiUsageProcessor';
 import { validateReferralConfig } from './config/referralConfig';
+import { validateRecurringConfig } from './config/recurringConfig';
 import { initPrices } from './controllers/investment';
 
 // Force deployment trigger - Email Sync Integration
@@ -25,6 +28,7 @@ import { initPrices } from './controllers/investment';
 // Importar rutas
 import authRoutes from './routes/auth';
 import transactionRoutes from './routes/transactions';
+import recurringTransactionRoutes from './routes/recurringTransactions';
 import budgetRoutes from './routes/budgets';
 import zenioRoutes from './routes/zenio';
 import zenioV2Routes from './routes/zenioV2';
@@ -157,6 +161,7 @@ app.use('/api', apiLimiter);
 // Rutas API
 app.use('/api/auth', authRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/recurring-transactions', recurringTransactionRoutes);
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/zenio', zenioRoutes);
 app.use('/api/zenio/v2', zenioV2Routes);
@@ -223,12 +228,21 @@ async function startServer() {
     // Validar configuración de referidos
     validateReferralConfig();
 
+    // Validar configuración de recurrentes (hora local y catch-up en rango)
+    validateRecurringConfig();
+
     // Conectar a la base de datos
     await prisma.$connect();
     logger.log('✅ Database connected successfully');
 
     // Iniciar scheduler de renovación de presupuestos
     BudgetScheduler.startScheduler();
+
+    // Iniciar scheduler de gastos/ingresos recurrentes.
+    // Va DESPUÉS de BudgetScheduler a propósito (ver comentario en el propio
+    // scheduler): las transacciones automáticas del día 1 tienen que caer sobre
+    // el presupuesto ya renovado, no sobre el del mes anterior.
+    RecurringTransactionScheduler.startScheduler();
 
     // Iniciar scheduler de sincronizacion de emails
     EmailSyncScheduler.startScheduler();
@@ -262,6 +276,10 @@ async function startServer() {
 
     // Iniciar scheduler de retry de eventos de attribution (cada 5 min)
     AttributionRetryScheduler.startScheduler();
+
+    // Iniciar scheduler del cue diario de H13 (cada hora, timezone-aware).
+    // No-op salvo que H13_ENABLED esté activo y haya retos ACTIVE.
+    H13CueScheduler.startScheduler();
 
     // Iniciar scheduler de procesamiento de uso de OpenAI (cada 5 minutos)
     startOpenAiUsageProcessor();

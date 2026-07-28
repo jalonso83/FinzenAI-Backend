@@ -56,6 +56,9 @@ model User {
   transactions     Transaction[]
   goals            Goal[]
 
+  // Gastos/ingresos recurrentes definidos por el usuario
+  recurringTransactions RecurringTransaction[]
+
   // Gamificación
   gamificationEvents    GamificationEvent[]
   finScoreHistory       FinScoreHistory[]
@@ -128,7 +131,58 @@ model Transaction {
   category    Category        @relation(fields: [category_id], references: [id])
   user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // Recurrencia: si esta transacción la generó automáticamente una regla, aquí
+  // queda de qué regla vino (NULL = la creó el usuario a mano, Zenio o email sync).
+  // onDelete: SetNull — borrar la regla NO borra el historial ya registrado.
+  recurringId String?
+  recurring   RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+
+  // Idempotencia del cron: una regla no puede generar dos transacciones para el
+  // mismo día. Sin esto, un reinicio de Railway a la hora del cron duplica los
+  // pagos. Postgres permite múltiples NULL, así que no afecta a las manuales.
+  @@unique([recurringId, date])
+  @@index([recurringId])
   @@map("transactions")
+}
+
+// Regla de recurrencia — "esto se repite cada X". No es una transacción: es la
+// plantilla desde la que el cron (RecurringTransactionScheduler) genera
+// Transaction reales, que a su vez impactan presupuestos, alertas y reportes
+// exactamente igual que una transacción hecha a mano.
+model RecurringTransaction {
+  id          String              @id @default(cuid())
+  userId      String
+  amount      Float
+  type        TransactionType
+  description String? // descripción base, SIN el sufijo "· Pago automático"
+  category_id String
+  frequency   RecurrenceFrequency
+
+  // startDate es el ancla del cálculo, no solo un dato: para MONTHLY define el
+  // día del mes (creaste el 8 → todos los 8) y para WEEKLY el día de la semana.
+  // Guardarlo permite que el 31 de enero siga cayendo 31 en marzo (si se
+  // calculara desde la última ocurrencia, febrero lo degradaría a 28 para siempre).
+  startDate   DateTime
+  nextRunDate DateTime // próxima ejecución programada (medianoche UTC del día)
+  lastRunAt   DateTime?
+  isActive    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  category     Category      @relation(fields: [category_id], references: [id])
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([isActive, nextRunDate])
+  @@index([userId, isActive])
+  @@map("recurring_transactions")
+}
+
+enum RecurrenceFrequency {
+  WEEKLY // cada 7 días, mismo día de la semana
+  BIWEEKLY // día 15 y último día del mes (la "quincena")
+  MONTHLY // mismo día del mes que la original
 }
 
 model Budget {
@@ -180,6 +234,8 @@ model Category {
   transactions     Transaction[]
   goals            Goal[]
   merchantMappings MerchantCategoryMapping[]
+
+  recurringTransactions RecurringTransaction[]
 
   @@map("categories")
 }
@@ -796,6 +852,7 @@ enum NotificationType {
   TRIAL_ENDED
   MARKETING       // broadcast: ofertas, promociones (opt-out independiente)
   ANNOUNCEMENT    // broadcast: novedades / cambios de producto
+  RECURRING_TRANSACTION // el cron registró un gasto/ingreso automático
 }
 
 enum NotificationStatus {

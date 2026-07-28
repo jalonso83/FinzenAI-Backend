@@ -55,6 +55,41 @@ function pctChange(current: number, previous: number): number {
   return Math.round(((current - previous) / previous) * 10000) / 100;
 }
 
+// ─── Ventana de días en hora RD (getAcquisitionWindow) ───────────────────
+// eventTime es TIMESTAMP(3) SIN zona y guarda UTC. Para cortar por día local
+// convertimos los BORDES de la ventana a UTC, no la columna:
+//   ('2026-07-20 00:00' AT TIME ZONE 'America/Santo_Domingo') AT TIME ZONE 'UTC'
+// Así la comparación sigue usando el índice de eventTime y queda correcta
+// aunque cambien las reglas de horario de verano.
+const RD_TIMEZONE = 'America/Santo_Domingo';
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_WINDOW_DAYS = 370;
+
+/** Fecha de hoy (YYYY-MM-DD) en hora RD, sin depender de la TZ del proceso. */
+function todayInRD(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: RD_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/**
+ * Última semana COMPLETA lunes→domingo en hora RD.
+ * OJO: "completa" = ya terminó. Si esto corre un domingo, devuelve la semana
+ * anterior, no la que está en curso — el job que lo consuma debe correr el lunes.
+ */
+function lastCompleteWeekRD(): { from: string; to: string } {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  // Medianoche UTC de la fecha de calendario RD: aritmética de días sin TZ de por medio.
+  const today = new Date(`${todayInRD()}T00:00:00Z`);
+  const daysSinceMonday = (today.getUTCDay() + 6) % 7; // 0 = lunes
+  const thisMonday = today.getTime() - daysSinceMonday * DAY_MS;
+  const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  return { from: isoDay(thisMonday - 7 * DAY_MS), to: isoDay(thisMonday - DAY_MS) };
+}
+
 // Margen de seguridad para trackingStartDate (60s).
 // Razón: cuando un user se registra, el flow es:
 //   T=0ms      INSERT user (user.createdAt = T0)
@@ -1980,15 +2015,21 @@ export class AdminService {
     };
 
     // Eventos por día — serie temporal del periodo seleccionado.
-    // DATE_TRUNC con AT TIME ZONE 'America/Santo_Domingo' (UTC-4) para que
-    // el bucketing diario refleje el día local del negocio, no UTC.
+    // El bucketing diario refleja el día local del negocio (RD), no UTC.
+    //
+    // OJO con la doble conversión: eventTime es TIMESTAMP(3) SIN zona y guarda
+    // UTC. Un solo `AT TIME ZONE 'America/Santo_Domingo'` sobre esa columna
+    // INTERPRETA el valor como si ya fuera hora RD y corre el corte +4h en vez
+    // de -4h (todo el tráfico de 8PM-medianoche RD caía en el día siguiente).
+    // La forma correcta es marcar primero el valor como UTC y después llevarlo
+    // a RD: "eventTime" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santo_Domingo'.
     // Para PageView usamos COUNT(DISTINCT) — los demás eventos cuentan por user único.
     const eventsByDayRaw = await prisma.$queryRawUnsafe<
       { day: string; eventName: string; cnt: bigint }[]
     >(
       `
       SELECT
-        TO_CHAR(DATE_TRUNC('day', "eventTime" AT TIME ZONE 'America/Santo_Domingo'), 'YYYY-MM-DD') as day,
+        TO_CHAR(DATE_TRUNC('day', "eventTime" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santo_Domingo'), 'YYYY-MM-DD') as day,
         "eventName",
         CASE
           WHEN "eventName" = 'PageView' THEN COUNT(DISTINCT COALESCE("anonymousId", "userId"))::bigint
@@ -2173,6 +2214,102 @@ export class AdminService {
         historicalUsersCount,
       },
       period: { from: from.toISOString(), to: to.toISOString() },
+    };
+  }
+
+  // ─── ACQUISITION WINDOW (export semanal de KPIs sociales) ─────────────
+  /**
+   * Adquisición agregada por (source, medium, campaign) DENTRO de una ventana
+   * de días en hora RD.
+   *
+   * Complementa —no reemplaza— a getAcquisition().bySource, que es LIFETIME a
+   * propósito: allá se cruzan costos manuales por campaña, que no tienen
+   * granularidad temporal, y mezclarlos con métricas por fecha daría CPL/CAC
+   * engañosos. Aquí NO se devuelve costo ni revenue (solo adquisición), así que
+   * la ventana temporal es segura.
+   *
+   * from/to son días INCLUSIVOS 'YYYY-MM-DD' en hora RD. Sin parámetros: última
+   * semana completa lunes→domingo.
+   *
+   * `leads` es raw (cada click al CTA de descarga cuenta) y `leadsUnicos` es
+   * distinct por identidad — esta última equivale a la columna "Registros" del
+   * dashboard de adquisición.
+   */
+  static async getAcquisitionWindow(query: { from?: string; to?: string }) {
+    const fallback = lastCompleteWeekRD();
+    const from = query.from || fallback.from;
+    const to = query.to || fallback.to;
+
+    if (!DATE_ONLY_RE.test(from) || !DATE_ONLY_RE.test(to)) {
+      throw new Error('Los parámetros "from" y "to" deben ser fechas YYYY-MM-DD');
+    }
+    if (from > to) {
+      throw new Error('"from" debe ser anterior o igual a "to"');
+    }
+    const spanDays =
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
+    if (!Number.isFinite(spanDays)) {
+      throw new Error('Los parámetros "from" y "to" deben ser fechas YYYY-MM-DD válidas');
+    }
+    if (spanDays + 1 > MAX_WINDOW_DAYS) {
+      throw new Error(`La ventana es demasiado amplia (máximo ${MAX_WINDOW_DAYS} días)`);
+    }
+
+    // Mismos 4 filtros de ruido que bySource — si divergen, este export dejaría
+    // de cuadrar con el dashboard y el desvío parecería un bug de otro lado.
+    const rows = await prisma.$queryRawUnsafe<
+      {
+        source: string;
+        medium: string | null;
+        campaign: string | null;
+        visitors: bigint;
+        leads: bigint;
+        leads_unicos: bigint;
+      }[]
+    >(
+      `
+      WITH events_window AS (
+        SELECT
+          COALESCE("source", 'Directo') as source,
+          "medium",
+          "campaign",
+          "eventName",
+          "userId",
+          "anonymousId"
+        FROM attribution_events
+        WHERE "eventTime" >= (($1::timestamp AT TIME ZONE 'America/Santo_Domingo') AT TIME ZONE 'UTC')
+          AND "eventTime" <  ((($2::timestamp + INTERVAL '1 day') AT TIME ZONE 'America/Santo_Domingo') AT TIME ZONE 'UTC')
+          AND ("userAgent" IS NULL OR "userAgent" NOT ILIKE '%HeadlessChrome%')
+          AND ("campaign" IS NULL OR "campaign" NOT LIKE '\\_\\_%\\_\\_' ESCAPE '\\')
+          AND ("campaign" IS NULL OR "campaign" NOT LIKE '%{{%')
+          AND ("ttclid" IS NULL OR "ttclid" NOT LIKE '%Preview\\_%' ESCAPE '\\')
+      )
+      SELECT
+        source,
+        "medium",
+        "campaign",
+        COUNT(DISTINCT CASE WHEN "eventName" = 'PageView' THEN COALESCE("anonymousId", "userId") END)::bigint as visitors,
+        COUNT(CASE WHEN "eventName" = 'Lead' THEN 1 END)::bigint as leads,
+        COUNT(DISTINCT CASE WHEN "eventName" = 'Lead' THEN COALESCE("anonymousId", "userId") END)::bigint as leads_unicos
+      FROM events_window
+      GROUP BY source, "medium", "campaign"
+      HAVING COUNT(CASE WHEN "eventName" IN ('PageView', 'Lead') THEN 1 END) > 0
+      ORDER BY leads DESC, visitors DESC
+      `,
+      `${from} 00:00:00`,
+      `${to} 00:00:00`,
+    );
+
+    return {
+      window: { from, to, timezone: RD_TIMEZONE },
+      rows: rows.map(row => ({
+        source: row.source ?? 'Directo',
+        medium: row.medium ?? null,
+        campaign: row.campaign ?? null,
+        visitors: Number(row.visitors),
+        leads: Number(row.leads),
+        leadsUnicos: Number(row.leads_unicos),
+      })),
     };
   }
 

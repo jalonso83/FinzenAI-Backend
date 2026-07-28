@@ -409,6 +409,11 @@ export class NotificationService {
       case 'TRIAL_ENDING':
       case 'TRIAL_ENDED':
         return preferences.trialNotificationsEnabled ?? true;
+      case 'RECURRING_TRANSACTION':
+        // Reusa la preferencia de recordatorios de pago: para el usuario es el
+        // mismo concepto ("avísame de mis pagos"), y evita agregar un switch
+        // más a la pantalla de notificaciones.
+        return preferences.paymentRemindersEnabled ?? true;
       case 'MARKETING':
         return preferences.marketingEnabled ?? true;
       case 'ANNOUNCEMENT':
@@ -694,6 +699,30 @@ export class NotificationService {
     };
 
     return this.sendToUser(userId, 'ANT_EXPENSE_ALERT', payload);
+  }
+
+  /**
+   * Avisa que el cron registró gastos/ingresos automáticos. Sin este aviso el
+   * usuario ve movimientos aparecer en su balance sin saber de dónde salieron.
+   */
+  static async notifyRecurringTransactions(
+    userId: string,
+    count: number
+  ): Promise<SendNotificationResult> {
+    const payload: NotificationPayload = {
+      title: '🔄 Movimientos automáticos registrados',
+      body:
+        count === 1
+          ? 'Registramos tu movimiento automático de hoy. Míralo en tus transacciones.'
+          : `Registramos ${count} movimientos automáticos. Míralos en tus transacciones.`,
+      data: {
+        type: 'RECURRING_TRANSACTION',
+        screen: 'Transactions',
+        count: count.toString(),
+      },
+    };
+
+    return this.sendToUser(userId, 'RECURRING_TRANSACTION', payload);
   }
 
   // =============================================

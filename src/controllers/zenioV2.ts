@@ -582,13 +582,15 @@ async function insertTransaction(transactionData: any, userId: string, categorie
   // H13 · asignar brazo en la 1ª TX válida. IMPORTANTE: el onboarding crea la 1ª TX
   // por esta ruta (zenioV2), así que sin este hook esos usuarios quedarían fuera del
   // experimento de forma permanente (sesgo de muestra). Best-effort.
-  try { await onValidTransactionH13(userId, newTransaction.id); } catch {}
+  let h13Insight: string | undefined;
+  try { const r = await onValidTransactionH13(userId, newTransaction.id); h13Insight = r?.insight; } catch {}
 
   const categoryRecord = await prisma.category.findUnique({ where: { id: categoryValidation.categoryId! } });
 
+  const baseMsg = `Transacción registrada: ${type === 'INCOME' ? 'Ingreso' : 'Gasto'} de RD$${amount.toLocaleString('es-DO')} en ${categoryRecord?.name || categoryName} el ${date.toLocaleDateString('es-ES')}`;
   return {
     success: true,
-    message: `Transacción registrada: ${type === 'INCOME' ? 'Ingreso' : 'Gasto'} de RD$${amount.toLocaleString('es-DO')} en ${categoryRecord?.name || categoryName} el ${date.toLocaleDateString('es-ES')}`,
+    message: h13Insight ? `${baseMsg}. ${h13Insight}` : baseMsg,
     transaction: newTransaction,
     action: 'transaction_created',
   };

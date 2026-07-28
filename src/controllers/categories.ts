@@ -161,20 +161,26 @@ export const deleteCategory = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar si hay transacciones o presupuestos usando esta categoría
-    const [transactionsCount, budgetsCount] = await Promise.all([
+    // Verificar si hay transacciones, presupuestos o reglas de recurrencia
+    // usando esta categoría. Las reglas también tienen FK Restrict hacia
+    // Category: si no se cuentan aquí, borrar la categoría revienta con P2003
+    // y el usuario recibe un 500 en vez de este 409 explicativo.
+    const [transactionsCount, budgetsCount, recurringCount] = await Promise.all([
       prisma.transaction.count({
         where: { category_id: id }
       }),
       prisma.budget.count({
         where: { category_id: id }
+      }),
+      prisma.recurringTransaction.count({
+        where: { category_id: id }
       })
     ]);
 
-    if (transactionsCount > 0 || budgetsCount > 0) {
+    if (transactionsCount > 0 || budgetsCount > 0 || recurringCount > 0) {
       return res.status(409).json({
         error: 'Category in use',
-        message: `Cannot delete category that is being used by ${transactionsCount} transactions and ${budgetsCount} budgets`
+        message: `Cannot delete category that is being used by ${transactionsCount} transactions, ${budgetsCount} budgets and ${recurringCount} recurring rules`
       });
     }
 

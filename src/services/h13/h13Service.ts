@@ -1,7 +1,75 @@
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
+import { NotificationType } from '@prisma/client';
 import { isH13Enabled, assignArm } from '../../config/h13';
 import { trackExperimentEvent } from '../experiments/experimentEvents';
+import { getTimezoneByCountry } from '../../utils/timezone';
+import { NotificationService } from '../notificationService';
+
+const WINDOW_DAYS = 7;
+const BADGE_ID = 'reto_primera_semana';
+
+interface RetoTx {
+  date: Date;
+  amount: number;
+  type: string;
+  category: { name: string } | null;
+}
+
+/**
+ * TX válidas dentro de la ventana del reto, anclada al DÍA CALENDARIO LOCAL de la
+ * asignación (no al instante — así la TX de activación del día 1 SÍ cuenta, y el
+ * borde superior no depende de la hora de asignación). Fuente de verdad = transactions.
+ */
+async function retoWindowTxs(userId: string, assignedAt: Date, country: string | null | undefined): Promise<RetoTx[]> {
+  const assignedDayKey = localDateKey(country, assignedAt); // 'YYYY-MM-DD' local
+  const base = new Date(`${assignedDayKey}T00:00:00Z`);
+  const validKeys = new Set<string>();
+  for (let i = 0; i < WINDOW_DAYS; i++) {
+    validKeys.add(new Date(base.getTime() + i * 86_400_000).toISOString().slice(0, 10));
+  }
+  // Traer con margen de ±2 días (bordes de timezone) y filtrar por día local.
+  const from = new Date(base.getTime() - 2 * 86_400_000);
+  const to = new Date(base.getTime() + (WINDOW_DAYS + 2) * 86_400_000);
+  const txs = await prisma.transaction.findMany({
+    where: { userId, amount: { gt: 0 }, category_id: { not: null }, date: { gte: from, lt: to } },
+    select: { date: true, amount: true, type: true, category: { select: { name: true } } },
+  });
+  return txs.filter((t) => validKeys.has(localDateKey(country, t.date)));
+}
+
+function countDistinctDays(txs: RetoTx[], country: string | null | undefined): number {
+  return new Set(txs.map((t) => localDateKey(country, t.date))).size;
+}
+
+/** Análisis rule-based (sin LLM, sin gate PRO) sobre las TX de la ventana del reto. */
+function buildRetoAnalysis(txs: RetoTx[], country: string | null | undefined): string {
+  const days = countDistinctDays(txs, country);
+  const gastos = txs.filter((t) => t.type === 'EXPENSE');
+  const totalGasto = gastos.reduce((s, t) => s + t.amount, 0);
+  const byCat = new Map<string, number>();
+  for (const t of gastos) {
+    const c = t.category?.name ?? 'Otros';
+    byCat.set(c, (byCat.get(c) ?? 0) + t.amount);
+  }
+  let topCat = '';
+  let topAmount = 0;
+  for (const [c, amt] of byCat) if (amt > topAmount) { topCat = c; topAmount = amt; }
+
+  let text = `Registraste ${txs.length} ${txs.length === 1 ? 'movimiento' : 'movimientos'} en ${days} días`;
+  if (totalGasto > 0) text += `, RD$${totalGasto.toLocaleString('es-DO')} en gastos`;
+  if (topCat) text += `. Tu categoría top: ${topCat} (RD$${topAmount.toLocaleString('es-DO')})`;
+  return `${text}. ¡Vas por buen camino! 🎉`;
+}
+
+/** Día calendario del usuario en su zona (YYYY-MM-DD). Las TX se guardan a mediodía UTC. */
+export function localDateKey(country: string | null | undefined, when: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: getTimezoneByCountry(country) }).format(when);
+  } catch {
+    return when.toISOString().slice(0, 10);
+  }
+}
 
 /**
  * H13 · Reto de la Primera Semana. Usa la infra GENÉRICA de experimentos
@@ -25,7 +93,7 @@ export interface H13Data {
   optedOutAt?: string;           // ISO
   daysWithTx?: number;           // días distintos con TX válida en la ventana
   analysisUnlockedAt?: string;   // ISO
-  analysisReportId?: string;     // WeeklyReport del 3er día
+  analysisText?: string;         // análisis rule-based del día-3 (sin PRO)
   completedAt?: string;          // ISO
   result?: string;               // '>=3' | '<3'
 }
@@ -162,16 +230,21 @@ export async function optOutCues(userId: string): Promise<{ ok: boolean }> {
  * Detecta la PRIMERA transacción válida del usuario y lo asigna 50/50 al brazo.
  * Best-effort: nunca lanza (no debe romper la creación de la transacción).
  */
-export async function onValidTransaction(userId: string, txId: string): Promise<void> {
+export async function onValidTransaction(userId: string, txId: string): Promise<{ insight?: string }> {
   try {
-    if (!isH13Enabled(userId)) return;
+    if (!isH13Enabled(userId)) return {};
 
-    // ¿Ya está en el experimento? No reasignar.
+    // ¿Ya está en el experimento?
     const existing = await prisma.experimentParticipant.findUnique({
       where: { userId_experimentKey: { userId, experimentKey: H13_KEY } },
-      select: { id: true },
     });
-    if (existing) return;
+    if (existing) {
+      // Ya asignado. Si es un reto en curso, procesar el progreso del día (Fase 5-6).
+      if (existing.arm === 'reto' && existing.state === 'ACTIVE') {
+        return await processRetoProgress(txId, existing);
+      }
+      return {};
+    }
 
     // ¿Es su PRIMERA transacción? La actual ya está creada, así que count === 1.
     const txCount = await prisma.transaction.count({ where: { userId } });
@@ -216,13 +289,223 @@ export async function onValidTransaction(userId: string, txId: string): Promise<
       // P2002: otro request concurrente (2ª TX simultánea) ya enroló al usuario.
       // No es error — el @@unique(userId,experimentKey) hizo su trabajo. Salimos
       // sin re-emitir h13_assigned (ya lo emitió el request que ganó).
-      if ((e as { code?: string })?.code === 'P2002') return;
+      if ((e as { code?: string })?.code === 'P2002') return {};
       throw e;
     }
 
     await trackExperimentEvent(H13_KEY, userId, 'h13_assigned', { arm, utmSource, platform, txId });
     logger.log(`[H13] Usuario ${userId} asignado al brazo '${arm}' (1ª TX ${txId})`);
+    return {};
   } catch (err) {
     logger.error(`[H13] Error en onValidTransaction para ${userId}:`, err);
+    return {};
+  }
+}
+
+// ─── Fase 5-6 · Progreso del reto (se corre en CADA TX del brazo reto ACTIVE) ───
+
+/** Micro-insight rule-based (sin LLM). Prioridad: categoría → días → conteo → fallback. */
+async function computeInsight(
+  userId: string,
+  txId: string,
+  daysWithTx: number,
+): Promise<{ text: string; type: string } | null> {
+  const tx = await prisma.transaction.findUnique({
+    where: { id: txId },
+    include: { category: { select: { name: true } } },
+  });
+  if (!tx) return null;
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  // P1: categoría con ≥2 TX de gasto este mes → suma acumulada.
+  if (tx.category_id && tx.type === 'EXPENSE') {
+    const catTx = await prisma.transaction.findMany({
+      where: { userId, category_id: tx.category_id, type: 'EXPENSE', date: { gte: monthStart } },
+      select: { amount: true },
+    });
+    if (catTx.length >= 2) {
+      const sum = catTx.reduce((s, t) => s + t.amount, 0);
+      return {
+        text: `Llevas RD$${sum.toLocaleString('es-DO')} en ${tx.category?.name ?? 'esta categoría'} este mes.`,
+        type: 'categoria',
+      };
+    }
+  }
+  // P2: días del reto ≥2.
+  if (daysWithTx >= 2) return { text: `Racha de ${daysWithTx} días 🔥`, type: 'racha' };
+  // P3: primer día del reto → mensaje de arranque.
+  if (daysWithTx <= 1) {
+    return { text: 'Primer paso dado. Desde ya empiezo a aprender de tu plata.', type: 'primer_dia' };
+  }
+  // Fallback defensivo (no debería alcanzarse).
+  const weekStart = new Date(now.getTime() - 7 * 86_400_000);
+  const weekCount = await prisma.transaction.count({ where: { userId, date: { gte: weekStart } } });
+  return { text: `Con esta van ${weekCount} esta semana.`, type: 'conteo' };
+}
+
+/**
+ * Progreso del reto tras una TX válida. daysWithTx = días DISTINTOS con TX válida en
+ * la ventana (contado desde transactions = fuente de verdad, respeta "día de gracia"
+ * porque cuenta días distintos, no consecutivos). Emite day_completed al subir, sirve
+ * el micro-insight, y desbloquea el análisis al 3er día (Fase 6).
+ */
+async function processRetoProgress(
+  txId: string,
+  p: { id: string; userId: string; assignedAt: Date; data: unknown },
+): Promise<{ insight?: string }> {
+  const userId = p.userId;
+  const data = (p.data as H13Data) ?? {};
+  const assignedAt = new Date(p.assignedAt);
+  const now = new Date();
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { country: true } });
+  const country = user?.country;
+
+  // Ventana en días calendario locales (no instante): fin = inicio del día local de
+  // asignación + 7 días. Si ya venció, el cierre lo maneja el scheduler.
+  const assignedDayStart = new Date(`${localDateKey(country, assignedAt)}T00:00:00Z`);
+  const windowEnd = new Date(assignedDayStart.getTime() + WINDOW_DAYS * 86_400_000);
+  if (now > windowEnd) return {};
+
+  // Días distintos con TX válida en la ventana (día calendario local; incluye la TX
+  // de activación del día 1). Fuente de verdad = transactions.
+  const windowTxs = await retoWindowTxs(userId, assignedAt, country);
+  const daysWithTx = countDistinctDays(windowTxs, country);
+
+  const newData: H13Data = { ...data };
+  let changed = false;
+
+  if (daysWithTx > (data.daysWithTx ?? 0)) {
+    newData.daysWithTx = daysWithTx;
+    changed = true;
+    await trackExperimentEvent(H13_KEY, userId, 'h13_day_completed', { daysWithTx });
+  }
+
+  // Micro-insight (cada TX).
+  const insight = await computeInsight(userId, txId, daysWithTx);
+  if (insight) await trackExperimentEvent(H13_KEY, userId, 'h13_insight_shown', { type: insight.type });
+
+  // Desbloqueo día-3: análisis rule-based (sin gate PRO) sobre la ventana REAL del
+  // reto, entregado en el push. Re-lectura fresca para reducir el race de doble push.
+  if (daysWithTx >= 3 && !data.analysisUnlockedAt) {
+    const fresh = await prisma.experimentParticipant.findUnique({
+      where: { id: p.id },
+      select: { data: true },
+    });
+    const freshData = (fresh?.data as H13Data) ?? {};
+    if (!freshData.analysisUnlockedAt) {
+      const analysis = buildRetoAnalysis(windowTxs, country);
+      newData.analysisUnlockedAt = now.toISOString();
+      newData.analysisText = analysis;
+      changed = true;
+      await trackExperimentEvent(H13_KEY, userId, 'h13_analysis_unlocked', {});
+      await NotificationService.sendToUser(userId, NotificationType.SYSTEM, {
+        title: '🎁 Completaste 3 días del reto',
+        body: analysis,
+        data: { screen: 'Dashboard', h13: 'analysis' },
+      });
+    }
+  }
+
+  if (changed) {
+    await prisma.experimentParticipant.update({ where: { id: p.id }, data: { data: newData as object } });
+  }
+  return { insight: insight?.text };
+}
+
+// ─── Fase 8 · Supresión de otros schedulers durante el reto ───
+
+/**
+ * ¿El usuario está en un reto H13 en curso (ACTIVE)? Se usa para SUPRIMIR Tips y las
+ * notificaciones de onboarding de Trial durante los 7 días del reto, y así evitar
+ * sobre-notificación. NO suprime alertas de Budget/Goal/Payment ni la expiración del
+ * trial (esas siguen normales). Best-effort: ante error, no suprime (devuelve false).
+ */
+export async function isInActiveReto(userId: string): Promise<boolean> {
+  if (!isH13Enabled(userId)) return false;
+  try {
+    const p = await prisma.experimentParticipant.findUnique({
+      where: { userId_experimentKey: { userId, experimentKey: H13_KEY } },
+      select: { arm: true, state: true },
+    });
+    return p?.arm === 'reto' && p.state === 'ACTIVE';
+  } catch {
+    return false;
+  }
+}
+
+// ─── Fase 7 · Cierre del reto (día 7). Llamado por el scheduler cada hora. ───
+
+/**
+ * Cierra los retos cuya ventana de 7 días venció y aún no están COMPLETED. Marca
+ * COMPLETED, emite h13_completed con el resultado, y — para quienes aceptaron
+ * (llegaron a ACTIVE) — da badge si ≥3 días y manda el mensaje de cierre.
+ * El control no se toca (solo tiene h13_assigned). Best-effort.
+ */
+export async function closeExpiredChallenges(): Promise<void> {
+  if (!isH13Enabled()) return;
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - WINDOW_DAYS * 86_400_000);
+
+  const expired = await prisma.experimentParticipant.findMany({
+    where: {
+      experimentKey: H13_KEY,
+      arm: 'reto',
+      state: { in: ['OFFERED', 'ACCEPTED', 'ACTIVE', 'DECLINED'] },
+      assignedAt: { lte: cutoff },
+    },
+    select: { id: true, userId: true, state: true, assignedAt: true, data: true },
+  });
+
+  for (const p of expired) {
+    try {
+      const data = (p.data as H13Data) ?? {};
+      const assignedAt = new Date(p.assignedAt);
+
+      const user = await prisma.user.findUnique({ where: { id: p.userId }, select: { country: true } });
+      const windowTxs = await retoWindowTxs(p.userId, assignedAt, user?.country);
+      const daysWithTx = countDistinctDays(windowTxs, user?.country);
+      const success = daysWithTx >= 3;
+      const result = success ? '>=3' : '<3';
+
+      // Lock atómico: solo el primer run que lo pase a COMPLETED sigue (evita doble
+      // cierre / doble h13_completed si un tick del cron se solapa con el siguiente).
+      const locked = await prisma.experimentParticipant.updateMany({
+        where: { id: p.id, state: { not: 'COMPLETED' } },
+        data: {
+          state: 'COMPLETED',
+          data: { ...data, daysWithTx, completedAt: now.toISOString(), result } as object,
+        },
+      });
+      if (locked.count === 0) continue; // otro run ya lo cerró
+
+      await trackExperimentEvent(H13_KEY, p.userId, 'h13_completed', { daysWithTx, result });
+
+      // Mensaje de cierre + badge para quienes PARTICIPARON (aceptaron: ACTIVE o
+      // ACCEPTED — un ACCEPTED que registró ≥3 días sí merece su recompensa).
+      // OFFERED/DECLINED se cierran para medición pero sin push (nunca aceptaron).
+      if (p.state === 'ACTIVE' || p.state === 'ACCEPTED') {
+        if (success) {
+          try {
+            await prisma.userBadge.create({ data: { userId: p.userId, badgeId: BADGE_ID } });
+          } catch { /* @@unique: ya lo tenía */ }
+          await NotificationService.sendToUser(p.userId, NotificationType.SYSTEM, {
+            title: 'Reto completado 🏆',
+            body: 'Te ganaste tu badge. ¿Seguimos la racha esta semana?',
+            data: { screen: 'Dashboard', h13: 'close' },
+          });
+        } else {
+          await NotificationService.sendToUser(p.userId, NotificationType.SYSTEM, {
+            title: 'El reto terminó',
+            body: 'Esto no es de una semana. Cuando quieras retomamos, sin lío. Aquí estoy.',
+            data: { screen: 'Dashboard', h13: 'close' },
+          });
+        }
+      }
+    } catch (err) {
+      logger.error(`[H13] Error cerrando reto de ${p.userId}:`, err);
+    }
   }
 }
