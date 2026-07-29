@@ -10,16 +10,45 @@ import crypto from 'crypto';
  *   H13_ENABLED   = 'true' | 'false'          (default: 'false')
  *   H13_WHITELIST = 'userId1,userId2,...'      (default: '') — fuerza incluir en el
  *                   experimento aunque el flag global esté off (dogfood / QA).
+ *                   También exime del requisito de "primera transacción", para
+ *                   poder probar con cuentas que ya tienen historial.
  */
-export function isH13Enabled(userId?: string): boolean {
-  const whitelist = (process.env.H13_WHITELIST || '')
+function h13Whitelist(): string[] {
+  return (process.env.H13_WHITELIST || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
 
-  if (userId && whitelist.includes(userId)) return true;
+/**
+ * ¿Es un usuario de dogfood/QA? Se usa para relajar condiciones de enrolamiento
+ * que solo tienen sentido con usuarios reales (ver onValidTransaction: exige que
+ * sea la PRIMERA transacción, cosa que una cuenta de prueba ya usada nunca
+ * cumple).
+ *
+ * OJO al construir el análisis de H13: estos usuarios NO son asignación
+ * aleatoria y hay que excluirlos de la cohorte, igual que hace H10 en
+ * controllers/experiments.ts.
+ */
+export function isH13Whitelisted(userId?: string): boolean {
+  if (!userId) return false;
+  return h13Whitelist().includes(userId);
+}
 
+/**
+ * ¿Está prendido el flag GLOBAL? Distinto de isH13Enabled, que también da true
+ * por whitelist. Se usa para estampar la fecha de inicio del experimento: si
+ * contara la whitelist, el dogfood de hoy marcaría el arranque semanas antes
+ * del lanzamiento real y la cohorte quedaría mal anclada.
+ */
+export function isH13FlagOn(): boolean {
   return process.env.H13_ENABLED === 'true';
+}
+
+export function isH13Enabled(userId?: string): boolean {
+  if (isH13Whitelisted(userId)) return true;
+
+  return isH13FlagOn();
 }
 
 export type H13Arm = 'reto' | 'control';

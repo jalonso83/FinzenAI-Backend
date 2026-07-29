@@ -5,7 +5,7 @@ import { strictApiLimiter } from '../config/rateLimiter';
 import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf, getCampaignCosts, upsertCampaignCost, deleteCampaignCost, setCampaignHidden } from '../controllers/admin';
 import { getFeedbackList, updateFeedback } from '../controllers/feedback';
 import { createBroadcast, listBroadcasts, previewBroadcast, sendBroadcast, getBroadcastStats, approveBroadcast, rejectBroadcast, deleteBroadcast, activateBroadcast, deactivateBroadcast } from '../controllers/broadcasts';
-import { getH10Stats } from '../controllers/experiments';
+import { getH10Stats, getH13Stats } from '../controllers/experiments';
 
 const router: ExpressRouter = Router();
 
@@ -46,6 +46,7 @@ router.get('/broadcasts/:id/stats', getBroadcastStats);
 
 // Experimentos
 router.get('/experiments/h10/stats', getH10Stats);
+router.get('/experiments/h13/stats', getH13Stats);
 
 // Campaign costs (manual cost entry per source/campaign — lifetime, no date filter)
 router.get('/campaign-costs', getCampaignCosts);

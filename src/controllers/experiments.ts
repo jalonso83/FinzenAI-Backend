@@ -3,6 +3,15 @@ import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { userBucket } from '../lib/userBucket';
 import { getExperimentStart } from '../lib/experimentStart';
+import { isH13FlagOn, isH13Whitelisted } from '../config/h13';
+import {
+  H13_KEY,
+  H13_TARGET_DAYS,
+  H13_WINDOW_DAYS,
+  h13WindowDayKeys,
+  h13WindowEnd,
+  localDateKey,
+} from '../services/h13/h13Service';
 
 // Experimento H10 — "Entrada libre" (onboarding no bloqueante).
 // Mide variante (entra sin muro) vs control (ve el muro) sobre la cohorte de
@@ -131,6 +140,178 @@ export const getH10Stats = async (req: Request, res: Response) => {
     });
   } catch (error) {
     logger.error('[Experiments] Error H10 stats:', error);
+    return res.status(500).json({ message: 'Error calculando métricas del experimento', error: 'Internal server error' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Experimento H13 — "Reto de la Primera Semana".
+//
+// Métrica primaria (paquete de implementación, 21-jul): % de asignados con ≥3
+// días distintos con TX válida en la ventana de 7 días, POR BRAZO. Los dos
+// brazos se calculan desde la tabla de transacciones — el control no tiene
+// eventos del flujo, solo su fila de asignación.
+//
+// La cohorte sale de experiment_participants: en H13 el enrolamiento ocurre en
+// la 1ª TX válida, así que la fila ES la cohorte (a diferencia de H10, que parte
+// de usuarios registrados).
+// ─────────────────────────────────────────────────────────────────────────
+
+// Muestra mínima por brazo antes de emitir veredicto (mismo criterio que H10:
+// por debajo, cualquier lift es ruido).
+const H13_MIN_SAMPLE_PER_ARM = 30;
+
+/**
+ * GET /api/admin/experiments/h13/stats?from=ISO&to=ISO
+ *
+ * Clave metodológica: la primaria se calcula SOLO sobre participantes cuya
+ * ventana de 7 días ya cerró ("maduros"). Incluir a quien lleva 2 días dentro
+ * del reto lo cuenta como fracaso cuando todavía le quedan 5 días, y hunde la
+ * tasa de los dos brazos — más al reto, que es el que sigue recibiendo gente.
+ */
+export const getH13Stats = async (req: Request, res: Response) => {
+  try {
+    const enabled = isH13FlagOn();
+    const experimentStart = await getExperimentStart(H13_KEY);
+
+    let from = req.query.from ? new Date(String(req.query.from)) : null;
+    if (from && isNaN(from.getTime())) from = null;
+    let to = req.query.to ? new Date(String(req.query.to)) : new Date();
+    if (isNaN(to.getTime())) to = new Date();
+    // Mismo fix que en H10: 'YYYY-MM-DD' llega a las 00:00 y se comía el día final.
+    to.setUTCHours(23, 59, 59, 999);
+
+    let effectiveFrom = experimentStart;
+    if (from && experimentStart && from > experimentStart) effectiveFrom = from;
+
+    // Sin fecha de inicio estampada no hay cohorte: no medimos pre-experimento.
+    const participants = experimentStart
+      ? await prisma.experimentParticipant.findMany({
+          where: {
+            experimentKey: H13_KEY,
+            assignedAt: { gte: effectiveFrom as Date, lte: to },
+          },
+          select: {
+            userId: true,
+            arm: true,
+            state: true,
+            assignedAt: true,
+            user: { select: { country: true } },
+          },
+        })
+      : [];
+
+    // Excluir dogfood/QA: no son asignación aleatoria (mismo criterio que H10).
+    const cohort = participants.filter((p) => !isH13Whitelisted(p.userId));
+    const cohortIds = cohort.map((p) => p.userId);
+
+    // Todas las TX válidas de la cohorte en una sola query (no una por usuario).
+    // "Válida" = mismo criterio que ejecuta el reto: monto > 0 y con categoría.
+    // Margen de ±2 días por los bordes de zona horaria; el filtro fino es por día local.
+    const DAY_MS = 86_400_000;
+    let windowFloor: Date | null = null;
+    let windowCeil: Date | null = null;
+    for (const p of cohort) {
+      const lo = new Date(p.assignedAt.getTime() - 2 * DAY_MS);
+      const hi = new Date(p.assignedAt.getTime() + (H13_WINDOW_DAYS + 2) * DAY_MS);
+      if (!windowFloor || lo < windowFloor) windowFloor = lo;
+      if (!windowCeil || hi > windowCeil) windowCeil = hi;
+    }
+
+    const txs = cohortIds.length && windowFloor && windowCeil
+      ? await prisma.transaction.findMany({
+          where: {
+            userId: { in: cohortIds },
+            amount: { gt: 0 },
+            category_id: { not: null },
+            date: { gte: windowFloor, lt: windowCeil },
+          },
+          select: { userId: true, date: true },
+        })
+      : [];
+
+    const txsByUser = new Map<string, Date[]>();
+    for (const t of txs) {
+      const list = txsByUser.get(t.userId);
+      if (list) list.push(t.date);
+      else txsByUser.set(t.userId, [t.date]);
+    }
+
+    const now = new Date();
+    const acc = {
+      reto: { n: 0, matured: 0, reachedTarget: 0, offered: 0, accepted: 0, declined: 0, completed: 0 },
+      control: { n: 0, matured: 0, reachedTarget: 0, offered: 0, accepted: 0, declined: 0, completed: 0 },
+    };
+
+    for (const p of cohort) {
+      const g = p.arm === 'reto' ? acc.reto : acc.control;
+      g.n++;
+
+      // Embudo de la oferta — solo tiene sentido en el brazo reto.
+      if (p.arm === 'reto') {
+        if (p.state && p.state !== 'ASSIGNED') g.offered++;
+        if (p.state === 'ACCEPTED' || p.state === 'ACTIVE' || p.state === 'COMPLETED') g.accepted++;
+        if (p.state === 'DECLINED') g.declined++;
+        if (p.state === 'COMPLETED') g.completed++;
+      }
+
+      const country = p.user?.country;
+      if (h13WindowEnd(p.assignedAt, country) > now) continue; // ventana abierta → aún no cuenta
+      g.matured++;
+
+      const validKeys = new Set(h13WindowDayKeys(p.assignedAt, country));
+      const days = new Set<string>();
+      for (const d of txsByUser.get(p.userId) ?? []) {
+        const key = localDateKey(country, d);
+        if (validKeys.has(key)) days.add(key);
+      }
+      if (days.size >= H13_TARGET_DAYS) g.reachedTarget++;
+    }
+
+    const rate = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 10000) / 100 : 0);
+    const build = (g: typeof acc.reto) => ({
+      n: g.n,
+      matured: g.matured,
+      inProgress: g.n - g.matured,
+      reachedTarget: g.reachedTarget,
+      // Denominador = maduros. Con 0 maduros la tasa es 0 y sufficientSample es false.
+      targetRate: rate(g.reachedTarget, g.matured),
+      offered: g.offered,
+      accepted: g.accepted,
+      declined: g.declined,
+      completed: g.completed,
+      acceptRate: rate(g.accepted, g.offered),
+    });
+
+    const reto = build(acc.reto);
+    const control = build(acc.control);
+    const targetLiftPts = Math.round((reto.targetRate - control.targetRate) * 100) / 100;
+    // Lift relativo: el umbral pre-comprometido es "reto ≥2× control", que es una
+    // razón, no una diferencia en puntos. Null si el control es 0 (no se divide).
+    const targetLiftRatio =
+      control.targetRate > 0 ? Math.round((reto.targetRate / control.targetRate) * 100) / 100 : null;
+
+    const sufficientSample =
+      reto.matured >= H13_MIN_SAMPLE_PER_ARM && control.matured >= H13_MIN_SAMPLE_PER_ARM;
+
+    return res.json({
+      data: {
+        enabled,
+        from: effectiveFrom ? effectiveFrom.toISOString() : null,
+        to: to.toISOString(),
+        experimentStart: experimentStart ? experimentStart.toISOString() : null,
+        windowDays: H13_WINDOW_DAYS,
+        targetDays: H13_TARGET_DAYS,
+        minSamplePerArm: H13_MIN_SAMPLE_PER_ARM,
+        sufficientSample,
+        reto,
+        control,
+        targetLiftPts,
+        targetLiftRatio,
+      },
+    });
+  } catch (error) {
+    logger.error('[Experiments] Error H13 stats:', error);
     return res.status(500).json({ message: 'Error calculando métricas del experimento', error: 'Internal server error' });
   }
 };

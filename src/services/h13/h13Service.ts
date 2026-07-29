@@ -1,13 +1,23 @@
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import { NotificationType } from '@prisma/client';
-import { isH13Enabled, assignArm } from '../../config/h13';
+import { isH13Enabled, isH13Whitelisted, isH13FlagOn, assignArm } from '../../config/h13';
+import { getOrStampExperimentStart } from '../../lib/experimentStart';
 import { trackExperimentEvent } from '../experiments/experimentEvents';
 import { getTimezoneByCountry } from '../../utils/timezone';
 import { NotificationService } from '../notificationService';
 
 const WINDOW_DAYS = 7;
 const BADGE_ID = 'reto_primera_semana';
+
+/**
+ * Definición de la métrica primaria, exportada para que el análisis mida
+ * EXACTAMENTE lo mismo que ejecuta la app: "% de asignados con ≥3 días
+ * distintos con TX válida en la ventana de 7 días". Si el panel reimplementara
+ * estos números por su cuenta, cualquier divergencia parecería un bug de datos.
+ */
+export const H13_WINDOW_DAYS = WINDOW_DAYS;
+export const H13_TARGET_DAYS = 3;
 
 interface RetoTx {
   date: Date;
@@ -24,10 +34,7 @@ interface RetoTx {
 async function retoWindowTxs(userId: string, assignedAt: Date, country: string | null | undefined): Promise<RetoTx[]> {
   const assignedDayKey = localDateKey(country, assignedAt); // 'YYYY-MM-DD' local
   const base = new Date(`${assignedDayKey}T00:00:00Z`);
-  const validKeys = new Set<string>();
-  for (let i = 0; i < WINDOW_DAYS; i++) {
-    validKeys.add(new Date(base.getTime() + i * 86_400_000).toISOString().slice(0, 10));
-  }
+  const validKeys = new Set<string>(h13WindowDayKeys(assignedAt, country));
   // Traer con margen de ±2 días (bordes de timezone) y filtrar por día local.
   const from = new Date(base.getTime() - 2 * 86_400_000);
   const to = new Date(base.getTime() + (WINDOW_DAYS + 2) * 86_400_000);
@@ -40,6 +47,31 @@ async function retoWindowTxs(userId: string, assignedAt: Date, country: string |
 
 function countDistinctDays(txs: RetoTx[], country: string | null | undefined): number {
   return new Set(txs.map((t) => localDateKey(country, t.date))).size;
+}
+
+/**
+ * Los WINDOW_DAYS días calendario LOCALES de la ventana del reto ('YYYY-MM-DD'),
+ * anclados al día local de la asignación (incluido: la TX de activación cuenta).
+ * Exportada para que el análisis del panel reconstruya la misma ventana sin
+ * reimplementarla — ver H13_TARGET_DAYS.
+ */
+export function h13WindowDayKeys(assignedAt: Date, country: string | null | undefined): string[] {
+  const base = new Date(`${localDateKey(country, assignedAt)}T00:00:00Z`);
+  const keys: string[] = [];
+  for (let i = 0; i < WINDOW_DAYS; i++) {
+    keys.push(new Date(base.getTime() + i * 86_400_000).toISOString().slice(0, 10));
+  }
+  return keys;
+}
+
+/**
+ * Instante en que se cierra la ventana de un participante (fin del último día
+ * local + 1). Antes de esa fecha su resultado TODAVÍA no es final: contarlo en
+ * la métrica primaria diluiría la tasa con gente que aún tiene días por delante.
+ */
+export function h13WindowEnd(assignedAt: Date, country: string | null | undefined): Date {
+  const base = new Date(`${localDateKey(country, assignedAt)}T00:00:00Z`);
+  return new Date(base.getTime() + WINDOW_DAYS * 86_400_000);
 }
 
 /** Análisis rule-based (sin LLM, sin gate PRO) sobre las TX de la ventana del reto. */
@@ -234,6 +266,17 @@ export async function onValidTransaction(userId: string, txId: string): Promise<
   try {
     if (!isH13Enabled(userId)) return {};
 
+    // Fecha de inicio del experimento: se estampa sola la primera vez que el flag
+    // GLOBAL se ve live (misma solución que H10 — ver lib/experimentStart). Sin
+    // esto habría que reconstruir a mano cuándo arrancó, que fue justo el dolor
+    // que costó tres intentos en H10. Fire-and-forget: no debe frenar la TX.
+    // No cuenta la whitelist a propósito (dogfood no es el arranque real).
+    if (isH13FlagOn()) {
+      void getOrStampExperimentStart(H13_KEY).catch((e) =>
+        logger.error('[H13] No se pudo estampar la fecha de inicio:', e),
+      );
+    }
+
     // ¿Ya está en el experimento?
     const existing = await prisma.experimentParticipant.findUnique({
       where: { userId_experimentKey: { userId, experimentKey: H13_KEY } },
@@ -247,8 +290,11 @@ export async function onValidTransaction(userId: string, txId: string): Promise<
     }
 
     // ¿Es su PRIMERA transacción? La actual ya está creada, así que count === 1.
+    // Excepción para dogfood/QA: una cuenta de prueba ya usada nunca vuelve a
+    // tener count === 1, así que sin esto la whitelist no sirve para probar el
+    // flujo. Solo aplica a usuarios listados a mano en H13_WHITELIST.
     const txCount = await prisma.transaction.count({ where: { userId } });
-    if (txCount !== 1) return;
+    if (txCount !== 1 && !isH13Whitelisted(userId)) return;
 
     const arm = assignArm(userId);
 
@@ -389,7 +435,7 @@ async function processRetoProgress(
 
   // Desbloqueo día-3: análisis rule-based (sin gate PRO) sobre la ventana REAL del
   // reto, entregado en el push. Re-lectura fresca para reducir el race de doble push.
-  if (daysWithTx >= 3 && !data.analysisUnlockedAt) {
+  if (daysWithTx >= H13_TARGET_DAYS && !data.analysisUnlockedAt) {
     const fresh = await prisma.experimentParticipant.findUnique({
       where: { id: p.id },
       select: { data: true },
@@ -467,7 +513,7 @@ export async function closeExpiredChallenges(): Promise<void> {
       const user = await prisma.user.findUnique({ where: { id: p.userId }, select: { country: true } });
       const windowTxs = await retoWindowTxs(p.userId, assignedAt, user?.country);
       const daysWithTx = countDistinctDays(windowTxs, user?.country);
-      const success = daysWithTx >= 3;
+      const success = daysWithTx >= H13_TARGET_DAYS;
       const result = success ? '>=3' : '<3';
 
       // Lock atómico: solo el primer run que lo pase a COMPLETED sigue (evita doble
