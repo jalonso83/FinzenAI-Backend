@@ -24,9 +24,18 @@ export class H13CueScheduler {
   private static readonly CUE_TITLE = 'Reto de la Primera Semana 🔥';
   // Variantes rotadas por día del reto (sección 3.3 del paquete). {n} = día del reto.
   private static readonly CUE_VARIANTS = [
-    '¿Qué se movió hoy en tu plata? Anótalo en 10 segundos.',
+    '¿Qué se movió hoy en tu dinero? Anótalo en 10 segundos.',
     'Día {n} del reto: un gasto, 10 segundos, y seguimos 🔥',
     'Tu reto va en el día {n}. ¿Anotamos lo de hoy?',
+  ];
+
+  // A esta hora el día todavía no pasó: pedir "lo de hoy" no tiene sentido.
+  // El cue matutino pregunta por AYER, que es como la gente usa esa franja.
+  private static readonly MORNING_HOUR = 8;
+  private static readonly MORNING_CUE_VARIANTS = [
+    '¿Qué gastaste ayer? Anótalo en 10 segundos y sigue el reto.',
+    'Día {n} del reto: anota lo de ayer y arrancamos el día 🔥',
+    'Tu reto va en el día {n}. ¿Repasamos lo de ayer?',
   ];
 
   static startScheduler(): void {
@@ -113,7 +122,8 @@ export class H13CueScheduler {
         });
         if (cueToday) continue;
 
-        const body = this.CUE_VARIANTS[(dayN - 1) % this.CUE_VARIANTS.length].replace('{n}', String(dayN));
+        const variants = reminderHour === this.MORNING_HOUR ? this.MORNING_CUE_VARIANTS : this.CUE_VARIANTS;
+        const body = variants[(dayN - 1) % variants.length].replace('{n}', String(dayN));
 
         await NotificationService.sendToUser(p.userId, NotificationType.SYSTEM, {
           title: this.CUE_TITLE,

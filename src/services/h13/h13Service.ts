@@ -133,7 +133,7 @@ export interface H13Data {
 // ─── Copy v1 (borrador del paquete de Junior; se reemplaza con el aprobado) ───
 const OFFER_MESSAGE =
   '¡Primera anotada! 🔥 Te propongo el Reto de la Primera Semana. Registra lo que se ' +
-  'mueva en tu plata 3 días de los próximos 7, y yo te entrego un análisis real, hecho ' +
+  'mueva en tu dinero 3 días de los próximos 7, y yo te entrego un análisis real, hecho ' +
   'para ti. ¿Te apuntas?';
 const HOUR_MESSAGE = '¿A qué hora te cuadra anotar tu día?';
 
@@ -141,11 +141,25 @@ const OFFER_BUTTONS = [
   { label: 'Acepto el reto', action: 'h13_offer', value: 'accept' },
   { label: 'Ahora no', action: 'h13_offer', value: 'decline' },
 ];
+/**
+ * Horas del recordatorio. La mañana se agregó después del borrador del paquete
+ * (que solo traía mediodía/tarde/noche): las 8am es un ancla de hábito fuerte
+ * —desayuno, trayecto— y mucha gente anota lo de ayer a esa hora. Por eso el
+ * cue matutino usa un copy propio que pregunta por AYER: a las 8am el día
+ * todavía no pasó y pedir "lo de hoy" no tendría sentido (ver H13_MORNING_HOUR
+ * en h13CueScheduler).
+ *
+ * Si se toca esta lista, mover también la validación de setReminderHour.
+ */
 const HOUR_BUTTONS = [
+  { label: '🌅 Mañana', action: 'h13_hour', value: '8' },
   { label: '☀️ Mediodía', action: 'h13_hour', value: '12' },
   { label: '🌆 Tarde', action: 'h13_hour', value: '18' },
   { label: '🌙 Noche', action: 'h13_hour', value: '21' },
 ];
+
+/** Única fuente de verdad de las horas válidas (botones y validación). */
+export const H13_VALID_HOURS = [8, 12, 18, 21];
 
 export interface H13View {
   view: 'offer' | 'hour_picker' | 'none';
@@ -221,7 +235,7 @@ export async function respondOffer(userId: string, decision: 'accept' | 'decline
 /** Elección de hora del recordatorio (POST /api/h13/hour). Arranca el reto (ACTIVE). */
 export async function setReminderHour(userId: string, hour: number): Promise<{ ok: boolean }> {
   if (!isH13Enabled(userId)) return { ok: false };
-  if (![12, 18, 21].includes(hour)) return { ok: false };
+  if (!H13_VALID_HOURS.includes(hour)) return { ok: false };
   const p = await getParticipant(userId);
   if (!p || p.arm !== 'reto' || (p.state !== 'ACCEPTED' && p.state !== 'ACTIVE')) return { ok: false };
 
@@ -383,7 +397,7 @@ async function computeInsight(
   if (daysWithTx >= 2) return { text: `Racha de ${daysWithTx} días 🔥`, type: 'racha' };
   // P3: primer día del reto → mensaje de arranque.
   if (daysWithTx <= 1) {
-    return { text: 'Primer paso dado. Desde ya empiezo a aprender de tu plata.', type: 'primer_dia' };
+    return { text: 'Primer paso dado. Desde ya empiezo a aprender de tus finanzas.', type: 'primer_dia' };
   }
   // Fallback defensivo (no debería alcanzarse).
   const weekStart = new Date(now.getTime() - 7 * 86_400_000);

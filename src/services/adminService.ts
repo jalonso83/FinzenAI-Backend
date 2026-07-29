@@ -418,7 +418,6 @@ export class AdminService {
       registrationsByDay,
       totalRegistered,
       totalVerified,
-      totalOnboarded,
       totalActivated,
       retainedD1,
       retainedD7,
@@ -444,11 +443,6 @@ export class AdminService {
       // Funnel: verified (confirmed email) within the cohort
       prisma.user.count({
         where: { createdAt: { gte: from, lte: to }, verified: true },
-      }),
-
-      // Funnel: onboarded (completed onboarding)
-      prisma.user.count({
-        where: { createdAt: { gte: from, lte: to }, onboardingCompleted: true },
       }),
 
       // Funnel: activated (has at least 1 transaction)
@@ -568,7 +562,8 @@ export class AdminService {
       funnel: {
         registered: totalRegistered,
         verified: totalVerified,
-        onboarded: totalOnboarded,
+        // Sin escalón de onboarding: al eliminar el muro (jul-2026) entrar a la app
+        // marca onboardingCompleted=true, así que ese paso daba ~100% siempre.
         activated: Number(totalActivated[0]?.cnt ?? 0),
         retainedD1: activated,
         retainedD7: retainedD7[0] ? Number(retainedD7[0].cnt) : 0,
@@ -823,7 +818,6 @@ export class AdminService {
     const [
       totalTransactions,
       activeUsersWithTx,
-      totalOnboarded,
       totalUsers,
       zenioActiveUsersData,
       referralsMade,
@@ -844,11 +838,6 @@ export class AdminService {
         FROM transactions
         WHERE date >= $1 AND date <= $2
       `, from, to),
-
-      // Onboarded users
-      prisma.user.count({
-        where: { onboardingCompleted: true, createdAt: { gte: from, lte: to } },
-      }),
 
       // Total users in period
       prisma.user.count({
@@ -959,10 +948,6 @@ export class AdminService {
       ? Math.round((totalTransactions / activeUsers) * 100) / 100
       : 0;
 
-    const onboardingRate = totalUsers > 0
-      ? Math.round((totalOnboarded / totalUsers) * 10000) / 100
-      : 0;
-
     const zenioActiveUsers = Number(zenioActiveUsersData[0]?.cnt ?? 0);
     const referralConversionRate = referralsMade > 0
       ? Math.round((referralsConvertedFromCohort / referralsMade) * 10000) / 100
@@ -982,14 +967,9 @@ export class AdminService {
       with_tx: bigint;
       with_zenio: bigint;
       with_zenio_real: bigint;
-      skipped: bigint;
-      unfinished: bigint;
-      completed_chat: bigint;
-      tx_skipped: bigint;
-      tx_completed: bigint;
     }[]>(`
       WITH cohort AS (
-        SELECT id, "createdAt"::date AS reg_day, "onboardingMethod", "onboardingCompleted"
+        SELECT id, "createdAt"::date AS reg_day
         FROM users
         WHERE "createdAt" >= $1
           AND "createdAt" <= LEAST($2::timestamp, NOW() - interval '1 hour')
@@ -1028,27 +1008,13 @@ export class AdminService {
         (SELECT COUNT(*) FROM cohort)::bigint as cohort_size,
         (SELECT COUNT(*) FROM tx_users)::bigint as with_tx,
         (SELECT COUNT(*) FROM zenio_users)::bigint as with_zenio,
-        (SELECT COUNT(*) FROM zenio_real_users)::bigint as with_zenio_real,
-        (SELECT COUNT(*) FROM cohort WHERE "onboardingMethod" = 'skipped')::bigint as skipped,
-        (SELECT COUNT(*) FROM cohort WHERE "onboardingCompleted" = false)::bigint as unfinished,
-        (SELECT COUNT(*) FROM cohort
-           WHERE "onboardingCompleted" = true AND "onboardingMethod" IS DISTINCT FROM 'skipped')::bigint as completed_chat,
-        (SELECT COUNT(*) FROM tx_users tu JOIN cohort c ON c.id = tu."userId"
-           WHERE c."onboardingMethod" = 'skipped')::bigint as tx_skipped,
-        (SELECT COUNT(*) FROM tx_users tu JOIN cohort c ON c.id = tu."userId"
-           WHERE c."onboardingCompleted" = true AND c."onboardingMethod" IS DISTINCT FROM 'skipped')::bigint as tx_completed
+        (SELECT COUNT(*) FROM zenio_real_users)::bigint as with_zenio_real
     `, from, to);
 
     const adoptionCohortSize = Number(adoptionData[0]?.cohort_size ?? 0);
     const cohortWithTx = Number(adoptionData[0]?.with_tx ?? 0);
     const cohortWithZenio = Number(adoptionData[0]?.with_zenio ?? 0);
     const cohortWithZenioReal = Number(adoptionData[0]?.with_zenio_real ?? 0);
-    const cohortSkipped = Number(adoptionData[0]?.skipped ?? 0);
-    const cohortUnfinished = Number(adoptionData[0]?.unfinished ?? 0);
-    const cohortCompletedChat = Number(adoptionData[0]?.completed_chat ?? 0);
-    const txSkipped = Number(adoptionData[0]?.tx_skipped ?? 0);
-    const txCompleted = Number(adoptionData[0]?.tx_completed ?? 0);
-
     const pct = (num: number, den: number) =>
       den > 0 ? Math.round((num / den) * 10000) / 100 : 0;
 
@@ -1062,15 +1028,6 @@ export class AdminService {
     // % Adopción Zenio REAL: cuántos usaron Zenio en un día posterior al registro
     // (uso voluntario, excluye onboarding).
     const zenioRealAdoptionRate = pct(cohortWithZenioReal, adoptionCohortSize);
-
-    // ─── Onboarding: skip / sin terminar / activación por método ───
-    // El skip está tras feature flag por usuario, así que estas tasas son sobre
-    // TODO el cohort, no solo sobre quienes tenían la opción disponible.
-    const skipRate = pct(cohortSkipped, adoptionCohortSize);
-    const onboardingUnfinishedRate = pct(cohortUnfinished, adoptionCohortSize);
-    // Activación (≥1 tx) según el camino de onboarding: ¿saltar ayuda o estorba?
-    const txAdoptionSkipped = pct(txSkipped, cohortSkipped);
-    const txAdoptionCompleted = pct(txCompleted, cohortCompletedChat);
 
     // % Racha de Hábito: de los usuarios que REALMENTE usan la app (≥1 transacción
     // en el período), qué % mantiene una racha de HÁBITO real (currentStreak >= 2).
@@ -1206,7 +1163,6 @@ export class AdminService {
       transactionsPerActiveUser,
       totalTransactions,
       activeUsers,
-      onboardingRate,
       zenioActiveUsers,
       zenioAdoptionRate,
       zenioRealAdoptionRate,
@@ -1214,18 +1170,13 @@ export class AdminService {
       streakActiveUsers,
       streakActiveRate,
       timeToFirstTx,
-      // Onboarding: skip y activación por método (saltó vs completó por chat).
-      // skipRate / onboardingUnfinishedRate son sobre TODO el cohort (el skip está
-      // tras feature flag, así que no todos tenían la opción disponible).
-      onboarding: {
-        skipRate,
-        skippedCount: cohortSkipped,
-        unfinishedRate: onboardingUnfinishedRate,
-        unfinishedCount: cohortUnfinished,
-        completedChatCount: cohortCompletedChat,
-        txAdoptionSkipped,
-        txAdoptionCompleted,
-      },
+      // NOTA (jul-2026): se retiró el bloque `onboarding` (skipRate, unfinished,
+      // completedChat, txAdoption por camino) y `onboardingRate` al eliminar el muro
+      // definitivamente. Sin muro, entrar a la app marca onboardingCompleted=true
+      // (config.ts markAppEntered), así que la "tasa de onboarding" medía "abrió la
+      // app"; y el botón de saltar vivía en la pantalla del muro, o sea que nadie
+      // vuelve a quedar como 'skipped'. Las columnas siguen en la BD: los datos
+      // históricos del experimento no se tocan.
       // Mensajes a Zenio (contadores corridos, all-time / mes en curso — no
       // filtrados por período). zenioMessagesTotal coincide con el total de la
       // columna "Zenio" en la tabla de Usuarios.
