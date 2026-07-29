@@ -124,6 +124,17 @@ export const AGENT_SEGMENTS: AgentSegmentDef[] = [
       trialEndingDays: parseIntParam(p.days, 3, 1, 30),
     }),
   },
+  {
+    slug: 'trial_available',
+    name: 'Prueba sin usar',
+    description:
+      'Usuarios FREE que nunca usaron su prueba gratis de 7 días y todavía pueden activarla ' +
+      '(hasUsedTrial=false). No pedimos tarjeta para el trial, así que el mensaje puede prometer ' +
+      '"sin tarjeta" con verdad. Ojo: un puñado puede estar bloqueado por haber reusado el ' +
+      'dispositivo de otra cuenta; a esos la app les niega la activación y salen solos del segmento.',
+    params: [...STANDARD_PARAMS],
+    buildFilters: (p) => baseFilters('trial_available', p),
+  },
 ];
 
 export function getAgentSegment(slug: string): AgentSegmentDef | undefined {

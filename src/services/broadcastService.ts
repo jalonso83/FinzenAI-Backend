@@ -13,7 +13,11 @@ export type LifecycleSegment = 'never_activated' | 'dormant' | 'active';
 // Segmentos de comportamiento adicionales (Agent API / capa semántica):
 //  - budget_exceeded: ≥1 presupuesto vigente con spent > amount.
 //  - trial_ending: suscripción TRIALING que vence dentro de trialEndingDays.
-export type AudienceSegment = LifecycleSegment | 'budget_exceeded' | 'trial_ending';
+//  - trial_available: FREE que NUNCA usó su prueba de 7 días y todavía puede
+//    activarla. Se filtra por `users.hasUsedTrial = false`, que es el mismo flag
+//    que valida el backend al activar (controllers/subscriptions.ts:startTrial),
+//    así que el segmento no promete algo que la app vaya a rechazar.
+export type AudienceSegment = LifecycleSegment | 'budget_exceeded' | 'trial_ending' | 'trial_available';
 
 export interface AudienceFilters {
   plans: string[];               // ['FREE','PREMIUM','PRO']
@@ -58,6 +62,7 @@ export class BroadcastService {
    *  - active: tiene ≥1 tx y actividad dentro del umbral.
    *  - budget_exceeded: ≥1 presupuesto vigente (is_active, en período) con spent > amount.
    *  - trial_ending: suscripción TRIALING que vence dentro de trialEndingDays.
+   *  - trial_available: FREE con hasUsedTrial=false (nunca usó su prueba de 7 días).
    */
   private static audienceBody(f: AudienceFilters, applyOptOut: boolean): { sql: string; params: any[] } {
     // Modo prueba: solo el admin. Ignora segmentos, planes, opt-out y país.
@@ -89,6 +94,7 @@ export class BroadcastService {
       f.segments.includes('budget_exceeded'),  // $10
       f.segments.includes('trial_ending'),     // $11
       f.trialEndingDays ?? 3,                  // $12
+      f.segments.includes('trial_available'),  // $13
     ];
     const sql = `
       FROM users u
@@ -118,6 +124,11 @@ export class BroadcastService {
               AND s."trialEndsAt" IS NOT NULL
               AND s."trialEndsAt" > NOW()
               AND s."trialEndsAt" <= NOW() + make_interval(days => $12::int))
+          -- trial_available: exige FREE explícitamente además del filtro de planes.
+          -- Un PREMIUM/PRO puede tener hasUsedTrial=false (p.ej. pagó directo) y
+          -- ofrecerle una prueba no tiene sentido.
+          OR ($13::boolean AND u."hasUsedTrial" = false
+              AND COALESCE(s.plan::text, 'FREE') = 'FREE')
         )
         AND (
           NOT $9::boolean
