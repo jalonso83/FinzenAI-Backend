@@ -213,11 +213,30 @@ router.get('/', authenticateAdminOrPdfToken, async (req: Request, res: Response)
       },
     });
 
-    // Calcular costo por usuario y agregar a plan
+    // Costo por usuario en UNA sola agregación.
+    //
+    // Antes esto era un `for` con un await adentro: una query por cada usuario
+    // con consumo en el período, en serie. El tiempo crecía con la base de
+    // usuarios (llegó a ~1.7 min) y, como el dashboard pide sus 8 endpoints en
+    // Promise.all, el panel entero esperaba a este. El groupBy hace el mismo
+    // cálculo del lado de Postgres en una sola ida.
+    const costRows = await prisma.openAIDailyUsage.groupBy({
+      by: ['userId'],
+      where: {
+        userId: { in: usersByPlan.map((u) => u.id) },
+        date: { gte: startDate, lte: endDate },
+      },
+      _sum: { totalCost: true },
+    });
+
+    const costByUser = new Map<string, number>();
+    for (const row of costRows) {
+      costByUser.set(row.userId, parseFloat((row._sum.totalCost ?? 0).toString()));
+    }
+
     for (const user of usersByPlan) {
-      const userCost = await OpenAiUsageService.getTotalCostByUser(user.id, startDate, endDate);
       const plan = user.subscription?.plan || 'FREE';
-      costByPlan[plan] = (costByPlan[plan] || 0) + parseFloat(userCost.toString());
+      costByPlan[plan] = (costByPlan[plan] || 0) + (costByUser.get(user.id) ?? 0);
     }
 
     // 6. Armar respuesta — pad features y modelos canónicos con $0
