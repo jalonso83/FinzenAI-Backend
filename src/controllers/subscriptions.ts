@@ -5,6 +5,9 @@ import { subscriptionService } from '../services/subscriptionService';
 import { EmailSyncService } from '../services/emailSyncService';
 import { PLANS, PlanType, BillingPeriod, getPriceId, getPlanFromPriceId, stripe } from '../config/stripe';
 import { sanitizeLimit, PAGINATION } from '../config/pagination';
+import jwt from 'jsonwebtoken';
+import { ENV } from '../config/env';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 import { logger } from '../utils/logger';
 /**
@@ -169,6 +172,12 @@ export const startTrial = async (req: Request, res: Response) => {
       logger.log(`📱 Dispositivo registrado: ${deviceId} (${platform || 'unknown'})`);
     }
 
+    // Cierra el embudo con 'ver_planes': cuántos de los que ven la pantalla
+    // llegan a activar. Se registra aquí y no se deduce de subscription.
+    // trialStartedAt porque el scheduler pone ese campo en NULL al vencer el
+    // trial — o sea que los trials ya terminados serían invisibles.
+    recordFeatureUsage(userId, 'suscripciones', 'inicio_trial');
+
     logger.log(`✅ Trial iniciado para usuario ${userId} - Plan: ${plan} - Termina: ${trialEndsAt.toISOString()}`);
 
     res.json({
@@ -212,8 +221,36 @@ export const getSubscription = async (req: Request, res: Response) => {
 /**
  * Obtener todos los planes disponibles
  */
+/**
+ * userId del Bearer token si viene y es válido; null en cualquier otro caso.
+ *
+ * Se usa SOLO para telemetría en rutas públicas: nunca para autorizar. Por eso
+ * no lanza ni responde 401 — si no hay token o no verifica, la ruta sigue siendo
+ * pública exactamente igual que antes.
+ */
+function optionalUserId(req: Request): string | null {
+  try {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) return null;
+    const decoded = jwt.verify(header.slice(7), ENV.JWT_SECRET, { algorithms: ['HS256'] }) as any;
+    return typeof decoded?.userId === 'string' ? decoded.userId : null;
+  } catch {
+    return null;
+  }
+}
+
 export const getPlans = async (req: Request, res: Response) => {
   try {
+    // Telemetría de "vio la pantalla de planes". `fetchPlans()` se llama ÚNICAMENTE
+    // desde SubscriptionsScreen (las dos apps), así que una llamada aquí equivale a
+    // una visita a esa pantalla. No sirve /subscriptions/current para esto: lo pide
+    // medio app (dashboard, presupuestos, metas) y mediría "abrió la app".
+    //
+    // Va aquí y no en la app a propósito: así empieza a medir con el deploy del
+    // backend, sin esperar a que se propague un build.
+    const viewerId = optionalUserId(req);
+    if (viewerId) recordFeatureUsage(viewerId, 'suscripciones', 'ver_planes');
+
     // Retornar todos los planes: FREE, PREMIUM (Plus), PRO
     const plans = Object.entries(PLANS).map(([key, value]) => ({
       id: key,

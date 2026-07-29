@@ -1108,7 +1108,7 @@ export class AdminService {
     // ── Uso de funcionalidades extra (tabla feature_usage), scoped al período ──
     // Base de adopción según elegibilidad: features de todos los planes vs 'activos';
     // Skip vs Save (Plus+) vs 'base con acceso' = pagando (PREMIUM/PRO activo) + trial.
-    const [antRows, calcRows, calcFreeUsersData, accessBaseData] = await Promise.all([
+    const [antRows, calcRows, calcFreeUsersData, accessBaseData, subsRows, trialEligibleData] = await Promise.all([
       prisma.$queryRawUnsafe<{ action: string; calls: bigint; users: bigint }[]>(`
         SELECT action, COUNT(*)::bigint as calls, COUNT(DISTINCT "userId")::bigint as users
         FROM feature_usage
@@ -1131,6 +1131,23 @@ export class AdminService {
         SELECT COUNT(*)::bigint as cnt FROM subscriptions
         WHERE (status = 'ACTIVE' AND plan IN ('PREMIUM','PRO')) OR status = 'TRIALING'
       `),
+      // Embudo del trial: ver la pantalla de planes → activar la prueba.
+      // 'ver_planes' se registra en GET /subscriptions/plans, que solo llama
+      // SubscriptionsScreen, así que equivale a una visita a esa pantalla.
+      prisma.$queryRawUnsafe<{ action: string; calls: bigint; users: bigint }[]>(`
+        SELECT action, COUNT(*)::bigint as calls, COUNT(DISTINCT "userId")::bigint as users
+        FROM feature_usage
+        WHERE feature = 'suscripciones' AND "createdAt" >= $1 AND "createdAt" <= $2
+        GROUP BY action
+      `, from, to),
+      // Base elegible: FREE que TODAVÍA puede activar su prueba. No se filtra por
+      // período a propósito — es un stock (cuánta gente tiene el trial pendiente),
+      // no un flujo del período.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(*)::bigint as cnt
+        FROM users u JOIN subscriptions s ON s."userId" = u.id
+        WHERE s.plan = 'FREE' AND u."hasUsedTrial" = false
+      `),
     ]);
 
     const antByAction: Record<string, { calls: number; users: number }> = {};
@@ -1140,6 +1157,10 @@ export class AdminService {
 
     const antAnalysisUsers = antByAction['analysis']?.users ?? 0;
     const antConfigUsers = antByAction['config']?.users ?? 0;
+    const subsByAction: Record<string, { calls: number; users: number }> = {};
+    for (const r of subsRows) subsByAction[r.action] = { calls: Number(r.calls), users: Number(r.users) };
+    const trialEligible = Number(trialEligibleData[0]?.cnt ?? 0);
+
     const calcFreeUsers = Number(calcFreeUsersData[0]?.cnt ?? 0);
     const calcFreeCalls = ['inversion', 'meta', 'inflacion'].reduce((s, a) => s + (calcByAction[a]?.calls ?? 0), 0);
     const accessBase = Number(accessBaseData[0]?.cnt ?? 0);
@@ -1167,6 +1188,17 @@ export class AdminService {
         calls: calcByAction['skip_vs_save']?.calls ?? 0,
         accessBase,                                        // pagando + trial
         adoptionRate: pct(calcByAction['skip_vs_save']?.users ?? 0, accessBase),
+      },
+      // Embudo del trial. Responde dos preguntas distintas, y cada una pide un
+      // arreglo opuesto: si casi nadie LLEGA, el problema es de descubrimiento
+      // (dónde está la entrada); si llegan y no activan, es de la pantalla.
+      trialFunnel: {
+        viewedUsers: subsByAction['ver_planes']?.users ?? 0,
+        viewedCalls: subsByAction['ver_planes']?.calls ?? 0,
+        startedUsers: subsByAction['inicio_trial']?.users ?? 0,
+        eligibleBase: trialEligible,                       // FREE con trial pendiente (stock)
+        viewRate: pct(subsByAction['ver_planes']?.users ?? 0, trialEligible),
+        viewToStartRate: pct(subsByAction['inicio_trial']?.users ?? 0, subsByAction['ver_planes']?.users ?? 0),
       },
     };
 
