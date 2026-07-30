@@ -155,6 +155,8 @@ export class BroadcastService {
     exposedTx: number; holdoutTx: number;
     exposedTxRate: number; holdoutTxRate: number; liftPts: number;
     exposedTxBefore: number; exposedTxBeforeRate: number; prePostPts: number;
+    exposedTrial: number; holdoutTrial: number;
+    exposedTrialRate: number; holdoutTrialRate: number; trialLiftPts: number;
     mode: string; enrolled: number;
   }> {
     const broadcast = await prisma.broadcast.findUnique({
@@ -195,9 +197,25 @@ export class BroadcastService {
            AND t.date >= date_trunc('day', b."sentAt") - interval '7 days'
            AND t.date < date_trunc('day', b."sentAt")`;
 
+    // Resultado alternativo: ACTIVAR LA PRUEBA de 7 días. Para una campaña cuyo
+    // objetivo es que el usuario active su trial, "≥1 transacción" es el
+    // yardstick equivocado — puede activar la prueba y no registrar nada esa
+    // semana, o registrar sin haber activado. Sale de feature_usage
+    // ('suscripciones'/'inicio_trial'), no de subscription.trialStartedAt: el
+    // scheduler pone ese campo en NULL al vencer el trial, así que los ya
+    // terminados serían invisibles. Misma ventana que tx (día 0 + 7 días).
+    const trialJoin = isEvergreen
+      ? `WHERE fu."createdAt" >= date_trunc('day', c."createdAt")
+           AND fu."createdAt" < date_trunc('day', c."createdAt") + interval '8 days'`
+      : `JOIN b ON true
+         WHERE b."sentAt" IS NOT NULL
+           AND fu."createdAt" >= date_trunc('day', b."sentAt")
+           AND fu."createdAt" < date_trunc('day', b."sentAt") + interval '8 days'`;
+
     const rows = await prisma.$queryRawUnsafe<{
       exposed: number; holdout: number; impressions: number; clicks: number;
       exposed_tx: number; holdout_tx: number; exposed_tx_before: number;
+      exposed_trial: number; holdout_trial: number;
     }[]>(
       `
       WITH b AS (SELECT "sentAt" FROM broadcasts WHERE id = $1),
@@ -217,6 +235,13 @@ export class BroadcastService {
         FROM cohort c
         JOIN transactions t ON t."userId" = c."userId"
         ${txBeforeJoin}
+      ),
+      trial AS (
+        SELECT DISTINCT c."userId"
+        FROM cohort c
+        JOIN feature_usage fu ON fu."userId" = c."userId"
+          AND fu.feature = 'suscripciones' AND fu.action = 'inicio_trial'
+        ${trialJoin}
       )
       SELECT
         COUNT(*) FILTER (WHERE NOT holdout)::int AS exposed,
@@ -225,17 +250,25 @@ export class BroadcastService {
         COUNT(*) FILTER (WHERE NOT holdout AND "clickedAt" IS NOT NULL)::int AS clicks,
         COUNT(*) FILTER (WHERE NOT holdout AND "userId" IN (SELECT "userId" FROM tx))::int AS exposed_tx,
         COUNT(*) FILTER (WHERE holdout AND "userId" IN (SELECT "userId" FROM tx))::int AS holdout_tx,
-        COUNT(*) FILTER (WHERE NOT holdout AND "userId" IN (SELECT "userId" FROM tx_before))::int AS exposed_tx_before
+        COUNT(*) FILTER (WHERE NOT holdout AND "userId" IN (SELECT "userId" FROM tx_before))::int AS exposed_tx_before,
+        COUNT(*) FILTER (WHERE NOT holdout AND "userId" IN (SELECT "userId" FROM trial))::int AS exposed_trial,
+        COUNT(*) FILTER (WHERE holdout AND "userId" IN (SELECT "userId" FROM trial))::int AS holdout_trial
       FROM cohort
       `,
       broadcastId,
     );
 
-    const r = rows[0] ?? { exposed: 0, holdout: 0, impressions: 0, clicks: 0, exposed_tx: 0, holdout_tx: 0, exposed_tx_before: 0 };
+    const r = rows[0] ?? {
+      exposed: 0, holdout: 0, impressions: 0, clicks: 0,
+      exposed_tx: 0, holdout_tx: 0, exposed_tx_before: 0,
+      exposed_trial: 0, holdout_trial: 0,
+    };
     const rate = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 10000) / 100 : 0);
     const exposedTxRate = rate(Number(r.exposed_tx), Number(r.exposed));
     const holdoutTxRate = rate(Number(r.holdout_tx), Number(r.holdout));
     const exposedTxBeforeRate = rate(Number(r.exposed_tx_before), Number(r.exposed));
+    const exposedTrialRate = rate(Number(r.exposed_trial), Number(r.exposed));
+    const holdoutTrialRate = rate(Number(r.holdout_trial), Number(r.holdout));
     return {
       exposed: Number(r.exposed), holdout: Number(r.holdout),
       impressions: Number(r.impressions), clicks: Number(r.clicks),
@@ -245,6 +278,10 @@ export class BroadcastService {
       exposedTxBefore: Number(r.exposed_tx_before),
       exposedTxBeforeRate,
       prePostPts: Math.round((exposedTxRate - exposedTxBeforeRate) * 100) / 100,
+      // Activación de la PRUEBA (resultado correcto para campañas de trial).
+      exposedTrial: Number(r.exposed_trial), holdoutTrial: Number(r.holdout_trial),
+      exposedTrialRate, holdoutTrialRate,
+      trialLiftPts: Math.round((exposedTrialRate - holdoutTrialRate) * 100) / 100,
       // Evergreen: alcance vivo = expuestos + holdout (todas las filas inscritas).
       mode: broadcast?.mode ?? 'ONE_SHOT',
       enrolled: Number(r.exposed) + Number(r.holdout),
