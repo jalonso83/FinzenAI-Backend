@@ -39,9 +39,12 @@ export const PLANS = {
       advancedCalculators: false, // Sin acceso a Skip vs Save Challenge
     },
     features: [
+      // OJO: estos textos deben coincidir con `limits` de arriba — es lo que el
+      // usuario ve en la pantalla de planes. Decían 2 presupuestos y 1 meta
+      // cuando el sistema ya permitía 4 y 2 (corregido 2026-07-31).
       'Transacciones ilimitadas',
-      'Hasta 2 presupuestos activos',
-      'Hasta 1 meta de ahorro',
+      'Hasta 4 presupuestos activos',
+      'Hasta 2 metas de ahorro',
       'Hasta 2 recordatorios de pago',
       'Asesoría financiera con IA (15 consultas/mes)',
       'Reportes básicos',
