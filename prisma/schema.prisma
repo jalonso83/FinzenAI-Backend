@@ -426,6 +426,11 @@ model Subscription {
   trialEndsAt            DateTime?
   trialStartedAt         DateTime?
   trialNotificationsSent Json?              @default("[]") // Array of sent notification types: ["TRIAL_WELCOME", "TRIAL_DAY_3", etc.]
+  // Avisos de cobro fallido ya enviados: ["FIRST", "FINAL"]. Mismo patrón que
+  // trialNotificationsSent — Stripe reintenta hasta 8 veces y cada fallo dispara
+  // el webhook, así que sin esto el usuario recibiría 8 pushes. Se vacía cuando
+  // el pago se recupera.
+  pastDueNotificationsSent Json?            @default("[]")
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
@@ -850,6 +855,7 @@ enum NotificationType {
   TRIAL_DAY_5
   TRIAL_ENDING
   TRIAL_ENDED
+  SUBSCRIPTION_PAST_DUE  // cobro rechazado / plan degradado: transaccional, no opt-out
   MARKETING       // broadcast: ofertas, promociones (opt-out independiente)
   ANNOUNCEMENT    // broadcast: novedades / cambios de producto
   RECURRING_TRANSACTION // el cron registró un gasto/ingreso automático

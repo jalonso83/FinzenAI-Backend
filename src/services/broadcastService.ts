@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { userBucket } from '../lib/userBucket';
 import { NotificationService, NotificationPayload } from './notificationService';
+import { isInQuietHours } from '../utils/timezone';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Broadcast service — notificaciones masivas (re-engagement / anuncios).
@@ -38,17 +39,15 @@ export interface AudienceFilters {
 interface AudienceRow {
   userId: string;
   token: string;
+  country: string | null;
   qhStart: number | null;
   qhEnd: number | null;
 }
 
-// Quiet hours: misma lógica que NotificationService.isInQuietHours.
-function isInQuietHours(qhStart: number | null, qhEnd: number | null): boolean {
-  if (qhStart == null || qhEnd == null) return false;
-  const currentHour = new Date().getHours();
-  if (qhStart > qhEnd) return currentHour >= qhStart || currentHour < qhEnd; // cruza medianoche
-  return currentHour >= qhStart && currentHour < qhEnd;
-}
+// Quiet hours: se resuelve en la hora LOCAL del usuario (utils/timezone), no en la
+// del servidor. La copia anterior usaba `new Date().getHours()` = UTC en Railway,
+// lo que en RD (UTC-4) silenciaba los envíos desde las 6 de la tarde y los dejaba
+// salir de madrugada. Ver la misma corrección en NotificationService.
 
 export class BroadcastService {
   /**
@@ -389,7 +388,7 @@ export class BroadcastService {
   private static async resolveAudience(f: AudienceFilters): Promise<AudienceRow[]> {
     const body = this.audienceBody(f, true);
     return prisma.$queryRawUnsafe<AudienceRow[]>(
-      `SELECT u.id AS "userId", d."fcmToken" AS token,
+      `SELECT u.id AS "userId", d."fcmToken" AS token, u.country AS country,
               np."quietHoursStart" AS "qhStart", np."quietHoursEnd" AS "qhEnd"
        ${body.sql}`,
       ...body.params,
@@ -428,9 +427,9 @@ export class BroadcastService {
       const rows = await this.resolveAudience(filters);
 
       // Agrupar por usuario → tokens + quiet hours.
-      const byUser = new Map<string, { tokens: string[]; qhStart: number | null; qhEnd: number | null }>();
+      const byUser = new Map<string, { tokens: string[]; country: string | null; qhStart: number | null; qhEnd: number | null }>();
       for (const r of rows) {
-        const u = byUser.get(r.userId) ?? { tokens: [], qhStart: r.qhStart, qhEnd: r.qhEnd };
+        const u = byUser.get(r.userId) ?? { tokens: [], country: r.country, qhStart: r.qhStart, qhEnd: r.qhEnd };
         u.tokens.push(r.token);
         byUser.set(r.userId, u);
       }
@@ -482,7 +481,7 @@ export class BroadcastService {
         for (const userId of exposedIds) {
           const info = byUser.get(userId)!;
           // En modo prueba ignoramos quiet hours para que el test siempre llegue.
-          if (!isTest && isInQuietHours(info.qhStart, info.qhEnd)) {
+          if (!isTest && isInQuietHours(info.country, info.qhStart, info.qhEnd)) {
             suppressed.add(userId);
             continue;
           }

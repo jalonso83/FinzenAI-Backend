@@ -1,5 +1,6 @@
 import { NotificationType, NotificationStatus, DevicePlatform } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { isInQuietHours as isInQuietHoursLocal } from '../utils/timezone';
 import { subscriptionService } from './subscriptionService';
 import { PLANS } from '../config/stripe';
 
@@ -149,8 +150,12 @@ export class NotificationService {
         return { success: true, successCount: 0, failureCount: 0 };
       }
 
-      // Verificar horario silencioso
-      if (preferences && this.isInQuietHours(preferences)) {
+      // Verificar horario silencioso (en la hora LOCAL del usuario, no la del server)
+      const userForTz = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { country: true },
+      });
+      if (preferences && this.isInQuietHours(preferences, userForTz?.country)) {
         logger.log(`[NotificationService] User ${userId} is in quiet hours, skipping notification`);
         return { success: true, successCount: 0, failureCount: 0 };
       }
@@ -420,6 +425,11 @@ export class NotificationService {
         return preferences.announcementsEnabled ?? true;
       case 'SYSTEM':
         return true; // System notifications always enabled
+      case 'SUBSCRIPTION_PAST_DUE':
+        // Transaccional, no promocional: avisa de un cobro rechazado y de que el
+        // plan va a cambiar. No debe poder silenciarse — si el usuario no se
+        // entera, pierde su plan sin saber por qué.
+        return true;
       default:
         return true;
     }
@@ -428,21 +438,18 @@ export class NotificationService {
   /**
    * Verifica si está en horario silencioso
    */
-  private static isInQuietHours(preferences: any): boolean {
-    if (!preferences.quietHoursStart || !preferences.quietHoursEnd) {
-      return false;
-    }
-
-    const now = new Date();
-    const currentHour = now.getHours();
-    const start = preferences.quietHoursStart;
-    const end = preferences.quietHoursEnd;
-
-    // Maneja el caso cuando el período cruza la medianoche
-    if (start > end) {
-      return currentHour >= start || currentHour < end;
-    }
-    return currentHour >= start && currentHour < end;
+  /**
+   * Horario silencioso EN LA HORA LOCAL DEL USUARIO.
+   *
+   * Antes usaba `new Date().getHours()` — la hora del SERVIDOR, que en Railway es
+   * UTC. Con RD en UTC-4 eso silenciaba las notificaciones desde las 6 de la tarde
+   * y las dejaba salir a las 4 de la madrugada: cuatro horas corridas, justo al
+   * revés de lo que el usuario configuró. Ahora delega en utils/timezone, que
+   * resuelve la hora local a partir del país (misma función que ya usaban los
+   * schedulers de gastos hormiga, tips y recordatorios).
+   */
+  private static isInQuietHours(preferences: any, country: string | null | undefined): boolean {
+    return isInQuietHoursLocal(country, preferences?.quietHoursStart, preferences?.quietHoursEnd);
   }
 
   /**

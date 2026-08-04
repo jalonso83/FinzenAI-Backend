@@ -5,6 +5,7 @@ import {
   respondOffer,
   setReminderHour,
   optOutCues,
+  H13_VALID_HOURS,
 } from '../services/h13/h13Service';
 
 /**
@@ -44,8 +45,12 @@ export const postHour = async (req: Request, res: Response) => {
   const userId = (req as { user?: { id?: string } }).user?.id;
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
   const hour = Number(req.body?.hour);
-  if (![12, 18, 21].includes(hour)) {
-    return res.status(400).json({ error: 'hour debe ser 12 | 18 | 21' });
+  // Usa la MISMA constante que el servicio (H13_VALID_HOURS). Esta lista estaba
+  // hardcodeada como [12,18,21] y al agregar la hora de mañana (8) el controlador
+  // seguía rechazándola con un 400 antes de llegar al servicio: los otros tres
+  // botones funcionaban y el de mañana no hacía nada.
+  if (!H13_VALID_HOURS.includes(hour)) {
+    return res.status(400).json({ error: `hour debe ser ${H13_VALID_HOURS.join(' | ')}` });
   }
   try {
     const result = await setReminderHour(userId, hour);
