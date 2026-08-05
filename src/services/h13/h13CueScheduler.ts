@@ -60,6 +60,10 @@ export class H13CueScheduler {
   static startScheduler(): void {
     if (this.isRunning) return;
     this.cronTask = cron.schedule('0 * * * *', async () => {
+      // logger.error a propósito: en producción el logger solo muestra errores,
+      // y necesitamos ver que el tick corre de verdad para diagnosticar por qué
+      // nunca salió un cue. Quitar cuando el experimento esté validado.
+      logger.error(`[H13CueScheduler] tick ${new Date().toISOString()}`);
       try {
         await this.sendCuesToActiveChallenges();
       } catch (error) {
@@ -72,7 +76,11 @@ export class H13CueScheduler {
       }
     });
     this.isRunning = true;
-    logger.log('[H13CueScheduler] 🚀 Iniciado (cada hora, timezone-aware, hora elegida por el usuario)');
+    // Igual que arriba: logger.error para que se vea en producción.
+    const wl = (process.env.H13_WHITELIST || '').split(',').map(s => s.trim()).filter(Boolean);
+    logger.error(
+      `[H13CueScheduler] 🚀 Iniciado · flag=${isH13FlagOn()} · whitelist=${wl.length} id(s) · guard=${isH13FlagOn() || this.hayWhitelist() ? 'PASA' : 'CORTA'}`
+    );
   }
 
   static stopScheduler(): void {
@@ -106,27 +114,30 @@ export class H13CueScheduler {
       },
     });
 
+    logger.error(`[H13CueScheduler] participantes ACTIVE encontrados: ${active.length}`);
     if (active.length === 0) return;
     const now = new Date();
     let sent = 0;
+    // Motivo por el que se descartó cada usuario, para diagnosticar sin adivinar.
+    const descartes: string[] = [];
 
     for (const p of active) {
       try {
         // Corte por usuario: con el flag global apagado solo pasan los de la
         // whitelist (dogfood). Aquí sí hay userId, así que la whitelist cuenta.
-        if (!isH13Enabled(p.userId)) continue;
+        if (!isH13Enabled(p.userId)) { descartes.push(`${p.userId}: fuera de whitelist/flag`); continue; }
 
         const data = (p.data as H13Data) ?? {};
-        if (data.optedOutAt) continue;                 // silenció los cues (sigue en el brazo)
+        if (data.optedOutAt) { descartes.push(`${p.userId}: silenció los cues`); continue; }
         const reminderHour = data.reminderHour;
-        if (reminderHour == null) continue;
+        if (reminderHour == null) { descartes.push(`${p.userId}: sin hora elegida`); continue; }
 
         // Ventana del reto: 7 días desde la asignación.
         const dayN = Math.floor((now.getTime() - new Date(p.assignedAt).getTime()) / 86_400_000) + 1;
-        if (dayN < 1 || dayN > this.WINDOW_DAYS) continue;
+        if (dayN < 1 || dayN > this.WINDOW_DAYS) { descartes.push(`${p.userId}: fuera de ventana (día ${dayN})`); continue; }
 
         // ¿Es la hora local elegida por el usuario? (tolerancia ±30min del helper)
-        if (!isTargetLocalTime(p.user.country, reminderHour, 0)) continue;
+        if (!isTargetLocalTime(p.user.country, reminderHour, 0)) { descartes.push(`${p.userId}: no es su hora (quiere ${reminderHour}h, país ${p.user.country})`); continue; }
 
         const todayKey = localDateKey(p.user.country, now);
 
@@ -142,7 +153,7 @@ export class H13CueScheduler {
           select: { date: true },
         });
         const registeredToday = recentTx.some((t) => localDateKey(p.user.country, t.date) === todayKey);
-        if (registeredToday) continue;
+        if (registeredToday) { descartes.push(`${p.userId}: ya registró hoy`); continue; }
 
         // ¿Ya se le mandó un cue hoy? (garantiza máx 1/día)
         const cueToday = await prisma.experimentEvent.findFirst({
@@ -154,7 +165,7 @@ export class H13CueScheduler {
           },
           select: { id: true },
         });
-        if (cueToday) continue;
+        if (cueToday) { descartes.push(`${p.userId}: ya recibió cue hoy`); continue; }
 
         const esMañana = reminderHour === this.MORNING_HOUR;
 
@@ -187,6 +198,9 @@ export class H13CueScheduler {
       }
     }
 
-    if (sent > 0) logger.log(`[H13CueScheduler] ✅ ${sent} cue(s) enviados`);
+    logger.error(
+      `[H13CueScheduler] enviados=${sent} · descartados=${descartes.length}` +
+      (descartes.length ? ` → ${descartes.join(' | ')}` : '')
+    );
   }
 }
