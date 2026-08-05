@@ -505,7 +505,11 @@ export async function isInActiveReto(userId: string): Promise<boolean> {
  * El control no se toca (solo tiene h13_assigned). Best-effort.
  */
 export async function closeExpiredChallenges(): Promise<void> {
-  if (!isH13Enabled()) return;
+  // Sin userId, isH13Enabled ignora la whitelist y solo mira el flag global. Con
+  // el flag apagado eso cortaba aquí y los retos de dogfood se quedaban ACTIVE
+  // para siempre, sin insignia ni mensaje de cierre. El corte va por usuario,
+  // dentro del bucle.
+  if (!isH13FlagOn() && !(process.env.H13_WHITELIST || '').trim()) return;
   const now = new Date();
   const cutoff = new Date(now.getTime() - WINDOW_DAYS * 86_400_000);
 
@@ -521,6 +525,9 @@ export async function closeExpiredChallenges(): Promise<void> {
 
   for (const p of expired) {
     try {
+      // Corte por usuario: aquí sí hay userId, así que la whitelist cuenta.
+      if (!isH13Enabled(p.userId)) continue;
+
       const data = (p.data as H13Data) ?? {};
       const assignedAt = new Date(p.assignedAt);
 

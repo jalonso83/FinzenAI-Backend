@@ -4,8 +4,8 @@ import { logger } from '../../utils/logger';
 import { NotificationType } from '@prisma/client';
 import { isTargetLocalTime } from '../../utils/timezone';
 import { NotificationService } from '../notificationService';
-import { isH13Enabled } from '../../config/h13';
-import { H13_KEY, type H13Data, localDateKey, closeExpiredChallenges } from './h13Service';
+import { isH13Enabled, isH13FlagOn, isH13Whitelisted } from '../../config/h13';
+import { H13_KEY, H13_TARGET_DAYS, type H13Data, localDateKey, closeExpiredChallenges } from './h13Service';
 import { trackExperimentEvent } from '../experiments/experimentEvents';
 
 /**
@@ -28,6 +28,25 @@ export class H13CueScheduler {
     'Día {n} del reto: un gasto, 10 segundos, y seguimos 🔥',
     'Tu reto va en el día {n}. ¿Anotamos lo de hoy?',
   ];
+
+  // Desde este día del reto, si el usuario todavía NO llegó a la meta, el cue deja
+  // de ser genérico y le dice cuánto le falta y cuánto le queda. No es un push
+  // extra: es el mismo recordatorio diario con contexto, que es lo que crea
+  // urgencia real. Antes del día 4 no hay nada urgente que comunicar.
+  private static readonly URGENCY_FROM_DAY = 4;
+
+  /**
+   * Cue con progreso para quien va corto. `faltan` = días que le faltan para la
+   * meta; `quedan` = días de ventana que le quedan (hoy incluido).
+   */
+  private static urgencyBody(faltan: number, quedan: number, morning: boolean): string {
+    const dias = (n: number) => (n === 1 ? '1 día' : `${n} días`);
+    const accion = morning ? 'Anota lo de ayer' : 'Un registro hoy';
+    if (faltan === 1) {
+      return `Te falta ${dias(1)} y te quedan ${dias(quedan)}. ${accion} y completas el reto.`;
+    }
+    return `Te faltan ${dias(faltan)} y te quedan ${dias(quedan)}. ${accion} y sigues en carrera.`;
+  }
 
   // A esta hora el día todavía no pasó: pedir "lo de hoy" no tiene sentido.
   // El cue matutino pregunta por AYER, que es como la gente usa esa franja.
@@ -61,8 +80,19 @@ export class H13CueScheduler {
     this.isRunning = false;
   }
 
+  /** ¿Hay alguien en la whitelist? Evita recorrer participantes cuando no hay
+   *  ni flag global ni dogfood configurado. */
+  private static hayWhitelist(): boolean {
+    return (process.env.H13_WHITELIST || '').split(',').some((s) => s.trim().length > 0);
+  }
+
   static async sendCuesToActiveChallenges(): Promise<void> {
-    if (!isH13Enabled()) return;
+    // OJO: NO usar `isH13Enabled()` sin userId aquí. Sin argumento ignora la
+    // whitelist y solo mira el flag global, así que con H13_ENABLED=false el
+    // scheduler se cortaba en esta línea y los usuarios de dogfood nunca recibían
+    // su recordatorio diario — aunque el resto del reto les funcionara.
+    // El corte por usuario se hace abajo, que es donde sí hay userId.
+    if (!isH13FlagOn() && !this.hayWhitelist()) return;
 
     // Participantes del reto en curso (ACTIVE). El filtro fino (ventana, hora, opt-out,
     // ¿registró hoy?) se hace por usuario abajo.
@@ -82,6 +112,10 @@ export class H13CueScheduler {
 
     for (const p of active) {
       try {
+        // Corte por usuario: con el flag global apagado solo pasan los de la
+        // whitelist (dogfood). Aquí sí hay userId, así que la whitelist cuenta.
+        if (!isH13Enabled(p.userId)) continue;
+
         const data = (p.data as H13Data) ?? {};
         if (data.optedOutAt) continue;                 // silenció los cues (sigue en el brazo)
         const reminderHour = data.reminderHour;
@@ -122,8 +156,24 @@ export class H13CueScheduler {
         });
         if (cueToday) continue;
 
-        const variants = reminderHour === this.MORNING_HOUR ? this.MORNING_CUE_VARIANTS : this.CUE_VARIANTS;
-        const body = variants[(dayN - 1) % variants.length].replace('{n}', String(dayN));
+        const esMañana = reminderHour === this.MORNING_HOUR;
+
+        // Días distintos que ya lleva. Viene de `data.daysWithTx`, que
+        // processRetoProgress actualiza en cada transacción válida.
+        const llevaDias = data.daysWithTx ?? 0;
+        const faltan = H13_TARGET_DAYS - llevaDias;
+        const quedan = this.WINDOW_DAYS - dayN + 1; // hoy incluido
+
+        let body: string;
+        if (dayN >= this.URGENCY_FROM_DAY && faltan > 0 && faltan <= quedan) {
+          // Va corto pero todavía le da: se le dice exactamente cuánto le falta.
+          body = this.urgencyBody(faltan, quedan, esMañana);
+        } else {
+          // Día temprano, ya cumplió la meta, o ya no le da el tiempo: cue normal.
+          // (Si no le da, insistir con "te faltan 2 y te queda 1" solo frustra.)
+          const variants = esMañana ? this.MORNING_CUE_VARIANTS : this.CUE_VARIANTS;
+          body = variants[(dayN - 1) % variants.length].replace('{n}', String(dayN));
+        }
 
         await NotificationService.sendToUser(p.userId, NotificationType.SYSTEM, {
           title: this.CUE_TITLE,
