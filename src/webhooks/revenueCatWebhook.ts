@@ -6,6 +6,7 @@ import { revenueCatService } from '../services/revenueCatService';
 import { subscriptionService } from '../services/subscriptionService';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import { REVENUECAT_WEBHOOK_AUTH, RC_WEBHOOK_EVENTS, PRODUCT_TO_PLAN } from '../config/revenueCat';
+import { sendPastDueNotice, notifyDowngradedToFree, clearPastDueNotices } from '../services/pastDueNotices';
 import { revenueCatLogger as logger } from '../utils/logger';
 
 // Precios mensuales por plan (USD)
@@ -66,6 +67,10 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
       case RC_WEBHOOK_EVENTS.RENEWAL: {
         // Sync suscripción
         await revenueCatService.verifyAndSyncPurchase(userId);
+
+        // Cobro recuperado (o compra nueva): limpiar los avisos de impago para
+        // que un fallo futuro vuelva a avisar desde el primero.
+        await clearPastDueNotices(userId);
 
         // CRÍTICO: Registrar pago en tabla Payment - DEBE exitir o fallar el webhook
         const productId = event.event.product_id;
@@ -196,12 +201,25 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
         // Expiración: downgrade a FREE
         await revenueCatService.downgradeToFree(userId);
         logger.log(`Suscripción expirada, downgrade a FREE para usuario ${userId}`);
+        // Avisar DESPUÉS del downgrade: si el push falla, el cambio ya quedó hecho.
+        await notifyDowngradedToFree(userId);
         break;
 
       case RC_WEBHOOK_EVENTS.BILLING_ISSUE_DETECTED:
         // Billing issue: marcar PAST_DUE
         await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.PAST_DUE);
         logger.log(`Billing issue detectado para usuario ${userId}`);
+        // Apple/Google ya le mandan su propio correo (son ellos quienes cobran),
+        // pero el push es el que el usuario ve de verdad. RevenueCat manda este
+        // evento UNA vez, así que solo aplica el aviso inicial — el "último
+        // intento" de Stripe no tiene equivalente aquí: Apple mantiene el acceso
+        // durante su periodo de gracia y luego dispara EXPIRATION directamente.
+        await sendPastDueNotice(
+          userId,
+          'FIRST',
+          'No pudimos procesar tu pago',
+          'Actualiza tu método de pago para conservar tu plan. Tienes unos días antes de que cambie a Gratis.',
+        );
         break;
 
       case RC_WEBHOOK_EVENTS.TRANSFER:

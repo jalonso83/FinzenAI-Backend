@@ -9,55 +9,18 @@ import { ReferralService } from '../services/referralService';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import Stripe from 'stripe';
 import { prisma } from '../lib/prisma';
-import { NotificationService } from '../services/notificationService';
-import { NotificationType } from '@prisma/client';
+import {
+  sendPastDueNotice,
+  notifyDowngradedToFree,
+  clearPastDueNotices,
+} from '../services/pastDueNotices';
 
 import { logger } from '../utils/logger';
 
-// ─── Avisos de cobro fallido ────────────────────────────────────────────
-// Stripe reintenta hasta 8 veces en 2 semanas y CADA fallo dispara el webhook.
-// Sin control, el usuario recibiría 8 pushes idénticos. Solo mandamos dos:
-//   FIRST — al primer rechazo, cuando todavía puede arreglarlo con calma.
-//   FINAL — cuando Stripe ya agotó los reintentos (next_payment_attempt = null)
-//           y la cancelación es inminente.
-// Se registran en subscriptions.pastDueNotificationsSent, que además hace el
-// envío idempotente si Stripe reintrega el mismo webhook.
-type PastDueNotice = 'FIRST' | 'FINAL';
-
-/**
- * Envía el aviso una sola vez por ciclo de impago. Best-effort: si falla el push
- * no se rompe el webhook — lo importante (registrar el pago y marcar PAST_DUE)
- * ya ocurrió antes de llegar aquí.
- */
-async function sendPastDueNotice(
-  userId: string,
-  notice: PastDueNotice,
-  title: string,
-  body: string,
-): Promise<void> {
-  try {
-    const sub = await prisma.subscription.findUnique({
-      where: { userId },
-      select: { pastDueNotificationsSent: true },
-    });
-    const sent = (sub?.pastDueNotificationsSent as string[]) ?? [];
-    if (sent.includes(notice)) return;
-
-    await NotificationService.sendToUser(userId, NotificationType.SUBSCRIPTION_PAST_DUE, {
-      title,
-      body,
-      data: { screen: 'Subscriptions' },
-    });
-
-    await prisma.subscription.update({
-      where: { userId },
-      data: { pastDueNotificationsSent: [...sent, notice] },
-    });
-    logger.log(`[Webhook] Aviso de cobro ${notice} enviado a ${userId}`);
-  } catch (err) {
-    logger.error(`[Webhook] No se pudo enviar el aviso de cobro ${notice} a ${userId}:`, err);
-  }
-}
+// Avisos de cobro fallido: la lógica vive en services/pastDueNotices porque la
+// comparten Stripe y RevenueCat. Stripe reintenta hasta 8 veces y cada fallo
+// dispara este webhook, así que el registro de avisos ya enviados evita mandar
+// 8 pushes idénticos.
 /**
  * Handler principal del webhook de Stripe
  */
@@ -228,15 +191,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 
   // Avisar que ya cambió de plan. Va DESPUÉS del downgrade: si el push falla,
   // el cambio de plan ya quedó hecho. Best-effort, nunca rompe el webhook.
-  try {
-    await NotificationService.sendToUser(userId, NotificationType.SUBSCRIPTION_PAST_DUE, {
-      title: 'Tu plan cambió a Gratis',
-      body: 'Tu suscripción terminó. Puedes reactivarla cuando quieras desde la app.',
-      data: { screen: 'Subscriptions' },
-    });
-  } catch (err) {
-    logger.error(`[Webhook] No se pudo avisar el cambio a Gratis a ${userId}:`, err);
-  }
+  await notifyDowngradedToFree(userId);
 }
 
 /**
@@ -297,12 +252,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
 
     // El pago se recuperó: limpiar los avisos para que un impago futuro vuelva a
     // empezar desde el primero en vez de quedar silenciado por los ya marcados.
-    try {
-      await prisma.subscription.update({
-        where: { userId },
-        data: { pastDueNotificationsSent: [] },
-      });
-    } catch { /* best-effort: no romper el webhook por limpiar un contador */ }
+    await clearPastDueNotices(userId);
   } catch (paymentError: any) {
     logger.error('❌ CRITICAL: Failed to record payment in database:', paymentError.message);
     throw new Error(`Payment recording failed for user ${userId}: ${paymentError.message}`);
