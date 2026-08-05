@@ -147,7 +147,8 @@ export class H13CueScheduler {
           where: {
             userId: p.userId,
             amount: { gt: 0 },
-            category_id: { not: null },
+            // Sin `category_id: { not: null }`: el campo es obligatorio en el
+            // schema y Prisma lanza con ese filtro. Ver nota en h13Service.
             date: { gte: new Date(now.getTime() - 48 * 3600_000) },
           },
           select: { date: true },

@@ -39,7 +39,12 @@ async function retoWindowTxs(userId: string, assignedAt: Date, country: string |
   const from = new Date(base.getTime() - 2 * 86_400_000);
   const to = new Date(base.getTime() + (WINDOW_DAYS + 2) * 86_400_000);
   const txs = await prisma.transaction.findMany({
-    where: { userId, amount: { gt: 0 }, category_id: { not: null }, date: { gte: from, lt: to } },
+    // OJO: NO poner `category_id: { not: null }`. En el schema `category_id` es
+    // String obligatorio (no String?), así que Prisma rechaza el filtro con
+    // "Argument `not` must not be null" y LANZA. Eso rompía el progreso del reto
+    // en silencio: cada transacción del brazo reto reventaba aquí y `daysWithTx`
+    // nunca subía. Toda transacción tiene categoría por definición.
+    where: { userId, amount: { gt: 0 }, date: { gte: from, lt: to } },
     select: { date: true, amount: true, type: true, category: { select: { name: true } } },
   });
   return txs.filter((t) => validKeys.has(localDateKey(country, t.date)));

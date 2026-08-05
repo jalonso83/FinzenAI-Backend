@@ -223,7 +223,8 @@ export const getH13Stats = async (req: Request, res: Response) => {
           where: {
             userId: { in: cohortIds },
             amount: { gt: 0 },
-            category_id: { not: null },
+            // Sin `category_id: { not: null }`: el campo es obligatorio en el
+            // schema y Prisma lanza con ese filtro. Ver nota en h13Service.
             date: { gte: windowFloor, lt: windowCeil },
           },
           select: { userId: true, date: true },
