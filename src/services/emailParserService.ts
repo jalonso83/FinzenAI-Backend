@@ -98,6 +98,69 @@ const PAYMENT_KEYWORDS = [
   'thank you for your payment'
 ];
 
+// Transacciones que NO se completaron. Reportado 2026-08-04: la sincronización
+// registraba las notificaciones de compras DECLINADAS como gastos reales, porque
+// traen comercio y monto igual que una compra exitosa — para el parser eran
+// indistinguibles. Esto infla el gasto del usuario con dinero que nunca salió.
+//
+// Va como filtro de palabras clave ANTES de la IA (determinista y sin costo) y
+// además reforzado en el prompt, porque un banco nuevo puede usar un texto que
+// no esté en esta lista.
+const DECLINED_KEYWORDS = [
+  // Declinada / rechazada
+  'declinada',
+  'declinado',
+  'transaccion declinada',
+  'transacción declinada',
+  'compra declinada',
+  'consumo declinado',
+  'pago declinado',
+  'rechazada',
+  'rechazado',
+  'transaccion rechazada',
+  'transacción rechazada',
+  'compra rechazada',
+  'pago rechazado',
+  'operacion rechazada',
+  'operación rechazada',
+  // No procesada / fallida
+  'no se pudo procesar',
+  'no pudo ser procesada',
+  'no procesada',
+  'transaccion fallida',
+  'transacción fallida',
+  'intento de transaccion',
+  'intento de transacción',
+  'transaccion no autorizada',
+  'transacción no autorizada',
+  'no autorizada',
+  'sin autorizacion',
+  'sin autorización',
+  // Fondos / límite
+  'fondos insuficientes',
+  'saldo insuficiente',
+  'limite excedido',
+  'límite excedido',
+  // Reversos y anulaciones (tampoco son gasto)
+  'transaccion reversada',
+  'transacción reversada',
+  'reverso de',
+  'anulacion de',
+  'anulación de',
+  'compra anulada',
+  'transaccion anulada',
+  'transacción anulada',
+  // English
+  'declined',
+  'transaction declined',
+  'payment declined',
+  'was declined',
+  'unable to process',
+  'insufficient funds',
+  'transaction failed',
+  'reversed',
+];
+
 export class EmailParserService {
 
   /**
@@ -108,6 +171,17 @@ export class EmailParserService {
     const textToCheck = `${subject} ${emailContent}`.toLowerCase();
 
     return PAYMENT_KEYWORDS.some(keyword => textToCheck.includes(keyword.toLowerCase()));
+  }
+
+  /**
+   * ¿La transacción NO se completó? (declinada, rechazada, sin fondos, reversada)
+   * Estos correos traen comercio y monto igual que una compra real, así que sin
+   * este filtro se registran como gasto y le inflan las cuentas al usuario.
+   */
+  static isDeclinedEmail(subject: string, emailContent: string): boolean {
+    const textToCheck = `${subject} ${emailContent}`.toLowerCase();
+
+    return DECLINED_KEYWORDS.some(keyword => textToCheck.includes(keyword));
   }
 
   /**
@@ -131,6 +205,16 @@ export class EmailParserService {
         return {
           success: false,
           error: 'PAYMENT_EMAIL_SKIPPED: Este email es un pago de tarjeta, no un consumo'
+        };
+      }
+
+      // Transacción que NO se completó: el dinero nunca salió de la cuenta.
+      // Se descarta ANTES de llamar a la IA (determinista y sin costo de tokens).
+      if (this.isDeclinedEmail(subject, emailContent)) {
+        logger.log('[EmailParser] Email de transacción declinada/reversada, se omite');
+        return {
+          success: false,
+          error: 'DECLINED_EMAIL_SKIPPED: La transacción no se completó (declinada, rechazada o reversada)'
         };
       }
 
@@ -166,6 +250,11 @@ IMPORTANTE - DEBES IGNORAR estos tipos de emails (responde con is_payment_email:
 - Confirmaciones de pago
 - Transferencias recibidas
 - Depositos
+- TRANSACCIONES QUE NO SE COMPLETARON: declinadas, rechazadas, no autorizadas,
+  fallidas, por fondos o limite insuficiente, reversadas o anuladas. Traen
+  comercio y monto igual que una compra real, pero el dinero NUNCA salio de la
+  cuenta: registrarlas le infla el gasto al usuario. Ante la duda de si una
+  transaccion se completo o no, IGNORALA.
 - Cualquier email que NO sea un CONSUMO o COMPRA
 
 Solo extrae datos de emails que sean CONSUMOS/COMPRAS/CARGOS (cuando el usuario GASTA dinero en un comercio).
