@@ -161,6 +161,61 @@ const DECLINED_KEYWORDS = [
   'reversed',
 ];
 
+// Retiros de efectivo. Decisión de producto (2026-08-05): un retiro NO es un
+// gasto — el dinero solo cambia de forma (de la cuenta al bolsillo). El gasto
+// real ocurre después, cuando el usuario compra algo, y ese sí lo registra él.
+// Contarlo aquí duplicaría el gasto.
+//
+// Antes de esto no había ninguna regla: el correo llegaba a la IA, que decidía
+// caso por caso. Como trae monto y fecha igual que una compra, a veces lo
+// registraba como gasto y a veces no. De ahí la inconsistencia reportada.
+//
+// Estas frases se buscan en ASUNTO + CUERPO. Son compuestas a propósito: la
+// palabra "retiro" sola matchearía "plan de retiro" / "cuenta de retiro".
+const CASH_WITHDRAWAL_KEYWORDS = [
+  // Código Cash / retiro sin tarjeta (Popular, Banreservas, BHD)
+  'codigo cash',
+  'código cash',
+  'retiro de codigo cash',
+  'retiro de código cash',
+  'retiro con codigo',
+  'retiro con código',
+  'retiro sin tarjeta',
+  'cash code',
+  'cardless withdrawal',
+  // Retiro en cajero
+  'retiro de efectivo',
+  'retiro en efectivo',
+  'retiro en cajero',
+  'retiro por cajero',
+  'retiro de cajero',
+  'retiro en atm',
+  'retiro atm',
+  'retiro realizado',
+  'retiro exitoso',
+  // Avance / adelanto de efectivo (tarjeta de crédito)
+  'avance de efectivo',
+  'avance en efectivo',
+  'adelanto de efectivo',
+  'disposicion de efectivo',
+  'disposición de efectivo',
+  // English
+  'cash withdrawal',
+  'atm withdrawal',
+  'withdrawal at atm',
+  'cash advance',
+];
+
+// Términos genéricos de cajero. Estos SOLO se buscan en el ASUNTO: en el cuerpo
+// aparecen en pies de página publicitarios ("consulta tu saldo en cualquier
+// cajero automático") y suprimirían compras legítimas.
+// Van con \b para que "atm" no matchee dentro de otra palabra.
+const CASH_WITHDRAWAL_SUBJECT_PATTERNS = [
+  /\bcajero(s)?\s+autom[aá]tico(s)?\b/,
+  /\bcajero\b/,
+  /\batm\b/,
+];
+
 export class EmailParserService {
 
   /**
@@ -182,6 +237,23 @@ export class EmailParserService {
     const textToCheck = `${subject} ${emailContent}`.toLowerCase();
 
     return DECLINED_KEYWORDS.some(keyword => textToCheck.includes(keyword));
+  }
+
+  /**
+   * ¿Es un retiro de efectivo? (código cash, cajero, avance de efectivo)
+   * No es un gasto: el dinero cambia de forma, no se consume. El gasto real lo
+   * registra el usuario después, cuando compra algo con ese efectivo.
+   */
+  static isCashWithdrawalEmail(subject: string, emailContent: string): boolean {
+    const subjectLower = (subject || '').toLowerCase();
+    const textToCheck = `${subjectLower} ${(emailContent || '').toLowerCase()}`;
+
+    if (CASH_WITHDRAWAL_KEYWORDS.some(keyword => textToCheck.includes(keyword))) {
+      return true;
+    }
+
+    // Genéricos: solo en el asunto, para no matchear pies de página publicitarios
+    return CASH_WITHDRAWAL_SUBJECT_PATTERNS.some(pattern => pattern.test(subjectLower));
   }
 
   /**
@@ -215,6 +287,18 @@ export class EmailParserService {
         return {
           success: false,
           error: 'DECLINED_EMAIL_SKIPPED: La transacción no se completó (declinada, rechazada o reversada)'
+        };
+      }
+
+      // Retiro de efectivo (código cash, cajero, avance): no es un gasto.
+      // También va antes de la IA para que sea determinista: antes lo decidía
+      // el modelo caso por caso y el mismo tipo de correo entraba a veces sí
+      // y a veces no.
+      if (this.isCashWithdrawalEmail(subject, emailContent)) {
+        logger.log('[EmailParser] Email de retiro de efectivo, se omite');
+        return {
+          success: false,
+          error: 'CASH_WITHDRAWAL_SKIPPED: Es un retiro de efectivo, no un consumo'
         };
       }
 
@@ -255,6 +339,13 @@ IMPORTANTE - DEBES IGNORAR estos tipos de emails (responde con is_payment_email:
   comercio y monto igual que una compra real, pero el dinero NUNCA salio de la
   cuenta: registrarlas le infla el gasto al usuario. Ante la duda de si una
   transaccion se completo o no, IGNORALA.
+- RETIROS DE EFECTIVO: retiro de Codigo Cash, retiro sin tarjeta, retiro en
+  cajero automatico / ATM, avance o adelanto de efectivo, disposicion de
+  efectivo. Un retiro NO es un gasto: el dinero solo cambia de forma (de la
+  cuenta al bolsillo). El gasto real lo registra el usuario despues, cuando
+  compra algo con ese efectivo. Registrarlo aqui duplicaria el gasto.
+  Si el correo describe un retiro o una entrega de efectivo, IGNORALO SIEMPRE,
+  aunque traiga monto, fecha y numero de tarjeta.
 - Cualquier email que NO sea un CONSUMO o COMPRA
 
 Solo extrae datos de emails que sean CONSUMOS/COMPRAS/CARGOS (cuando el usuario GASTA dinero en un comercio).

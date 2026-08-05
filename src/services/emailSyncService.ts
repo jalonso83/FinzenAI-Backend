@@ -398,8 +398,15 @@ export class EmailSyncService {
           );
 
           if (!parseResult.success || !parseResult.transaction) {
-            // Verificar si es un email de pago de tarjeta (saltado intencionalmente)
-            const isPaymentSkipped = parseResult.error?.includes('PAYMENT_EMAIL_SKIPPED');
+            // Correos omitidos a propósito (no son errores de parseo): pago de
+            // tarjeta, transacción declinada/reversada y retiro de efectivo.
+            // Antes solo se contemplaba el de pago, así que los otros dos se
+            // marcaban FAILED y ensuciaban el reporte de errores del sync.
+            const isPaymentSkipped = !!parseResult.error && (
+              parseResult.error.includes('PAYMENT_EMAIL_SKIPPED') ||
+              parseResult.error.includes('DECLINED_EMAIL_SKIPPED') ||
+              parseResult.error.includes('CASH_WITHDRAWAL_SKIPPED')
+            );
 
             await prisma.importedBankEmail.update({
               where: { id: importedEmail.id },
