@@ -4,7 +4,7 @@ import { stripe, STRIPE_WEBHOOK_SECRET, PLANS } from '../config/stripe';
 import { subscriptionService } from '../services/subscriptionService';
 import { EmailSyncService } from '../services/emailSyncService';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
-import { getPlanFromPriceId } from '../config/stripe';
+import { getPlanFromPriceId, getSubscriptionPeriod } from '../config/stripe';
 import { ReferralService } from '../services/referralService';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import Stripe from 'stripe';
@@ -481,14 +481,10 @@ async function updateSubscriptionFromStripe(
 
   const status = statusMap[subscription.status] || SubscriptionStatus.ACTIVE;
 
-  // Actualizar en BD
-  const sub = subscription as any;
-  const currentPeriodStart = sub.current_period_start
-    ? new Date(sub.current_period_start * 1000)
-    : new Date();
-  const currentPeriodEnd = sub.current_period_end
-    ? new Date(sub.current_period_end * 1000)
-    : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 días por defecto
+  // Actualizar en BD. El período sale del helper: leerlo del objeto raíz daba
+  // undefined con la API actual y caía a "30 días", recortándole 11 meses a los
+  // planes anuales. Ver getSubscriptionPeriod en config/stripe.ts.
+  const { currentPeriodStart, currentPeriodEnd } = getSubscriptionPeriod(subscription);
 
   await subscriptionService.updateSubscriptionAfterPayment(userId, plan, {
     stripeCustomerId: subscription.customer as string,

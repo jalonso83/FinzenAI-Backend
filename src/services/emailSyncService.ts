@@ -1,4 +1,4 @@
-import { EmailConnection, EmailSyncStatus, ImportedEmailStatus } from '@prisma/client';
+import { EmailConnection, EmailSyncStatus, ImportedEmailStatus, NotificationType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { GmailService } from './gmailService';
 import { OutlookService } from './outlookService';
@@ -52,7 +52,9 @@ export class EmailSyncService {
         refreshToken: encryptedRefreshToken,
         tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
         isActive: true,
-        lastSyncStatus: 'PENDING'
+        // Reconectar limpia un estado REVOKED anterior y la devuelve a la cola.
+        lastSyncStatus: 'PENDING',
+        lastSyncError: null
       },
       create: {
         userId,
@@ -118,7 +120,9 @@ export class EmailSyncService {
         refreshToken: encryptedRefreshToken,
         tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
         isActive: true,
-        lastSyncStatus: 'PENDING'
+        // Reconectar limpia un estado REVOKED anterior y la devuelve a la cola.
+        lastSyncStatus: 'PENDING',
+        lastSyncError: null
       },
       create: {
         userId,
@@ -512,13 +516,93 @@ export class EmailSyncService {
       }
 
     } catch (error: any) {
-      logger.error('[EmailSync] Sync failed:', error);
+      // El log ahora dice DE QUIÉN es el fallo: antes solo se veía el 400 pelado
+      // en Railway y había que ir a la base para saber a qué usuario mirar.
+      const quien = await this.describeConnection(connectionId);
+      logger.error(`[EmailSync] Sync failed (${quien}):`, error);
       result.errors.push(error.message);
-      await this.finalizeSyncLog(syncLog.id, result, 'FAILED', error.message);
-      await this.updateConnectionStatus(connectionId, 'FAILED', error.message);
+
+      // Token revocado: el usuario quitó el permiso, cambió la contraseña, etc.
+      // Reintentar no lo arregla — solo él puede, volviendo a conectar. Antes
+      // esto se marcaba FAILED y el scheduler lo reintentaba cada hora para
+      // siempre, sin que el usuario se enterara de que dejó de importar nada.
+      if (this.isTokenRevokedError(error)) {
+        await this.finalizeSyncLog(syncLog.id, result, 'FAILED', 'Acceso revocado por el proveedor');
+        await this.handleRevokedConnection(connectionId);
+      } else {
+        await this.finalizeSyncLog(syncLog.id, result, 'FAILED', error.message);
+        await this.updateConnectionStatus(connectionId, 'FAILED', error.message);
+      }
     }
 
     return result;
+  }
+
+  /**
+   * ¿El error significa que el proveedor revocó nuestro acceso?
+   *
+   * Google devuelve 400 con `error: 'invalid_grant'` al intentar refrescar un
+   * refresh token muerto. Microsoft usa códigos AADSTS equivalentes. Ojo: un 400
+   * genérico NO alcanza — hay que mirar el cuerpo, porque un fallo pasajero de
+   * red o un 500 del proveedor sí merecen reintento.
+   */
+  private static isTokenRevokedError(error: any): boolean {
+    const data = error?.response?.data ?? {};
+    const codigo = String(data.error || '');
+    const detalle = String(data.error_description || error?.message || '');
+
+    if (codigo === 'invalid_grant') return true;                    // Google
+    if (codigo === 'invalid_client') return true;                   // credenciales muertas
+    if (/AADSTS(50173|700082|54005|65001)/.test(detalle)) return true; // Microsoft
+    if (/token has been expired or revoked/i.test(detalle)) return true;
+    if (/refresh token.*(expired|revoked|invalid)/i.test(detalle)) return true;
+
+    return false;
+  }
+
+  /**
+   * Marca la conexión como REVOKED y avisa al usuario para que la reconecte.
+   * REVOKED (no `isActive: false`) a propósito: así la conexión sigue visible en
+   * la app con su aviso de "Reconectar" en vez de desaparecer sin explicación,
+   * pero queda fuera de la cola del scheduler.
+   */
+  private static async handleRevokedConnection(connectionId: string): Promise<void> {
+    const connection = await prisma.emailConnection.update({
+      where: { id: connectionId },
+      data: {
+        lastSyncStatus: 'REVOKED',
+        lastSyncError: 'Se revocó el acceso a tu correo. Vuelve a conectarlo para seguir importando.'
+        // lastSyncAt NO se toca: dejarlo con la fecha del último sync REAL. Si se
+        // actualizara, la app mostraría "última sync: hace 1 hora" y el usuario
+        // creería que todo va bien mientras hace días que no importa nada.
+      },
+      select: { userId: true, email: true, provider: true }
+    });
+
+    logger.error(`[EmailSync] Acceso revocado para ${connection.email} (user ${connection.userId}). Conexión marcada REVOKED.`);
+
+    try {
+      await NotificationService.sendToUser(connection.userId, NotificationType.SYSTEM, {
+        title: 'Se desconectó tu correo',
+        body: `Perdimos el acceso a ${connection.email}. Vuelve a conectarlo para seguir importando tus gastos automáticamente.`,
+        data: { screen: 'EmailSync' }
+      });
+    } catch (notifyError) {
+      logger.error('[EmailSync] No se pudo notificar la revocación:', notifyError);
+    }
+  }
+
+  /** Identifica la conexión para los logs (email + usuario), best-effort. */
+  private static async describeConnection(connectionId: string): Promise<string> {
+    try {
+      const c = await prisma.emailConnection.findUnique({
+        where: { id: connectionId },
+        select: { email: true, userId: true }
+      });
+      return c ? `${c.email} / user ${c.userId}` : connectionId;
+    } catch {
+      return connectionId;
+    }
   }
 
   /**
@@ -866,6 +950,10 @@ export class EmailSyncService {
     return prisma.emailConnection.findMany({
       where: {
         isActive: true,
+        // Excluir las de acceso revocado: reintentarlas no las arregla (solo el
+        // usuario puede, reconectando) y generaban un fallo por hora, para
+        // siempre. Al reconectar, el estado vuelve a PENDING y reentra sola.
+        lastSyncStatus: { not: 'REVOKED' },
         // Solo sincronizar usuarios con plan PRO activo
         user: {
           subscription: {

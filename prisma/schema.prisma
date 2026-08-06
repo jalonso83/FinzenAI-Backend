@@ -670,6 +670,11 @@ enum EmailSyncStatus {
   SUCCESS
   FAILED
   PARTIAL
+  // El proveedor revocó el permiso (refresh token muerto: el usuario quitó el
+  // acceso, cambió la contraseña, etc.). NO es un fallo pasajero: reintentar no
+  // sirve, solo el usuario puede arreglarlo volviendo a conectar. Se excluye de
+  // la cola de sincronización y la app lo muestra con un aviso de "Reconectar".
+  REVOKED
 }
 
 enum ImportedEmailStatus {

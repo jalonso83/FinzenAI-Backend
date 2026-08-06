@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma';
 import { stripeService } from '../services/stripeService';
 import { subscriptionService } from '../services/subscriptionService';
 import { EmailSyncService } from '../services/emailSyncService';
-import { PLANS, PlanType, BillingPeriod, getPriceId, getPlanFromPriceId, stripe } from '../config/stripe';
+import { PLANS, PlanType, BillingPeriod, getPriceId, getPlanFromPriceId, getSubscriptionPeriod, stripe } from '../config/stripe';
 import { sanitizeLimit, PAGINATION } from '../config/pagination';
 import jwt from 'jsonwebtoken';
 import { ENV } from '../config/env';
@@ -551,14 +551,9 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
           logger.log(`📋 Plan detectado: ${plan} (${billingPeriod})`);
         }
 
-        // Actualizar suscripción en BD
-        const sub = subscription as any;
-        const currentPeriodStart = sub.current_period_start
-          ? new Date(sub.current_period_start * 1000)
-          : new Date();
-        const currentPeriodEnd = sub.current_period_end
-          ? new Date(sub.current_period_end * 1000)
-          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        // Actualizar suscripción en BD. Mismo helper que el webhook: leer el
+        // período del objeto raíz daba undefined y caía a "30 días" fijos.
+        const { currentPeriodStart, currentPeriodEnd } = getSubscriptionPeriod(subscription);
 
         await subscriptionService.updateSubscriptionAfterPayment(userId, plan, {
           stripeCustomerId: subscription.customer as string,
