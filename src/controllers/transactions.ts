@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { NotificationService } from '../services/notificationService';
 import { merchantMappingService } from '../services/merchantMappingService';
+import { recalculateBudgets } from '../services/budgetService';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 import { onValidTransaction as onValidTransactionH13 } from '../services/h13/h13Service';
 import { VALID_FREQUENCIES, isValidFrequency } from '../config/recurringConfig';
@@ -298,59 +299,18 @@ async function calculateConsecutiveDays(userId: string): Promise<number> {
   return consecutiveDays;
 }
 
-// Función utilitaria para recalcular el gasto de los presupuestos afectados
-// Optimizado: reduce de 2N queries a 2 queries (1 findMany + 1 transacción batch)
-// Exportada para uso en otros controladores (ej: Zenio)
+/**
+ * Recalcula el acumulado de los presupuestos afectados. Se mantiene exportada
+ * porque la usan varios controladores, pero la lógica vive ahora en
+ * services/budgetService.ts — ver ahí la explicación de por qué se unificó.
+ *
+ * Esta variante NO notifica: es la que corresponde cuando el cambio no viene de
+ * un movimiento nuevo del usuario (editar un presupuesto, borrar una
+ * transacción). Para el alta de una transacción usa `recalculateBudgets(...,
+ * { notify: true })` del servicio, que además dispara las alertas de umbral.
+ */
 export async function recalculateBudgetSpent(userId: string, categoryId: string, date: Date) {
-  // Buscar presupuestos activos de la categoría y usuario cuyo período incluya la fecha
-  const budgets = await prisma.budget.findMany({
-    where: {
-      user_id: userId,
-      category_id: categoryId,
-      is_active: true,
-      start_date: { lte: date },
-      end_date: { gte: date }
-    }
-  });
-
-  if (budgets.length === 0) {
-    return;
-  }
-
-  // Encontrar el rango de fechas más amplio que cubra todos los presupuestos
-  const minStartDate = budgets.reduce((min, b) =>
-    b.start_date < min ? b.start_date : min, budgets[0].start_date);
-  const maxEndDate = budgets.reduce((max, b) =>
-    b.end_date > max ? b.end_date : max, budgets[0].end_date);
-
-  // Una sola query para obtener todas las transacciones relevantes
-  const transactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      category_id: categoryId,
-      type: 'EXPENSE',
-      date: {
-        gte: minStartDate,
-        lte: maxEndDate
-      }
-    },
-    select: { amount: true, date: true }
-  });
-
-  // Calcular el gasto para cada presupuesto en memoria
-  const updates = budgets.map(budget => {
-    const spent = transactions
-      .filter(tx => tx.date >= budget.start_date && tx.date <= budget.end_date)
-      .reduce((sum, tx) => sum + Number(tx.amount), 0);
-
-    return prisma.budget.update({
-      where: { id: budget.id },
-      data: { spent }
-    });
-  });
-
-  // Ejecutar todas las actualizaciones en una transacción atómica
-  await prisma.$transaction(updates);
+  await recalculateBudgets(userId, categoryId, date, { notify: false });
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -419,17 +379,17 @@ export async function createTransactionCore(
     }
   });
 
-  // Recalcular presupuesto si es gasto
-  if (type === 'EXPENSE') {
-    await recalculateBudgetSpent(userId, category_id, transaction.date);
-
-    // Verificar y enviar alertas de presupuesto
-    try {
-      await NotificationService.checkBudgetAlerts(userId, category_id, amount, transaction.date);
-    } catch (error) {
-      logger.error('Error checking budget alerts:', error);
-    }
-  }
+  // Recalcular el presupuesto de la categoría, y notificar si cruza un umbral.
+  //
+  // OJO: antes esto estaba dentro de `if (type === 'EXPENSE')`. Ya no puede ser:
+  // existen presupuestos de INGRESO, y una transacción de ingreso tiene que
+  // actualizar el suyo. El servicio se encarga de sumar solo las transacciones
+  // del tipo que corresponda y de no mandar alertas de umbral en los de ingreso.
+  //
+  // El recálculo y las alertas van juntos en una sola llamada a propósito: antes
+  // eran dos, y hubo caminos (los agentes de Zenio) que llamaban a uno y
+  // olvidaban el otro, dejando presupuestos que se actualizaban sin avisar nunca.
+  await recalculateBudgets(userId, category_id, transaction.date, { notify: true });
 
   if (!engagementHooks) {
     return { transaction };

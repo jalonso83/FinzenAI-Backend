@@ -325,14 +325,36 @@ export const getH13Stats = async (req: Request, res: Response) => {
     const sufficientSample =
       reto.matured >= H13_MIN_SAMPLE_PER_ARM && control.matured >= H13_MIN_SAMPLE_PER_ARM;
 
-    // Ventana y objetivo REALES de esta corrida: se leen de sus participantes, no
-    // de las constantes legacy — que reportaban 7/3 aunque la corrida fuera de 15.
-    // Todos los de una corrida comparten parámetros (se congelan al enrolar con la
-    // misma config); si la cohorte está vacía, se cae a lo configurado hoy.
-    const primero = cohort[0];
-    const paramsCorrida = primero
-      ? h13Params(primero.data as H13Data)
-      : { windowDays: h13WindowDays(), targetDays: h13TargetDaysFor(h13WindowDays()) };
+    // Ventana y objetivo REALES de esta corrida, leídos de sus participantes (las
+    // constantes legacy reportaban 7/3 aunque la corrida fuera de 15).
+    //
+    // NO se toma `cohort[0]`: la consulta no tiene `orderBy`, así que esa fila es
+    // la que Postgres devuelva primero y podía cambiar entre peticiones. Y nada
+    // en el código garantiza que una corrida sea homogénea: `H13_RUN` y
+    // `H13_WINDOW_DAYS` son variables independientes, así que alguien puede
+    // cambiar la ventana sin cambiar de corrida y dejar participantes de 7 y de
+    // 15 días bajo la misma clave. Aquí se detecta y se avisa en la respuesta en
+    // vez de mostrar un número engañoso.
+    const combos = new Map<string, { windowDays: number; targetDays: number; n: number }>();
+    for (const p of cohort) {
+      const { windowDays, targetDays } = h13Params(p.data as H13Data);
+      const clave = `${windowDays}/${targetDays}`;
+      const prev = combos.get(clave);
+      if (prev) prev.n++;
+      else combos.set(clave, { windowDays, targetDays, n: 1 });
+    }
+    // El combo mayoritario manda en el encabezado; el desglose va aparte.
+    const combosOrdenados = [...combos.values()].sort((a, b) => b.n - a.n);
+    const paramsCorrida = combosOrdenados[0]
+      ?? { windowDays: h13WindowDays(), targetDays: h13TargetDaysFor(h13WindowDays()), n: 0 };
+    const mixedParams = combosOrdenados.length > 1;
+    if (mixedParams) {
+      logger.warn(
+        `[Experiments] La corrida ${run} tiene participantes con parámetros distintos: ` +
+        combosOrdenados.map((c) => `${c.windowDays}d/${c.targetDays} (${c.n})`).join(', ') +
+        '. La tasa mezcla definiciones de "completó" y no es comparable.',
+      );
+    }
 
     return res.json({
       data: {
@@ -345,6 +367,12 @@ export const getH13Stats = async (req: Request, res: Response) => {
         experimentStart: experimentStart ? experimentStart.toISOString() : null,
         windowDays: paramsCorrida.windowDays,
         targetDays: paramsCorrida.targetDays,
+        // true = la corrida mezcla participantes con ventanas/objetivos distintos,
+        // así que la tasa suma dos definiciones de "completó" y no es comparable.
+        mixedParams,
+        paramBreakdown: combosOrdenados.map((c) => ({
+          windowDays: c.windowDays, targetDays: c.targetDays, participants: c.n,
+        })),
         minSamplePerArm: H13_MIN_SAMPLE_PER_ARM,
         sufficientSample,
         reto,

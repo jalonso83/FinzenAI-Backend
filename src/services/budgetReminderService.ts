@@ -103,6 +103,10 @@ export class BudgetReminderService {
             where: {
               user_id: userId,
               is_active: true,
+              // Solo GASTO: el aviso de umbral es una advertencia, y en un
+              // presupuesto de ingreso llegar al 80% es una buena noticia. El
+              // aviso de ingresos (ir corto al cierre) va en la Fase 2.
+              type: 'EXPENSE',
               start_date: { lte: now },
               end_date: { gte: now }
             }

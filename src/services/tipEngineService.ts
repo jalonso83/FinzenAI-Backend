@@ -216,6 +216,11 @@ export class TipEngineService {
       where: {
         user_id: userId,
         is_active: true,
+      // SOLO presupuestos de GASTO. Un presupuesto de INGRESO superado es una
+      // BUENA noticia (facturó más de lo que esperaba); colarlo aquí haría que
+      // apareciera como "presupuesto excedido" y la IA generaría un consejo
+      // regañando al usuario por ganar de más.
+      type: 'EXPENSE',
         start_date: { lte: now },
         end_date: { gte: now }
       }

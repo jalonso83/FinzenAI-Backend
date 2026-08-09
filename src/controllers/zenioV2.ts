@@ -26,6 +26,7 @@ import { MappingSource } from '@prisma/client';
 import { merchantMappingService } from '../services/merchantMappingService';
 import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
+import { recalculateBudgets } from '../services/budgetService';
 import fs from 'fs';
 import FormData from 'form-data';
 import axios from 'axios';
@@ -567,12 +568,10 @@ async function insertTransaction(transactionData: any, userId: string, categorie
     select: { id: true, amount: true, type: true, category: true, description: true, date: true, createdAt: true, updatedAt: true },
   });
 
-  if (type === 'EXPENSE') {
-    try {
-      await recalculateBudgetSpent(userId, categoryValidation.categoryId!, date);
-      await NotificationService.checkBudgetAlerts(userId, categoryValidation.categoryId!, amount, date);
-    } catch (error) { logger.error('[ZenioV2 insertTransaction] Error recalculando presupuesto:', error); }
-  }
+  // Ingresos incluidos: ya existen presupuestos de INGRESO.
+  try {
+    await recalculateBudgets(userId, categoryValidation.categoryId!, date, { notify: true });
+  } catch (error) { logger.error('[ZenioV2 insertTransaction] Error recalculando presupuesto:', error); }
 
   try {
     const { analyzeAndDispatchTransactionEvents } = await import('./transactions');
@@ -1522,12 +1521,9 @@ export const createTransactionFromZenioV2 = async (req: Request, res: Response) 
       select: { id: true, amount: true, type: true, category: true, description: true, date: true, createdAt: true, updatedAt: true },
     });
 
-    if (type === 'EXPENSE') {
-      try {
-        await recalculateBudgetSpent(userId, categoryRecord.id, date);
-        await NotificationService.checkBudgetAlerts(userId, categoryRecord.id, amount, date);
-      } catch {}
-    }
+    try {
+      await recalculateBudgets(userId, categoryRecord.id, date, { notify: true });
+    } catch {}
 
     try {
       const { analyzeAndDispatchTransactionEvents } = await import('./transactions');

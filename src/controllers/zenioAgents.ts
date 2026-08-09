@@ -40,6 +40,7 @@ import { MappingSource } from '@prisma/client';
 import { merchantMappingService } from '../services/merchantMappingService';
 import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
+import { recalculateBudgets } from '../services/budgetService';
 
 // =============================================
 // FUNCIONES DE UTILIDAD (replicadas de zenioV2.ts)
@@ -179,10 +180,12 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
         include: { category: { select: { id: true, name: true, icon: true, type: true } } },
       });
 
-      // Recalcular presupuesto
-      if (type === 'EXPENSE') {
-        try { await recalculateBudgetSpent(userId, cv.categoryId!, tx.date); } catch {}
-      }
+      // Recalcular presupuesto y notificar si cruza el umbral.
+      // OJO: este camino llamaba al recálculo pero NUNCA a las alertas, así que
+      // registrar un gasto por los agentes de Zenio actualizaba el presupuesto
+      // sin avisar nunca. Con la llamada unificada eso ya no puede pasar.
+      // Ingresos incluidos: ya existen presupuestos de INGRESO.
+      try { await recalculateBudgets(userId, cv.categoryId!, tx.date, { notify: true }); } catch {}
 
       // H13 · Reto de la Primera Semana: asignar brazo en la 1ª TX válida. MISMO
       // hook que el controller REST — sin esto, los registros por Zenio (que el
@@ -264,10 +267,9 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
 
       await prisma.transaction.delete({ where: { id: candidates[0].id } });
 
-      // Recalcular presupuesto si era gasto
-      if (candidates[0].type === 'EXPENSE') {
-        try { await recalculateBudgetSpent(userId, candidates[0].category_id, candidates[0].date); } catch {}
-      }
+      // Recalcular tras borrar. Sin notificar: bajar el acumulado no es un
+      // movimiento nuevo del usuario. Ingresos incluidos.
+      try { await recalculateBudgetSpent(userId, candidates[0].category_id, candidates[0].date); } catch {}
 
       return { success: true, message: 'Transacción eliminada.', action: 'transaction_deleted' };
     }

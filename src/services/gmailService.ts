@@ -4,6 +4,7 @@ import { ENV } from '../config/env';
 import axios from 'axios';
 import { logger } from '../utils/logger';
 import { encrypt, decrypt } from '../utils/encryption';
+import { htmlToText } from '../utils/htmlToText';
 
 // Configuracion de Google OAuth
 const GOOGLE_CLIENT_ID = ENV.GOOGLE_CLIENT_ID;
@@ -216,7 +217,7 @@ export class GmailService {
     }
 
     // Limpiar HTML tags para obtener texto plano
-    return this.stripHtmlTags(body);
+    return htmlToText(body);
   }
 
   /**
@@ -229,17 +230,10 @@ export class GmailService {
     return header?.value;
   }
 
-  /**
-   * Limpia tags HTML del texto
-   */
-  private static stripHtmlTags(html: string): string {
-    return html
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
+  // La conversión de HTML a texto vive ahora en utils/htmlToText.ts. Había una
+  // copia aquí y otra en el otro proveedor, y NO hacían lo mismo: esta no
+  // decodificaba entidades HTML, así que un `&nbsp;` entre palabras rompía todas
+  // las frases que buscan los filtros del parser. Ver la nota del util.
 
   /**
    * Revoca el acceso de Gmail (desconectar)

@@ -5,7 +5,7 @@ import { NotificationType } from '@prisma/client';
 import { isTargetLocalTime } from '../../utils/timezone';
 import { NotificationService } from '../notificationService';
 import { isH13Enabled, isH13FlagOn } from '../../config/h13';
-import { H13_KEY_PREFIX, h13Params, H13_CHALLENGE_NAME, type H13Data, localDateKey, closeExpiredChallenges } from './h13Service';
+import { H13_KEY_PREFIX, h13Params, H13_CHALLENGE_NAME, h13WindowDayKeys, h13DaysWithTx, type H13Data, localDateKey, closeExpiredChallenges } from './h13Service';
 import { trackExperimentEvent } from '../experiments/experimentEvents';
 
 /**
@@ -174,8 +174,21 @@ export class H13CueScheduler {
         // Ventana y objetivo CONGELADOS de este participante (no globales).
         const { windowDays, targetDays } = h13Params(data);
 
-        const dayN = Math.floor((now.getTime() - new Date(p.assignedAt).getTime()) / 86_400_000) + 1;
-        if (dayN < 1 || dayN > windowDays) continue;
+        // Día del reto, por DÍA CALENDARIO LOCAL — no por milisegundos crudos.
+        //
+        // Antes era `floor((now - assignedAt) / 86.400.000) + 1`, que mezclaba
+        // husos: la ventana está anclada al día local de asignación, pero esto
+        // contaba días absolutos. Bastaba con que la hora local actual fuera
+        // anterior a la hora de asignación para que diera un día MENOS: el push
+        // decía "Día 6 del reto" en el día 7, y el cálculo de días restantes
+        // salía con uno de más.
+        //
+        // Ahora sale de la misma lista de días que define la ventana, así que no
+        // pueden discrepar por construcción.
+        const diasVentana = h13WindowDayKeys(new Date(p.assignedAt), p.user.country, windowDays);
+        const hoyKey = localDateKey(p.user.country, now);
+        const dayN = diasVentana.indexOf(hoyKey) + 1;
+        if (dayN < 1) continue; // hoy no cae dentro de la ventana
 
         // ¿Es la hora local elegida por el usuario? (tolerancia ±30min del helper)
         if (!isTargetLocalTime(p.user.country, reminderHour, 0)) continue;
@@ -211,9 +224,25 @@ export class H13CueScheduler {
 
         const esMañana = reminderHour === this.MORNING_HOUR;
 
-        // Días distintos que ya lleva. Viene de `data.daysWithTx`, que
-        // processRetoProgress actualiza en cada transacción válida.
-        const llevaDias = data.daysWithTx ?? 0;
+        // Días distintos que ya lleva, calculados desde `transactions`.
+        //
+        // Antes salía de `data.daysWithTx`, que NO cuenta el día de activación:
+        // esa marca solo la escribe processRetoProgress, que corre en estado
+        // ACTIVE, y la transacción que enrola al usuario ocurre en OFFERED. Para
+        // quien aceptaba y no volvía a registrar —el destinatario exacto de este
+        // mensaje— el contador decía 0 llevando 1, así que el cue le pedía un
+        // registro de más. Y el último día, la guarda `faltan <= quedan` fallaba
+        // por ese desfase y le mandaba el cue GENÉRICO justo cuando más apretaba.
+        //
+        // La consulta va aquí abajo a propósito: solo se llega tras los filtros
+        // de hora, "ya registró hoy" y "ya se le avisó hoy", así que corre para
+        // muy pocos participantes por tick.
+        const llevaDias = await h13DaysWithTx(
+          p.userId,
+          new Date(p.assignedAt),
+          p.user.country,
+          windowDays,
+        );
         const faltan = targetDays - llevaDias;
         const quedan = windowDays - dayN + 1; // hoy incluido
 

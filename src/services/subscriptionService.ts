@@ -209,22 +209,43 @@ export class SubscriptionService {
       currentPeriodStart: Date;
       currentPeriodEnd: Date;
       trialEndsAt?: Date | null;
+      /**
+       * Estado de cancelación programada, tal como lo reporta Stripe
+       * (`cancel_at_period_end`). Quien llame DEBE pasarlo si lo tiene.
+       *
+       * Antes esto no era un parámetro: el `update` forzaba `false` siempre. El
+       * efecto era que una cancelación se deshacía sola en nuestra base a los
+       * pocos segundos de hacerla — el usuario cancelaba, Stripe emitía
+       * `customer.subscription.updated`, y este upsert la borraba. La app le
+       * seguía diciendo que su plan se renovaba, el botón de reactivar le
+       * respondía "la suscripción no está cancelada", y el churn no se veía
+       * venir. El cobro nunca se vio afectado porque Stripe sí guardaba bien la
+       * cancelación; lo que estaba mal era nuestra copia.
+       *
+       * Si no viene (undefined), NO se toca el campo: es mejor conservar lo que
+       * haya en la base que volver a asumir un valor.
+       */
+      cancelAtPeriodEnd?: boolean;
     }
   ) {
     try {
+      const { cancelAtPeriodEnd, ...datosStripe } = stripeData;
+
       const subscription = await prisma.subscription.upsert({
         where: { userId },
         create: {
           userId,
           plan,
           status: SubscriptionStatus.ACTIVE,
-          ...stripeData,
+          ...datosStripe,
+          cancelAtPeriodEnd: cancelAtPeriodEnd ?? false,
         },
         update: {
           plan,
           status: SubscriptionStatus.ACTIVE,
-          ...stripeData,
-          cancelAtPeriodEnd: false,
+          ...datosStripe,
+          // Solo se escribe si el llamador lo sabe. Ver la nota del parámetro.
+          ...(cancelAtPeriodEnd !== undefined ? { cancelAtPeriodEnd } : {}),
         },
       });
 

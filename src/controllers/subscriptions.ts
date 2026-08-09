@@ -564,6 +564,7 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
           trialEndsAt: subscription.trial_end
             ? new Date(subscription.trial_end * 1000)
             : null,
+          cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
         });
 
         // Actualizar status

@@ -8,6 +8,7 @@ import FormData from 'form-data';
 import { merchantMappingService } from '../services/merchantMappingService';
 import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
+import { recalculateBudgets } from '../services/budgetService';
 import { logger } from '../utils/logger';
 import { OpenAiUsageService } from '../services/openAiUsageService';
 import { calculateOpenAICost } from '../config/openaiPricing';
@@ -1219,10 +1220,11 @@ async function insertTransaction(transactionData: any, userId: string, categorie
   });
 
   // Recalcular presupuesto y verificar alertas si es gasto
-  if (type === 'EXPENSE') {
+  // Ingresos incluidos: ya existen presupuestos de INGRESO. El servicio suma solo
+  // las transacciones del tipo del presupuesto y no alerta en los de ingreso.
+  {
     try {
-      await recalculateBudgetSpent(userId, categoryValidation.categoryId!, date);
-      await NotificationService.checkBudgetAlerts(userId, categoryValidation.categoryId!, amount, date);
+      await recalculateBudgets(userId, categoryValidation.categoryId!, date, { notify: true });
     } catch (error) {
       logger.error('[Zenio insertTransaction] Error recalculando presupuesto:', error);
     }
@@ -2924,10 +2926,9 @@ export const createTransactionFromZenio = async (req: Request, res: Response) =>
     });
 
     // Recalcular presupuesto y verificar alertas si es gasto
-    if (type === 'EXPENSE') {
+    {
       try {
-        await recalculateBudgetSpent(userId, categoryRecord.id, date);
-        await NotificationService.checkBudgetAlerts(userId, categoryRecord.id, amount, date);
+        await recalculateBudgets(userId, categoryRecord.id, date, { notify: true });
       } catch (error) {
         logger.error('[Zenio createTransactionFromZenio] Error recalculando presupuesto:', error);
       }

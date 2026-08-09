@@ -1214,6 +1214,11 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
     const budgets = await prisma.budget.findMany({
       where: {
         user_id: userId,
+        // Solo GASTO por ahora: este reporte calcula "cumplimiento" como
+        // gastado/límite, donde pasarse es malo. En un presupuesto de ingreso esa
+        // lectura se invierte, así que mezclarlos daría cifras sin sentido.
+        // Los de ingreso se incorporan en la Fase 2, con su propia métrica.
+        type: 'EXPENSE',
         start_date: { lte: dateEnd },
         end_date: { gte: dateStart },
         ...categoryFilter,
@@ -1377,6 +1382,8 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
     const historicalBudgets = await prisma.budget.findMany({
       where: {
         user_id: userId,
+        // Solo GASTO: la tendencia de cumplimiento asume que pasarse es fallar.
+        type: 'EXPENSE',
         start_date: { gte: threeMonthsAgo },
         end_date: { lte: now }
       },

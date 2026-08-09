@@ -495,6 +495,10 @@ async function updateSubscriptionFromStripe(
     trialEndsAt: subscription.trial_end
       ? new Date(subscription.trial_end * 1000)
       : null,
+    // Viene en el evento y hay que propagarlo: sin esto, el upsert forzaba
+    // `false` y deshacía en nuestra base una cancelación recién hecha por el
+    // usuario. Stripe es la fuente de verdad de este campo.
+    cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
   });
 
   // Actualizar status si es necesario

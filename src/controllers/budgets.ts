@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { BudgetType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
@@ -14,11 +15,15 @@ interface CreateBudgetRequest {
   start_date: string;
   end_date: string;
   alert_percentage?: number;
+  // EXPENSE (techo de gasto) | INCOME (lo que espera facturar en el período).
+  // Opcional: si no viene, EXPENSE — así las apps viejas siguen funcionando.
+  type?: BudgetType;
 }
 
 interface UpdateBudgetRequest {
   name?: string;
   category_id?: string;
+  type?: BudgetType;
   amount?: number;
   period?: string;
   start_date?: string;
@@ -153,7 +158,8 @@ export const createBudget = async (req: Request, res: Response) => {
       period, 
       start_date, 
       end_date, 
-      alert_percentage = 80 
+      alert_percentage = 80,
+      type = BudgetType.EXPENSE
     }: CreateBudgetRequest = req.body;
 
     // Validaciones
@@ -194,6 +200,26 @@ export const createBudget = async (req: Request, res: Response) => {
       return res.status(400).json({
         error: 'Validation error',
         message: 'Category does not exist'
+      });
+    }
+
+    // El tipo del presupuesto DEBE coincidir con el de la categoría. Antes esto
+    // no se validaba: el backend aceptaba una categoría de ingreso y creaba un
+    // presupuesto que siempre mostraba 0, porque el recálculo solo sumaba
+    // transacciones de gasto. La puerta estaba solo en la app.
+    if (!['EXPENSE', 'INCOME'].includes(String(type))) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: 'Type must be EXPENSE or INCOME'
+      });
+    }
+
+    if (category.type !== type) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: type === BudgetType.INCOME
+          ? `"${category.name}" es una categoría de gastos: no puedes usarla en un presupuesto de ingresos`
+          : `"${category.name}" es una categoría de ingresos: no puedes usarla en un presupuesto de gastos`
       });
     }
 
@@ -276,7 +302,8 @@ export const createBudget = async (req: Request, res: Response) => {
         period,
         start_date: startDate,
         end_date: endDate,
-        alert_percentage
+        alert_percentage,
+        type
       },
       include: {
         category: {
@@ -379,16 +406,36 @@ export const updateBudget = async (req: Request, res: Response) => {
       });
     }
 
-    // Si se está actualizando la categoría, verificar que existe
-    if (updateData.category_id) {
-      const category = await prisma.category.findUnique({
-        where: { id: updateData.category_id }
-      });
+    // Si cambia la categoría O el tipo, revalidar que sigan siendo coherentes.
+    // Hay que mirar los dos juntos: cambiar solo el tipo sobre la categoría vieja
+    // dejaría un presupuesto de ingresos apuntando a una categoría de gastos, que
+    // nunca acumularía nada.
+    if (updateData.category_id !== undefined || updateData.type !== undefined) {
+      const categoryId = updateData.category_id ?? existingBudget.category_id;
+      const tipo = updateData.type ?? existingBudget.type;
+
+      if (!['EXPENSE', 'INCOME'].includes(String(tipo))) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'Type must be EXPENSE or INCOME'
+        });
+      }
+
+      const category = await prisma.category.findUnique({ where: { id: categoryId } });
 
       if (!category) {
         return res.status(400).json({
           error: 'Validation error',
           message: 'Category does not exist'
+        });
+      }
+
+      if (category.type !== tipo) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: tipo === BudgetType.INCOME
+            ? `"${category.name}" es una categoría de gastos: no puedes usarla en un presupuesto de ingresos`
+            : `"${category.name}" es una categoría de ingresos: no puedes usarla en un presupuesto de gastos`
         });
       }
     }
@@ -400,6 +447,7 @@ export const updateBudget = async (req: Request, res: Response) => {
     const dataToUpdate: any = {};
     if (updateData.name !== undefined) dataToUpdate.name = updateData.name;
     if (updateData.category_id !== undefined) dataToUpdate.category_id = updateData.category_id;
+    if (updateData.type !== undefined) dataToUpdate.type = updateData.type;
     if (updateData.amount !== undefined) dataToUpdate.amount = updateData.amount;
     if (updateData.period !== undefined) dataToUpdate.period = updateData.period;
     if (updateData.alert_percentage !== undefined) dataToUpdate.alert_percentage = updateData.alert_percentage;

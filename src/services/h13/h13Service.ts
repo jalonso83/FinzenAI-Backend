@@ -106,6 +106,28 @@ function countDistinctDays(txs: RetoTx[], country: string | null | undefined): n
 }
 
 /**
+ * Días distintos con TX válida que lleva el participante dentro de su ventana,
+ * calculados desde `transactions` — la misma fuente de verdad que usan
+ * processRetoProgress, el cierre y el panel.
+ *
+ * Existe para que el scheduler de cues NO lea `data.daysWithTx`, que es una
+ * marca de agua incompleta: solo se escribe desde processRetoProgress, y esa
+ * función únicamente corre en estado ACTIVE. La transacción que enrola al
+ * usuario ocurre en OFFERED (antes de aceptar), así que nunca queda contada.
+ * Para quien acepta el reto y no vuelve a registrar —justo el destinatario del
+ * mensaje de urgencia— el contador decía 0 cuando en realidad llevaba 1.
+ */
+export async function h13DaysWithTx(
+  userId: string,
+  assignedAt: Date,
+  country: string | null | undefined,
+  windowDays: number,
+): Promise<number> {
+  const txs = await retoWindowTxs(userId, assignedAt, country, windowDays);
+  return countDistinctDays(txs, country);
+}
+
+/**
  * Los WINDOW_DAYS días calendario LOCALES de la ventana del reto ('YYYY-MM-DD'),
  * anclados al día local de la asignación (incluido: la TX de activación cuenta).
  * Exportada para que el análisis del panel reconstruya la misma ventana sin
@@ -124,18 +146,66 @@ export function h13WindowDayKeys(
   return keys;
 }
 
+/** Minutos que hay que sumarle a UTC para obtener la hora local de `tz` en ese
+ *  instante. Positivo al este de Greenwich, negativo al oeste (RD = -240).
+ *  Se mide con Intl para que respete el horario de verano de cada fecha. */
+function tzOffsetMinutes(tz: string, at: Date): number {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const partes = dtf.formatToParts(at);
+  const v = (tipo: string) => Number(partes.find((p) => p.type === tipo)?.value ?? 0);
+  const comoUtc = Date.UTC(v('year'), v('month') - 1, v('day'), v('hour'), v('minute'), v('second'));
+  return Math.round((comoUtc - at.getTime()) / 60_000);
+}
+
+/** Instante UTC en que empieza el día local `dayKey` ('YYYY-MM-DD') del país. */
+function inicioDiaLocalUtc(country: string | null | undefined, dayKey: string): Date {
+  let tz: string;
+  try {
+    tz = getTimezoneByCountry(country);
+  } catch {
+    return new Date(`${dayKey}T00:00:00Z`);
+  }
+  // Sonda a mediodía UTC de ese día: con cualquier offset de ±11h sigue cayendo
+  // dentro del mismo día local, así que da el desfase correcto de esa fecha.
+  const sonda = new Date(`${dayKey}T12:00:00Z`);
+  const offset = tzOffsetMinutes(tz, sonda);
+  return new Date(Date.parse(`${dayKey}T00:00:00Z`) - offset * 60_000);
+}
+
 /**
- * Instante en que se cierra la ventana de un participante (fin del último día
- * local + 1). Antes de esa fecha su resultado TODAVÍA no es final: contarlo en
- * la métrica primaria diluiría la tasa con gente que aún tiene días por delante.
+ * Instante en que se cierra la ventana de un participante: el FIN del último día
+ * local de la ventana, o sea el comienzo del día local siguiente.
+ *
+ * OJO — bug corregido 2026-08-09. Antes esto era `medianocheUTC(díaLocal) +
+ * windowDays * 86.400.000`, mezclando dos husos: partía de una fecha LOCAL pero
+ * sumaba días en UTC. En República Dominicana (UTC-4) eso cerraba el reto a las
+ * **20:00 hora local** del último día, cuatro horas antes de tiempo.
+ *
+ * El daño no era solo cerrar temprano: `h13WindowDayKeys` (que usa el panel) sí
+ * incluye el último día local COMPLETO. Así que una transacción hecha entre las
+ * 20:00 y la medianoche del último día contaba como éxito en el análisis, pero
+ * en producción el reto ya se había cerrado como fracaso y el usuario había
+ * recibido el push de consuelo. El panel y lo que se ejecuta medían distinto.
+ *
+ * Ahora el cierre se ancla al día local de verdad, respetando horario de verano.
  */
 export function h13WindowEnd(
   assignedAt: Date,
   country: string | null | undefined,
   windowDays: number = LEGACY_WINDOW_DAYS,
 ): Date {
-  const base = new Date(`${localDateKey(country, assignedAt)}T00:00:00Z`);
-  return new Date(base.getTime() + windowDays * 86_400_000);
+  const dias = h13WindowDayKeys(assignedAt, country, windowDays);
+  const ultimo = dias[dias.length - 1];
+  // Fin del último día local = inicio del siguiente.
+  const siguiente = new Date(Date.parse(`${ultimo}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  return inicioDiaLocalUtc(country, siguiente);
 }
 
 /** Análisis rule-based (sin LLM, sin gate PRO) sobre las TX de la ventana del reto. */
@@ -416,7 +486,21 @@ export async function onValidTransaction(userId: string, txId: string): Promise<
       if (existing.arm === 'reto' && existing.state === 'ACTIVE') {
         return await processRetoProgress(txId, existing);
       }
-      return {};
+
+      // Excepción de dogfood: una cuenta de la whitelist cuya participación
+      // anterior YA CERRÓ puede volver a entrar en una corrida distinta, para
+      // poder probar una edición nueva sin borrar filas a mano en la base.
+      //
+      // Solo dogfood y solo si (a) la corrida activa es OTRA y (b) su reto
+      // anterior está cerrado. A un usuario real esto no le aplica: su
+      // enrolamiento exige que sea su primera transacción, así que jamás cae en
+      // dos corridas.
+      const puedeReenrolar =
+        isH13Whitelisted(userId) &&
+        existing.experimentKey !== run &&
+        existing.state === 'COMPLETED';
+      if (!puedeReenrolar) return {};
+      // Cae al enrolamiento de abajo, que creará su fila en la corrida activa.
     }
 
     // ¿Es su PRIMERA transacción? La actual ya está creada, así que count === 1.
@@ -674,7 +758,14 @@ export async function closeExpiredChallenges(): Promise<void> {
       state: { in: ['OFFERED', 'ACCEPTED', 'ACTIVE', 'DECLINED'] },
       assignedAt: { lte: cutoff },
     },
-    select: { id: true, userId: true, state: true, assignedAt: true, data: true, experimentKey: true },
+    // El país viene en el MISMO select, no con un findUnique por participante.
+    // Al bajar el pre-filtro a 1 día, este bucle pasó a recorrer a todo el que
+    // lleve más de 24h abierto; consultar el usuario uno por uno —y encima antes
+    // de descartarlo por ventana no vencida— era un N+1 cada hora.
+    select: {
+      id: true, userId: true, state: true, assignedAt: true, data: true, experimentKey: true,
+      user: { select: { country: true } },
+    },
   });
 
   for (const p of candidatos) {
@@ -686,15 +777,15 @@ export async function closeExpiredChallenges(): Promise<void> {
       const assignedAt = new Date(p.assignedAt);
       const { windowDays, targetDays } = h13Params(data);
 
-      const user = await prisma.user.findUnique({ where: { id: p.userId }, select: { country: true } });
+      const country = p.user?.country;
 
       // Corte EXACTO con la ventana de ESTE participante. El cutoff de la consulta
       // trae de más a propósito; aquí se descartan los que aún tienen días por
       // delante. Sin esto, con ventanas mixtas se cerrarían retos antes de tiempo.
-      if (h13WindowEnd(assignedAt, user?.country, windowDays) > now) continue;
+      if (h13WindowEnd(assignedAt, country, windowDays) > now) continue;
 
-      const windowTxs = await retoWindowTxs(p.userId, assignedAt, user?.country, windowDays);
-      const daysWithTx = countDistinctDays(windowTxs, user?.country);
+      const windowTxs = await retoWindowTxs(p.userId, assignedAt, country, windowDays);
+      const daysWithTx = countDistinctDays(windowTxs, country);
       const success = daysWithTx >= targetDays;
       const result = success ? `>=${targetDays}` : `<${targetDays}`;
 

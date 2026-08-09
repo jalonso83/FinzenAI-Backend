@@ -185,24 +185,46 @@ enum RecurrenceFrequency {
   MONTHLY // mismo día del mes que la original
 }
 
+// Presupuesto por categoría y período, con renovación automática
+// (budgetRenewalService). Los hay de DOS tipos y la diferencia no es cosmética:
+//
+//   EXPENSE — es un TECHO. Se avisa al acercarse al límite; pasarse es malo.
+//   INCOME  — es un PISO. Es lo que el usuario espera facturar/cobrar en el
+//             período. Alcanzarlo es bueno; quedarse corto al cierre es malo.
+//
+// Todo lo que consuma presupuestos tiene que respetar esa inversión: una alerta
+// de "vas por el 80%" es una advertencia en un gasto y una felicitación en un
+// ingreso.
 model Budget {
-  id               String   @id @default(uuid())
+  id               String     @id @default(uuid())
   amount           Float
-  alert_percentage Float    @default(80)
+  alert_percentage Float      @default(80)
   category_id      String
-  created_at       DateTime @default(now())
+  created_at       DateTime   @default(now())
   end_date         DateTime
-  is_active        Boolean  @default(true)
+  is_active        Boolean    @default(true)
   name             String
   period           String
-  spent            Float    @default(0)
+  // Acumulado del período. El nombre dice "spent" por historia (nació cuando
+  // solo existían presupuestos de gasto) y NO se renombra: la columna ya está en
+  // producción y la usan la app y varios servicios. En un presupuesto INCOME
+  // significa "llevas cobrado", no "llevas gastado".
+  spent            Float      @default(0)
   start_date       DateTime
-  updated_at       DateTime @updatedAt
+  // Tipo del presupuesto. Default EXPENSE para que las filas existentes queden
+  // correctas sin backfill: hasta 2026-08-09 todos eran de gasto.
+  type             BudgetType @default(EXPENSE)
+  updated_at       DateTime   @updatedAt
   user_id          String
-  category         Category @relation(fields: [category_id], references: [id])
-  user             User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  category         Category   @relation(fields: [category_id], references: [id])
+  user             User       @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("budgets")
+}
+
+enum BudgetType {
+  EXPENSE
+  INCOME
 }
 
 model Onboarding {

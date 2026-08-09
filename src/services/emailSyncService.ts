@@ -4,6 +4,7 @@ import { GmailService } from './gmailService';
 import { OutlookService } from './outlookService';
 import { EmailParserService, ParsedTransaction } from './emailParserService';
 import { NotificationService } from './notificationService';
+import { recalculateBudgets } from './budgetService';
 import { GamificationService } from './gamificationService';
 import { encrypt, decrypt } from '../utils/encryption';
 
@@ -552,11 +553,19 @@ export class EmailSyncService {
     const detalle = String(data.error_description || error?.message || '');
 
     if (codigo === 'invalid_grant') return true;                    // Google
-    if (codigo === 'invalid_client') return true;                   // credenciales muertas
     if (/AADSTS(50173|700082|54005|65001)/.test(detalle)) return true; // Microsoft
     if (/token has been expired or revoked/i.test(detalle)) return true;
     if (/refresh token.*(expired|revoked|invalid)/i.test(detalle)) return true;
 
+    // NO agregar aquí `invalid_client`. Ese código NO significa que el usuario
+    // revocó nada: significa que NUESTRO client secret está mal, rotado o vacío
+    // en el deploy. Tratarlo como revocación tiene un radio de explosión enorme:
+    // al rotar el secret en Railway, la siguiente corrida del scheduler marcaría
+    // REVOKED a TODAS las conexiones cuyo access token estuviera por vencer, las
+    // sacaría de la cola y le mandaría a cada usuario un push de "se desconectó
+    // tu correo". Arreglar la variable no lo revierte: cada uno tendría que
+    // reconectar a mano. Un fallo de configuración nuestro debe quedar como
+    // FAILED y reintentarse, no romperle la conexión al usuario.
     return false;
   }
 
@@ -685,7 +694,10 @@ export class EmailSyncService {
       });
 
       // Recalcular presupuesto de la categoría
-      await this.recalculateBudgetSpent(userId, categoryId, transaction.date);
+      // Servicio unificado: mismo camino que el formulario y que Zenio. Antes
+      // este archivo tenía su PROPIA copia del recálculo, con su propia lógica
+      // de umbrales — dos implementaciones que ya habían divergido.
+      await recalculateBudgets(userId, categoryId, transaction.date, { notify: true });
 
       // ========== GAMIFICACIÓN: Puntos por transacción importada ==========
       try {
@@ -975,96 +987,12 @@ export class EmailSyncService {
     });
   }
 
-  /**
-   * Recalcula el gasto de presupuestos afectados por una transacción
-   */
-  private static async recalculateBudgetSpent(
-    userId: string,
-    categoryId: string,
-    date: Date
-  ): Promise<void> {
-    try {
-      // Buscar presupuestos activos de la categoría cuyo período incluya la fecha
-      const budgets = await prisma.budget.findMany({
-        where: {
-          user_id: userId,
-          category_id: categoryId,
-          is_active: true,
-          start_date: { lte: date },
-          end_date: { gte: date }
-        },
-        include: {
-          user: {
-            select: { currency: true }
-          }
-        }
-      });
+  // Aquí vivía una copia privada de `recalculateBudgetSpent` que además
+  // mandaba sus propias alertas de umbral. Se eliminó el 2026-08-09: era la
+  // segunda implementación del mismo cálculo y ya había divergido de la
+  // principal (leía el valor anterior de otra forma y no aplicaba el límite
+  // de plan). Todo pasa ahora por services/budgetService.ts.
 
-      for (const budget of budgets) {
-        // Obtener el gasto anterior para comparar
-        const previousSpent = Number(budget.spent) || 0;
-
-        // Sumar todas las transacciones de gasto de esa categoría y período
-        const spent = await prisma.transaction.aggregate({
-          _sum: { amount: true },
-          where: {
-            userId,
-            category_id: categoryId,
-            type: 'EXPENSE',
-            date: {
-              gte: budget.start_date,
-              lte: budget.end_date
-            }
-          }
-        });
-
-        const newSpent = spent._sum.amount || 0;
-
-        await prisma.budget.update({
-          where: { id: budget.id },
-          data: { spent: newSpent }
-        });
-
-        // Verificar si se debe enviar notificación de alerta
-        const budgetAmount = Number(budget.amount);
-        const alertThreshold = Number(budget.alert_percentage) || 80;
-        const previousPercentage = (previousSpent / budgetAmount) * 100;
-        const newPercentage = (newSpent / budgetAmount) * 100;
-        const currency = budget.user?.currency || 'RD$';
-
-        // Si cruzamos el umbral de alerta (antes estaba debajo, ahora está encima)
-        if (previousPercentage < alertThreshold && newPercentage >= alertThreshold && newPercentage < 100) {
-          try {
-            await NotificationService.notifyBudgetAlert(
-              userId,
-              budget.name,
-              Math.round(newPercentage),
-              budgetAmount - newSpent,
-              currency
-            );
-          } catch (notifyError) {
-            logger.error('[EmailSync] Error sending budget alert:', notifyError);
-          }
-        }
-
-        // Si el presupuesto fue excedido (antes estaba debajo del 100%, ahora está encima)
-        if (previousPercentage < 100 && newPercentage >= 100) {
-          try {
-            await NotificationService.notifyBudgetExceeded(
-              userId,
-              budget.name,
-              newSpent - budgetAmount,
-              currency
-            );
-          } catch (notifyError) {
-            logger.error('[EmailSync] Error sending budget exceeded:', notifyError);
-          }
-        }
-      }
-    } catch (error) {
-      logger.error('[EmailSync] Error recalculating budget:', error);
-    }
-  }
 }
 
 export default EmailSyncService;
