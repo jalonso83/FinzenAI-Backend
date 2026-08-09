@@ -75,20 +75,41 @@ function reemplazarExpresionesTemporalesPorFecha(message: string): string {
 
 async function validateCategory(categoryName: string, expectedType: string, categories?: any[]): Promise<{ valid: boolean; categoryId?: string; suggestions?: string[] }> {
   const normalized = normalizarTexto(categoryName);
+  const typeFilter = expectedType === 'gasto' ? 'EXPENSE' : expectedType === 'ingreso' ? 'INCOME' : null;
 
-  // Buscar en categorías del frontend primero
-  if (categories && categories.length > 0) {
-    const exactMatch = categories.find((c: any) => normalizarTexto(c.name) === normalized);
+  // Buscar en las categorías que mandó el cliente.
+  //
+  // OJO — bug corregido 2026-08-09: esta rama buscaba SOLO por nombre y devolvía
+  // la primera coincidencia, ignorando `expectedType`. El filtro por tipo existía
+  // únicamente en la rama de BD de más abajo, que casi nunca se alcanzaba porque
+  // la app siempre manda su lista.
+  //
+  // Consecuencia real: un usuario le pedía a Zenio "ponme un presupuesto de
+  // salario de 22 mil", la función encontraba "Salario" —la categoría de
+  // INGRESO, la única con ese nombre— y se creaba un presupuesto de gasto sobre
+  // una categoría de ingreso. Ese presupuesto se quedaba en 0 para siempre,
+  // porque el recálculo solo sumaba gastos. Se encontraron 6 casos así en
+  // producción, de 2 usuarios, el más antiguo de mayo.
+  const listaCliente = (() => {
+    if (!categories || categories.length === 0) return [];
+    if (!typeFilter) return categories;
+    // La app manda {id, name, type}. Si un cliente viejo no mandara `type`, se
+    // devuelve lista vacía a propósito para caer a la rama de BD, que sí filtra.
+    const tipadas = categories.filter((c: any) => c?.type);
+    return tipadas.filter((c: any) => c.type === typeFilter);
+  })();
+
+  if (listaCliente.length > 0) {
+    const exactMatch = listaCliente.find((c: any) => normalizarTexto(c.name) === normalized);
     if (exactMatch) return { valid: true, categoryId: exactMatch.id };
 
-    const partialMatch = categories.filter((c: any) => normalizarTexto(c.name).includes(normalized) || normalized.includes(normalizarTexto(c.name)));
+    const partialMatch = listaCliente.filter((c: any) => normalizarTexto(c.name).includes(normalized) || normalized.includes(normalizarTexto(c.name)));
     if (partialMatch.length === 1) return { valid: true, categoryId: partialMatch[0].id };
     if (partialMatch.length > 1) return { valid: false, suggestions: partialMatch.map((c: any) => c.name) };
   }
 
   // Buscar en BD
   const allCategories = await prisma.category.findMany();
-  const typeFilter = expectedType === 'gasto' ? 'EXPENSE' : expectedType === 'ingreso' ? 'INCOME' : null;
   const filtered = typeFilter ? allCategories.filter(c => c.type === typeFilter) : allCategories;
 
   const exact = filtered.find(c => normalizarTexto(c.name) === normalized);
@@ -280,7 +301,13 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
 
 // --- Budget handler ---
 async function handleBudget(args: any, userId: string, categories?: any[]): Promise<any> {
+  // `budget_type` decide si es un TECHO de gasto o una META de ingreso. Por
+  // defecto 'gasto', que es el comportamiento histórico. La categoría tiene que
+  // ser del mismo tipo: validateCategory lo exige, así que pedir un presupuesto
+  // de gasto sobre "Salario" ahora falla limpio en vez de crear algo roto.
   const { operation, category, amount, recurrence, filtros_busqueda } = args;
+  const tipoPedido: 'gasto' | 'ingreso' = args.budget_type === 'ingreso' ? 'ingreso' : 'gasto';
+  const tipoBudget = tipoPedido === 'ingreso' ? 'INCOME' : 'EXPENSE';
   if (!operation) throw new Error('Operación requerida');
 
   switch (operation) {
@@ -298,7 +325,7 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
         if (count >= budgetLimit) return { success: false, message: `Límite de presupuestos alcanzado (${count}/${budgetLimit}).`, upgrade: true };
       }
 
-      const cv = await validateCategory(category, 'gasto', categories);
+      const cv = await validateCategory(category, tipoPedido, categories);
       if (!cv.valid) return { success: false, message: `Categoría no encontrada: "${category}". Disponibles: ${cv.suggestions?.join(', ')}` };
 
       const periodMap: Record<string, string> = { 'semanal': 'weekly', 'mensual': 'monthly', 'anual': 'yearly' };
@@ -318,7 +345,7 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
       }
 
       const budget = await prisma.budget.create({
-        data: { user_id: userId, name: category, category_id: cv.categoryId!, amount: parseFloat(amount), period, start_date: startDate, end_date: endDate, alert_percentage: 80 },
+        data: { user_id: userId, name: category, category_id: cv.categoryId!, amount: parseFloat(amount), period, start_date: startDate, end_date: endDate, alert_percentage: 80, type: tipoBudget },
         include: { category: { select: { id: true, name: true, icon: true, type: true } } },
       });
       return { success: true, message: `Presupuesto creado: ${budget.category.name} por RD$${parseFloat(amount).toLocaleString('es-DO')} (${recurrence || 'mensual'})`, budget, action: 'budget_created' };

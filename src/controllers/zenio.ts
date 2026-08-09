@@ -333,13 +333,30 @@ async function validateCategory(categoryName: string, type: string, availableCat
     if (availableCategories && availableCategories.length > 0) {
       // Usar la lista proporcionada por el frontend
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      
-      // Buscar la categoría en la lista proporcionada (case insensitive y sin acentos)
-      const foundCategory = availableCategories.find(cat => {
+
+      // OJO — bug corregido 2026-08-09: esta rama buscaba SOLO por nombre en la
+      // lista del cliente y devolvía la primera coincidencia, ignorando `type`.
+      // El `dbType` se calculaba y no se usaba. Como la app siempre manda su
+      // lista, el filtro por tipo de la rama de BD casi nunca se alcanzaba.
+      //
+      // Consecuencia real: "ponme un presupuesto de salario de 22 mil" resolvía
+      // a "Salario" —la categoría de INGRESO— y creaba un presupuesto de gasto
+      // sobre ella, que se quedaba en 0 para siempre. 6 casos en producción.
+      //
+      // Si un cliente viejo no manda `type`, la lista filtrada queda vacía y se
+      // cae a la búsqueda en BD, que sí filtra por tipo.
+      const candidatas = availableCategories.filter((cat: any) => {
+        if (typeof cat !== 'object' || !cat?.type) return false;
+        return cat.type === dbType;
+      });
+      const listaBusqueda = candidatas.length > 0 ? candidatas : [];
+
+      // Buscar la categoría en la lista filtrada (case insensitive y sin acentos)
+      const foundCategory = listaBusqueda.find((cat: any) => {
         const catName = typeof cat === 'object' && cat.name ? cat.name : cat;
         return normalizarTexto(catName) === normalizarTexto(categoryName);
       });
-      
+
       if (foundCategory) {
         // Si encontramos la categoría en la lista del frontend, usar directamente su ID
         if (typeof foundCategory === 'object' && foundCategory.id) {
@@ -363,7 +380,10 @@ async function validateCategory(categoryName: string, type: string, availableCat
         }
       } else {
         // Filtrar categorías por tipo y devolver solo los nombres
-        const suggestions = availableCategories.map(cat => typeof cat === 'object' && cat.name ? cat.name : cat);
+        // Sugerir SOLO categorías del tipo pedido: ofrecerle una de ingreso a
+        // quien busca una de gasto es lo que originó el problema.
+        const base = listaBusqueda.length > 0 ? listaBusqueda : availableCategories;
+        const suggestions = base.map((cat: any) => typeof cat === 'object' && cat.name ? cat.name : cat);
         return {
           valid: false,
           error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.join(', ')}`,
@@ -985,7 +1005,12 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 }
 
 // Función para ejecutar manage_budget_record
+// `budget_type` decide si es un TECHO de gasto o una META de ingreso. Por defecto
+// 'gasto', que es el comportamiento histórico. La categoría debe ser del mismo
+// tipo — validateCategory lo exige, así que pedir un presupuesto de gasto sobre
+// "Salario" ahora falla limpio en vez de crear algo que nunca acumula.
 async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
+  const tipoPedido: 'gasto' | 'ingreso' = args.budget_type === 'ingreso' ? 'ingreso' : 'gasto';
   const { operation, category, amount, previous_amount, recurrence } = args;
   const filtros = args.filtros_busqueda;
 
@@ -1019,7 +1044,7 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
   // Ejecutar operación
   switch (operation) {
     case 'insert':
-      return await insertBudget(category, amount, recurrence, userId, categories);
+      return await insertBudget(category, amount, recurrence, userId, categories, tipoPedido);
     case 'update':
       return await updateBudget(category, previous_amount, amount, userId, categories);
     case 'delete':
@@ -1623,7 +1648,8 @@ async function listTransactions(transactionData: any, userId: string, categories
 }
 
 // Funciones auxiliares para presupuestos
-async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[]): Promise<any> {
+async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[], tipoPedido: 'gasto' | 'ingreso' = 'gasto'): Promise<any> {
+  const tipoBudget = tipoPedido === 'ingreso' ? 'INCOME' : 'EXPENSE';
   // Validar límite de presupuestos según el plan del usuario
   const subscription = await prisma.subscription.findUnique({
     where: { userId }
@@ -1683,7 +1709,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
     endDate = now;
   }
 
-  const categoryValidation = await validateCategory(category, 'gasto', categories);
+  const categoryValidation = await validateCategory(category, tipoPedido, categories);
   if (!categoryValidation.valid) {
     return {
       success: false,
@@ -1702,7 +1728,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
       period,
       start_date: startDate,
       end_date: endDate,
-      alert_percentage: 80
+      alert_percentage: 80, type: tipoBudget
     },
     include: {
       category: {
@@ -3052,7 +3078,11 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
         period,
         start_date: startDate,
         end_date: endDate,
-        alert_percentage: alertPercentage
+        alert_percentage: alertPercentage,
+        // Zenio solo crea presupuestos de GASTO (validateCategory exige categoría
+        // de gasto). Explícito, no por default: si algún día ofrece presupuestos
+        // de ingreso, el tipo debe salir de la categoría resuelta.
+        type: 'EXPENSE'
       },
       include: {
         category: {

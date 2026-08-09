@@ -189,7 +189,15 @@ async function validateCategory(categoryName: string, type: string, availableCat
   try {
     if (availableCategories && availableCategories.length > 0) {
       const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      const foundCategory = availableCategories.find((cat: any) => {
+      // OJO — bug corregido 2026-08-09: se calculaba `dbType` y NO se usaba en
+      // esta rama, así que la búsqueda por nombre podía devolver una categoría
+      // del tipo contrario. Con la app mandando siempre su lista, el filtro de
+      // la rama de BD casi nunca se alcanzaba. Así se crearon en producción 6
+      // presupuestos de gasto sobre categorías de ingreso ("Salario",
+      // "Otros ingresos"), que quedaban en 0 para siempre.
+      // Si el cliente no manda `type`, la lista queda vacía y se cae a la BD.
+      const listaBusqueda = availableCategories.filter((cat: any) => typeof cat === 'object' && cat?.type === dbType);
+      const foundCategory = listaBusqueda.find((cat: any) => {
         const catName = typeof cat === 'object' && cat.name ? cat.name : cat;
         return normalizarTexto(catName) === normalizarTexto(categoryName);
       });
@@ -200,7 +208,9 @@ async function validateCategory(categoryName: string, type: string, availableCat
         const category = allCategories.find(cat => normalizarTexto(cat.name) === normalizarTexto(cleanName));
         if (category) return { valid: true, categoryId: category.id };
       } else {
-        const suggestions = availableCategories.map((cat: any) => typeof cat === 'object' && cat.name ? cat.name : cat);
+        // Sugerir solo del tipo pedido.
+        const base = listaBusqueda.length > 0 ? listaBusqueda : availableCategories;
+        const suggestions = base.map((cat: any) => typeof cat === 'object' && cat.name ? cat.name : cat);
         return { valid: false, error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.join(', ')}`, suggestions };
       }
     } else {
@@ -453,7 +463,13 @@ async function executeManageTransactionRecord(args: any, userId: string, categor
 }
 
 async function executeManageBudgetRecord(args: any, userId: string, categories?: any[]): Promise<any> {
+  // `budget_type` decide si es un TECHO de gasto o una META de ingreso. Por
+  // defecto 'gasto', que es el comportamiento histórico. La categoría tiene que
+  // ser del mismo tipo: validateCategory lo exige, así que pedir un presupuesto
+  // de gasto sobre "Salario" ahora falla limpio en vez de crear algo roto.
   const { operation, category, amount, previous_amount, recurrence } = args;
+  const tipoPedido: 'gasto' | 'ingreso' = args.budget_type === 'ingreso' ? 'ingreso' : 'gasto';
+  const tipoBudget = tipoPedido === 'ingreso' ? 'INCOME' : 'EXPENSE';
   const filtros = args.filtros_busqueda;
 
   if (!['insert', 'update', 'delete', 'list'].includes(operation)) throw new Error('Operación inválida');
@@ -464,7 +480,7 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
   if (recurrence && !['semanal', 'mensual', 'anual'].includes(recurrence)) throw new Error('La recurrencia debe ser: semanal, mensual o anual');
 
   switch (operation) {
-    case 'insert': return await insertBudget(category, amount, recurrence, userId, categories);
+    case 'insert': return await insertBudget(category, amount, recurrence, userId, categories, tipoPedido);
     case 'update': return await updateBudget(category, previous_amount, amount, userId, categories);
     case 'delete': return await deleteBudget(category, previous_amount, userId, categories);
     case 'list': return await listBudgets(category, userId, categories, filtros);
@@ -722,7 +738,8 @@ async function listTransactions(transactionData: any, userId: string, categories
 // CRUD PRESUPUESTOS
 // =============================================
 
-async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[]): Promise<any> {
+async function insertBudget(category: string, amount: string, recurrence: string, userId: string, categories?: any[], tipoPedido: 'gasto' | 'ingreso' = 'gasto'): Promise<any> {
+  const tipoBudget = tipoPedido === 'ingreso' ? 'INCOME' : 'EXPENSE';
   const subscription = await prisma.subscription.findUnique({ where: { userId } });
   const BUDGET_LIMITS: Record<string, number> = { FREE: 4, PREMIUM: -1, PRO: -1 };
   const plan = subscription?.plan || 'FREE';
@@ -752,13 +769,13 @@ async function insertBudget(category: string, amount: string, recurrence: string
     endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
   }
 
-  const cv = await validateCategory(category, 'gasto', categories);
+  const cv = await validateCategory(category, tipoPedido, categories);
   if (!cv.valid) {
     return { success: false, message: `Categoría no encontrada: "${category}". Disponibles: ${cv.suggestions?.join(', ')}`, suggestions: cv.suggestions, action: 'category_not_found' };
   }
 
   const newBudget = await prisma.budget.create({
-    data: { user_id: userId, name: category, category_id: cv.categoryId!, amount: parseFloat(amount), period, start_date: startDate, end_date: endDate, alert_percentage: 80 },
+    data: { user_id: userId, name: category, category_id: cv.categoryId!, amount: parseFloat(amount), period, start_date: startDate, end_date: endDate, alert_percentage: 80, type: tipoBudget },
     include: { category: { select: { id: true, name: true, icon: true, type: true, isDefault: true } } },
   });
 
@@ -1569,6 +1586,8 @@ export const createBudgetFromZenioV2 = async (req: Request, res: Response) => {
         amount: parseFloat(budget_data.amount), period: budget_data.period,
         start_date: new Date(budget_data.start_date), end_date: new Date(budget_data.end_date),
         alert_percentage: budget_data.alert_percentage || 80,
+        // Zenio solo crea presupuestos de GASTO. Explícito, no por default.
+        type: 'EXPENSE',
       },
       include: { category: { select: { id: true, name: true, icon: true, type: true, isDefault: true } } },
     });

@@ -276,6 +276,7 @@ Al recibir la respuesta, muestra: "Estas son las categorías de <módulo>: … �
 **Detección**
 - Si menciona "presupuesto" **y** aporta datos claros → invoca \`manage_budget_record\`.
 - Si menciona "presupuesto" **pero** no indica operación ni datos → pregunta si quiere aprender o gestionar.
+- **Tipo de presupuesto** (\`budget_type\`): "gasto" por defecto (un TECHO: "no gastar más de 10 mil en comida"), o "ingreso" cuando es una META de lo que espera recibir ("quiero facturar 80 mil este mes", "mi meta de salario es 50 mil"). La categoría debe ser del mismo tipo: las de ingreso (Salario, Otros ingresos) solo con budget_type "ingreso". Al confirmar uno de ingreso habla de META, nunca de límite ni de "podrás gastar".
 
 ### Flujo Transacciones
 

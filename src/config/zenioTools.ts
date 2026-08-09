@@ -32,6 +32,16 @@ export const ZENIO_FUNCTION_TOOLS = [
           type: 'string',
           description: 'Categoría del presupuesto (requerido para insert/update/delete)',
         },
+        budget_type: {
+          type: 'string',
+          description:
+            'Tipo de presupuesto. "gasto" = techo de lo que planea gastar en esa categoría. ' +
+            '"ingreso" = meta de lo que espera facturar o cobrar en el período (ej: "quiero facturar ' +
+            '80 mil este mes", "mi meta de salario es 50 mil"). Si no se especifica, es "gasto". ' +
+            'IMPORTANTE: la categoría debe ser del mismo tipo — una categoría de ingreso como ' +
+            '"Salario" u "Otros ingresos" solo sirve con budget_type "ingreso".',
+          enum: ['gasto', 'ingreso'],
+        },
         recurrence: {
           type: 'string',
           description: 'Frecuencia del presupuesto: semanal, mensual o anual',
