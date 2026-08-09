@@ -467,6 +467,21 @@ export class GamificationController {
         description: 'Completaste tu primera meta',
         icon: '💪',
         rarity: 'uncommon'
+      },
+      // H13 · Reto de Arranque. El ID dice 'primera_semana' por historia (era el
+      // nombre viejo del reto, cuando la ventana era siempre de 7 días) y NO se
+      // renombra: es la clave de userBadge, y cambiarla le quitaría la insignia a
+      // quien ya la tiene. El nombre visible sí es el actual.
+      //
+      // Faltaba en este mapa, así que getBadgeInfo caía al default y en la app se
+      // veía como "Badge Desconocido / Descripción no disponible" (corregido
+      // 2026-08-09). El nombre no menciona la duración a propósito: el reto se
+      // corre en ediciones de 7, 15, 30 o 45 días.
+      'reto_primera_semana': {
+        name: 'Reto Cumplido',
+        description: 'Completaste tu primer reto de registro',
+        icon: '🏆',
+        rarity: 'uncommon'
       }
     };
 

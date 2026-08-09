@@ -3,14 +3,14 @@ import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { userBucket } from '../lib/userBucket';
 import { getExperimentStart } from '../lib/experimentStart';
-import { isH13FlagOn, isH13Whitelisted } from '../config/h13';
+import { isH13FlagOn, isH13Whitelisted, h13Run, h13WindowDays, h13TargetDaysFor } from '../config/h13';
 import {
-  H13_KEY,
-  H13_TARGET_DAYS,
-  H13_WINDOW_DAYS,
+  H13_KEY_PREFIX,
+  h13Params,
   h13WindowDayKeys,
   h13WindowEnd,
   localDateKey,
+  type H13Data,
 } from '../services/h13/h13Service';
 
 // Experimento H10 — "Entrada libre" (onboarding no bloqueante).
@@ -172,7 +172,27 @@ const H13_MIN_SAMPLE_PER_ARM = 30;
 export const getH13Stats = async (req: Request, res: Response) => {
   try {
     const enabled = isH13FlagOn();
-    const experimentStart = await getExperimentStart(H13_KEY);
+
+    // El H13 se corre por EDICIONES ('h13-1' con 7 días, 'h13-2' con 15...). Cada
+    // una es una cohorte independiente y NO se mezclan: juntar "% que hizo 3 de 7"
+    // con "% que hizo 6 de 15" en una sola tasa da un número sin significado.
+    //
+    // Por defecto se reporta la corrida ACTIVA, que es la que se está midiendo.
+    // Para ver una anterior se pasa ?run=h13-1.
+    const requestedRun = String(req.query.run || '').trim();
+    const run = requestedRun.startsWith(H13_KEY_PREFIX) ? requestedRun : h13Run();
+
+    // Corridas existentes, para que el panel pueda ofrecer el selector.
+    const runsRaw = await prisma.experimentParticipant.findMany({
+      where: { experimentKey: { startsWith: H13_KEY_PREFIX } },
+      distinct: ['experimentKey'],
+      select: { experimentKey: true },
+      orderBy: { experimentKey: 'asc' },
+    });
+    const availableRuns = runsRaw.map((r) => r.experimentKey);
+
+    // Fecha de inicio de ESTA corrida (cada edición tiene la suya).
+    const experimentStart = await getExperimentStart(run);
 
     let from = req.query.from ? new Date(String(req.query.from)) : null;
     if (from && isNaN(from.getTime())) from = null;
@@ -188,7 +208,7 @@ export const getH13Stats = async (req: Request, res: Response) => {
     const participants = experimentStart
       ? await prisma.experimentParticipant.findMany({
           where: {
-            experimentKey: H13_KEY,
+            experimentKey: run,
             assignedAt: { gte: effectiveFrom as Date, lte: to },
           },
           select: {
@@ -196,6 +216,7 @@ export const getH13Stats = async (req: Request, res: Response) => {
             arm: true,
             state: true,
             assignedAt: true,
+            data: true, // trae windowDays/targetDays congelados (ver h13Params)
             user: { select: { country: true } },
           },
         })
@@ -212,8 +233,12 @@ export const getH13Stats = async (req: Request, res: Response) => {
     let windowFloor: Date | null = null;
     let windowCeil: Date | null = null;
     for (const p of cohort) {
+      // La ventana de CADA participante, no una global: con una corrida de 45
+      // días, calcular el techo con 7 dejaría fuera casi toda la ventana y el
+      // análisis contaría de menos.
+      const { windowDays } = h13Params(p.data as H13Data);
       const lo = new Date(p.assignedAt.getTime() - 2 * DAY_MS);
-      const hi = new Date(p.assignedAt.getTime() + (H13_WINDOW_DAYS + 2) * DAY_MS);
+      const hi = new Date(p.assignedAt.getTime() + (windowDays + 2) * DAY_MS);
       if (!windowFloor || lo < windowFloor) windowFloor = lo;
       if (!windowCeil || hi > windowCeil) windowCeil = hi;
     }
@@ -257,16 +282,21 @@ export const getH13Stats = async (req: Request, res: Response) => {
       }
 
       const country = p.user?.country;
-      if (h13WindowEnd(p.assignedAt, country) > now) continue; // ventana abierta → aún no cuenta
+      // Ventana y objetivo CONGELADOS de este participante, no los globales: si
+      // se corren cohortes con ventanas distintas, cada quien madura y se juzga
+      // con la suya. Filas viejas sin el campo → 7 y 3 (mismo comportamiento).
+      const { windowDays, targetDays } = h13Params(p.data as H13Data);
+
+      if (h13WindowEnd(p.assignedAt, country, windowDays) > now) continue; // ventana abierta → aún no cuenta
       g.matured++;
 
-      const validKeys = new Set(h13WindowDayKeys(p.assignedAt, country));
+      const validKeys = new Set(h13WindowDayKeys(p.assignedAt, country, windowDays));
       const days = new Set<string>();
       for (const d of txsByUser.get(p.userId) ?? []) {
         const key = localDateKey(country, d);
         if (validKeys.has(key)) days.add(key);
       }
-      if (days.size >= H13_TARGET_DAYS) g.reachedTarget++;
+      if (days.size >= targetDays) g.reachedTarget++;
     }
 
     const rate = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 10000) / 100 : 0);
@@ -295,14 +325,26 @@ export const getH13Stats = async (req: Request, res: Response) => {
     const sufficientSample =
       reto.matured >= H13_MIN_SAMPLE_PER_ARM && control.matured >= H13_MIN_SAMPLE_PER_ARM;
 
+    // Ventana y objetivo REALES de esta corrida: se leen de sus participantes, no
+    // de las constantes legacy — que reportaban 7/3 aunque la corrida fuera de 15.
+    // Todos los de una corrida comparten parámetros (se congelan al enrolar con la
+    // misma config); si la cohorte está vacía, se cae a lo configurado hoy.
+    const primero = cohort[0];
+    const paramsCorrida = primero
+      ? h13Params(primero.data as H13Data)
+      : { windowDays: h13WindowDays(), targetDays: h13TargetDaysFor(h13WindowDays()) };
+
     return res.json({
       data: {
         enabled,
+        run,
+        availableRuns,
+        activeRun: h13Run(),
         from: effectiveFrom ? effectiveFrom.toISOString() : null,
         to: to.toISOString(),
         experimentStart: experimentStart ? experimentStart.toISOString() : null,
-        windowDays: H13_WINDOW_DAYS,
-        targetDays: H13_TARGET_DAYS,
+        windowDays: paramsCorrida.windowDays,
+        targetDays: paramsCorrida.targetDays,
         minSamplePerArm: H13_MIN_SAMPLE_PER_ARM,
         sufficientSample,
         reto,

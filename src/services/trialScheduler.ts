@@ -3,7 +3,6 @@ import { NotificationType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { NotificationService } from './notificationService';
 import { EmailSyncService } from './emailSyncService';
-import { isInActiveReto } from './h13/h13Service';
 
 import { logger } from '../utils/logger';
 // Tipos de notificación de trial y sus días correspondientes
@@ -138,13 +137,23 @@ export class TrialScheduler {
             continue;
           }
 
-          // H13 · Suprimir las notificaciones de onboarding de trial mientras el usuario
-          // está en el Reto de la Primera Semana (evita sobre-notificación). La
-          // expiración (STEP 0 arriba) NO se suprime — ya se procesó.
-          if (await isInActiveReto(user.id)) {
-            skipped++;
-            continue;
-          }
+          // NO REPONER la supresión por H13 que estaba aquí (quitada 2026-08-08).
+          //
+          // Antes, estar en el Reto de la Primera Semana apagaba estos avisos para
+          // "evitar sobre-notificación". Se quitó por dos razones:
+          //
+          // 1. El trial dura 7 días FIJOS y estos avisos (DAY_3, DAY_5, ENDING) son
+          //    el camino a la conversión. Un experimento de enganche no debe poder
+          //    silenciarlos. Al volverse parametrizable la ventana del reto (14, 30,
+          //    45 días), la supresión se estiraba sola y se tragaba el trial entero.
+          // 2. Sesgaba el propio experimento: el brazo 'control' SÍ recibía estos
+          //    avisos y el brazo 'reto' no, así que cualquier diferencia de
+          //    conversión entre brazos mezclaba el efecto del reto con el de haberle
+          //    quitado los recordatorios de suscripción a un solo grupo.
+          //
+          // La supresión SÍ se mantiene para los Tips (tipScheduler.ts): son
+          // contenido genérico de enganche, no transaccional, y ahí callar durante
+          // el reto sí tiene sentido y escala sin daño con cualquier ventana.
 
           // STEP 1 — Notificaciones diarias: SÍ requieren devices y preferences habilitadas
           if (!user.devices || user.devices.length === 0) {
