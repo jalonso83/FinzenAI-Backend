@@ -169,7 +169,25 @@ export class BudgetRenewalService {
         return false;
       }
 
-      // 3. Crear el nuevo presupuesto con las mismas características
+      // 3. Acumulado inicial: lo que la persona YA haya movido dentro de la
+      //    ventana nueva. Nacer siempre en 0 daba por hecho que la renovación
+      //    ocurre justo al abrirse el período, y no siempre es así — el cron
+      //    puede llegar hasta una hora tarde, o mucho más si el servicio estuvo
+      //    caído. Ese gasto quedaba sin contar hasta que la persona registrara
+      //    otro movimiento en la misma categoría, que es lo que disparaba el
+      //    recálculo completo.
+      const yaAcumulado = await tx.transaction.aggregate({
+        where: {
+          userId: expiredBudget.user_id,
+          category_id: expiredBudget.category_id,
+          type: expiredBudget.type,
+          date: { gte: newDates.start, lte: newDates.end },
+        },
+        _sum: { amount: true },
+      });
+      const acumuladoInicial = Number(yaAcumulado._sum.amount) || 0;
+
+      // 4. Crear el nuevo presupuesto con las mismas características
       await tx.budget.create({
         data: {
           user_id: expiredBudget.user_id,
@@ -187,7 +205,7 @@ export class BudgetRenewalService {
           alert_percentage: expiredBudget.alert_percentage,
           start_date: newDates.start,
           end_date: newDates.end,
-          spent: 0, // Reiniciar el gasto
+          spent: acumuladoInicial,
           is_active: true
         }
       });

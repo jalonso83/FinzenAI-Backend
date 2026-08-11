@@ -17,11 +17,24 @@ export class BudgetScheduler {
     }
 
     logger.log('[BudgetScheduler] 🕐 Iniciando scheduler de renovación de presupuestos...');
-    logger.log('[BudgetScheduler] 📅 Se ejecutará diariamente a la 1:00 AM UTC');
+    logger.log('[BudgetScheduler] 📅 Se ejecutará cada hora, en el minuto 5');
 
-    // Ejecutar todos los días a la 1 AM UTC
-    // Esto asegura que se chequeen presupuestos en todas las zonas horarias
-    this.cronTask = cron.schedule('0 1 * * *', async () => {
+    // ─── Cada hora, no una vez al día (2026-08-11) ─────────────────────────────
+    //
+    // Antes corría solo a la 01:00 UTC. Funcionaba por accidente: las ventanas
+    // terminaban a las 23:59 UTC, justo antes de la siguiente pasada. Al corregir
+    // las fronteras para que caigan en la medianoche LOCAL de cada usuario, esa
+    // hora fija dejó de encajar: un presupuesto de RD cierra a las 03:59 UTC, o
+    // sea DESPUÉS de la pasada de la 01:00, y se quedaba sin renovar hasta el día
+    // siguiente — unas 21 horas sin ventana vigente. En España o México el
+    // desajuste va en la otra dirección.
+    //
+    // Cada hora sirve para todos los husos sin casos especiales. Correr más veces
+    // es inofensivo: `renewExpiredBudgets` solo toca lo que ya venció, y el
+    // compare-and-swap impide que dos pasadas rendundantes dupliquen nada.
+    //
+    // Minuto 5 para no chocar con los demás schedulers que arrancan en punto.
+    this.cronTask = cron.schedule('5 * * * *', async () => {
       logger.log('[BudgetScheduler] 🔄 Ejecutando renovación de presupuestos...');
       
       try {
@@ -83,7 +96,7 @@ export class BudgetScheduler {
   static getStatus(): { isRunning: boolean; nextExecution: string } {
     return {
       isRunning: this.isRunning,
-      nextExecution: this.isRunning ? 'Diariamente a la 1:00 AM UTC' : 'Detenido'
+      nextExecution: this.isRunning ? 'Cada hora, en el minuto 5 (UTC)' : 'Detenido'
     };
   }
 }
