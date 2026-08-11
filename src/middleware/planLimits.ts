@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { BudgetType } from '@prisma/client';
 import { subscriptionService } from '../services/subscriptionService';
 import { prisma } from '../lib/prisma';
 
@@ -14,13 +15,16 @@ export const checkBudgetLimit = async (
   try {
     const userId = (req as any).user!.id;
 
-    // Contar presupuestos activos del usuario
-    const budgetCount = await prisma.budget.count({
-      where: {
-        user_id: userId,
-        is_active: true,
-      },
-    });
+    // Contar presupuestos activos del usuario. El cupo es COMPARTIDO entre los
+    // de gasto y las metas de ingreso: se cuentan todos juntos. El desglose se
+    // usa solo para poder explicárselo si el cupo se llenó — antes el 403 decía
+    // "has alcanzado el límite" a secas y quien tenía metas de ingreso no
+    // entendía por qué se le había acabado el cupo de presupuestos de gastos.
+    const [gastos, ingresos] = await Promise.all([
+      prisma.budget.count({ where: { user_id: userId, is_active: true, type: BudgetType.EXPENSE } }),
+      prisma.budget.count({ where: { user_id: userId, is_active: true, type: BudgetType.INCOME } }),
+    ]);
+    const budgetCount = gastos + ingresos;
 
     // Verificar límite
     const limitCheck = await subscriptionService.checkResourceLimit(
@@ -30,12 +34,21 @@ export const checkBudgetLimit = async (
     );
 
     if (!limitCheck.allowed) {
+      // El desglose solo se menciona si de verdad hay metas de ingreso en juego:
+      // a quien solo tiene presupuestos de gasto no le aporta nada.
+      const desglose = ingresos > 0
+        ? ` Ahora mismo tienes ${gastos} de gastos y ${ingresos} de ingresos: ambos ocupan el mismo cupo.`
+        : '';
+
       return res.status(403).json({
-        message: `Has alcanzado el límite de ${limitCheck.limit} presupuestos activos en tu plan actual`,
+        message: `Has alcanzado el límite de ${limitCheck.limit} presupuestos activos en tu plan actual.${desglose}`,
         upgrade: true,
         currentPlan: (await subscriptionService.getUserSubscription(userId)).plan,
         limit: limitCheck.limit,
         current: budgetCount,
+        // Desglose para que la app pueda presentarlo como quiera.
+        currentExpense: gastos,
+        currentIncome: ingresos,
       });
     }
 
