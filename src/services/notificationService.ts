@@ -945,6 +945,19 @@ export class NotificationService {
    * Compara el gasto antes y después para determinar si se debe enviar alerta
    * NOTA: Solo disponible para planes PLUS y PRO (budgetAlerts: true)
    */
+  /**
+   * @deprecated NO USAR. Quedo huerfana tras unificar el recalculo en
+   * services/budgetService.ts (2026-08-09) y tiene DOS defectos graves:
+   *
+   *  1. No filtra por `type`, asi que sobre un presupuesto de INGRESO manda
+   *     "Has usado el 80% de tu presupuesto" cuando la persona lleva cobrado el
+   *     80% de lo que queria facturar, y "Has excedido tu presupuesto" cuando
+   *     SUPERO su meta. Justo al reves.
+   *  2. Infiere el valor anterior restando el monto de la transaccion, cosa que
+   *     solo es correcta si esa transaccion fue el unico cambio.
+   *
+   * Usa `recalculateBudgets(userId, categoryId, date, { notify: true })`.
+   */
   static async checkBudgetAlerts(
     userId: string,
     categoryId: string,

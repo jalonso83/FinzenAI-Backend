@@ -42,6 +42,7 @@ import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
 import { recalculateBudgets } from '../services/budgetService';
 
+import { crearPresupuestoSinSolapar, PresupuestoSolapadoError } from '../services/budgetService';
 // =============================================
 // FUNCIONES DE UTILIDAD (replicadas de zenioV2.ts)
 // =============================================
@@ -328,7 +329,7 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
       const cv = await validateCategory(category, tipoPedido, categories);
       if (!cv.valid) return { success: false, message: `Categoría no encontrada: "${category}". Disponibles: ${cv.suggestions?.join(', ')}` };
 
-      const periodMap: Record<string, string> = { 'semanal': 'weekly', 'mensual': 'monthly', 'anual': 'yearly' };
+      const periodMap: Record<string, string> = { 'semanal': 'weekly', 'quincenal': 'biweekly', 'mensual': 'monthly', 'anual': 'yearly' };
       const period = periodMap[recurrence] || 'monthly';
       const now = new Date();
       let startDate: Date, endDate: Date;
@@ -337,6 +338,16 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
         const day = now.getDay(); const diff = (day === 0 ? -6 : 1) - day;
         startDate = new Date(now); startDate.setDate(now.getDate() + diff); startDate.setHours(0, 0, 0, 0);
         endDate = new Date(startDate); endDate.setDate(startDate.getDate() + 6); endDate.setHours(23, 59, 59, 999);
+      } else if (recurrence === 'quincenal') {
+        // Quincena del CALENDARIO en curso: 1-15 o 16-fin de mes.
+        const d = now.getDate();
+        if (d <= 15) {
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          endDate = new Date(now.getFullYear(), now.getMonth(), 15, 23, 59, 59, 999);
+        } else {
+          startDate = new Date(now.getFullYear(), now.getMonth(), 16);
+          endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        }
       } else if (recurrence === 'anual') {
         startDate = new Date(now.getFullYear(), 0, 1); endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
       } else {
@@ -344,10 +355,23 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
         endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
       }
 
-      const budget = await prisma.budget.create({
-        data: { user_id: userId, name: category, category_id: cv.categoryId!, amount: parseFloat(amount), period, start_date: startDate, end_date: endDate, alert_percentage: 80, type: tipoBudget },
-        include: { category: { select: { id: true, name: true, icon: true, type: true } } },
-      });
+      // Guardia contra solapamientos: Zenio creaba presupuestos SIN comprobar
+      // nada, asi que por aqui se podia duplicar aunque el controlador REST lo
+      // impidiera. Ver services/budgetService.ts.
+      let budget;
+      try {
+        budget = await crearPresupuestoSinSolapar({
+          user_id: userId, name: category, category_id: cv.categoryId!,
+          amount: parseFloat(amount), period, start_date: startDate, end_date: endDate,
+          alert_percentage: 80, type: tipoBudget,
+        });
+      } catch (e: any) {
+        if (e instanceof PresupuestoSolapadoError) {
+          const y = e.existente;
+          return { success: false, message: `Ya tienes un presupuesto de ${y.category?.name} activo en esas fechas, por RD$${Number(y.amount).toLocaleString('es-DO')}. Quieres que le cambie el monto en vez de crear otro?`, budget: y, action: 'budget_duplicate' };
+        }
+        throw e;
+      }
       return { success: true, message: `Presupuesto creado: ${budget.category.name} por RD$${parseFloat(amount).toLocaleString('es-DO')} (${recurrence || 'mensual'})`, budget, action: 'budget_created' };
     }
     case 'list': {
@@ -356,7 +380,37 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
         where, orderBy: { created_at: 'desc' }, take: filtros_busqueda?.limit || 10,
         include: { category: { select: { name: true, icon: true, type: true } } },
       });
-      return { success: true, budgets, count: budgets.length, action: 'budgets_listed' };
+      // Se etiqueta por tipo antes de devolverlo al modelo, igual que en
+      // `analizar_finanzas`. Devolver el registro crudo le pasaba a Zenio un
+      // campo llamado `spent` (= "gastado") con lo que la persona lleva
+      // COBRADO: "5.000 de 60.000" se lee como "gastaste poco, vas bien" cuando
+      // significa "te faltan 55.000 por cobrar". La defensa no puede quedar
+      // solo en el prompt.
+      const etiqueta: Record<string, string> = {
+        weekly: 'semanal', biweekly: 'quincenal', monthly: 'mensual', yearly: 'anual',
+      };
+      const budgetsEtiquetados = budgets.map((b: any) => {
+        const monto = Number(b.amount) || 0;
+        const acumulado = Number(b.spent) || 0;
+        const pct = monto > 0 ? Math.round((acumulado / monto) * 100) : 0;
+        const comun = {
+          id: b.id,
+          categoria: b.category?.name,
+          icono: b.category?.icon,
+          periodo: etiqueta[b.period] || b.period,
+          descripcion: b.description || undefined,
+          desde: b.start_date,
+          hasta: b.end_date,
+        };
+        return b.type === 'INCOME'
+          ? { ...comun, tipo: 'ingreso', meta: monto, recibido: acumulado,
+              porcentajeAlcanzado: pct, falta: Math.max(0, monto - acumulado),
+              nota: 'META de ingresos: `recibido` es lo COBRADO. Porcentaje bajo = va corto, no es bueno. Nunca digas "gastado" ni felicites por un porcentaje bajo.' }
+          : { ...comun, tipo: 'gasto', asignado: monto, gastado: acumulado,
+              porcentajeUso: pct, disponible: Math.max(0, monto - acumulado),
+              nota: 'TECHO de gasto: porcentaje alto = alerta.' };
+      });
+      return { success: true, budgets: budgetsEtiquetados, count: budgets.length, action: 'budgets_listed' };
     }
     case 'update': {
       if (!category) throw new Error('Categoría requerida para update');
@@ -523,7 +577,9 @@ async function handleListCategories(args: any, categories?: any[]): Promise<any>
 
   let filtered: any[] = [];
   switch (module) {
-    case 'presupuestos': filtered = categories!.filter((c: any) => c.type === 'EXPENSE'); break;
+    // Antes filtraba solo EXPENSE. Ya existen presupuestos de INGRESO, así que
+    // ese filtro escondía las categorías necesarias para crearlos.
+    case 'presupuestos': filtered = categories!; break;
     case 'transacciones': case 'metas': filtered = categories!; break;
     default: return { error: true, message: `Módulo no válido: ${module}` };
   }
@@ -602,14 +658,43 @@ async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
     include: { category: { select: { name: true, icon: true } } },
   });
 
-  const presupuestosResumen = presupuestos.map(b => ({
-    categoria: b.category.name,
-    asignado: b.amount,
-    gastado: b.spent,
-    porcentajeUso: b.amount > 0 ? Math.round((b.spent / b.amount) * 100) : 0,
-    estado: b.amount > 0 ? (b.spent / b.amount >= 0.9 ? 'ROJO' : b.spent / b.amount >= 0.7 ? 'AMARILLO' : 'VERDE') : 'VERDE',
-    restante: b.amount - b.spent,
-  }));
+  // OJO: en un presupuesto de INGRESO todo se invierte. `spent` no es "gastado"
+  // sino "recibido", y un porcentaje BAJO es MALO (va corto de facturación), no
+  // bueno. Antes esto trataba todo como gasto: un presupuesto de ingreso con
+  // 5.000 de 60.000 daba 8% y estado VERDE, y Zenio felicitaba al usuario por ir
+  // "muy bien" cuando en realidad le faltaba el 92% de lo que esperaba cobrar.
+  //
+  // Se manda el `tipo` y campos con nombres distintos por tipo, para que el
+  // modelo no pueda confundirlos aunque el prompt falle.
+  const presupuestosResumen = presupuestos.map(b => {
+    const pct = b.amount > 0 ? Math.round((b.spent / b.amount) * 100) : 0;
+    const esIngreso = b.type === 'INCOME';
+
+    if (esIngreso) {
+      return {
+        tipo: 'ingreso',
+        categoria: b.category.name,
+        meta: b.amount,
+        recibido: b.spent,
+        porcentajeAlcanzado: pct,
+        // Invertido: cuanto MENOS lleva, peor va.
+        estado: pct >= 100 ? 'LOGRADO' : pct >= 70 ? 'VERDE' : pct >= 40 ? 'AMARILLO' : 'ROJO',
+        falta: Math.max(0, b.amount - b.spent),
+        nota: 'Es una META de ingresos: mientras más alto el porcentaje, mejor. Quedarse corto es lo malo.',
+      };
+    }
+
+    return {
+      tipo: 'gasto',
+      categoria: b.category.name,
+      asignado: b.amount,
+      gastado: b.spent,
+      porcentajeUso: pct,
+      estado: pct >= 90 ? 'ROJO' : pct >= 70 ? 'AMARILLO' : 'VERDE',
+      restante: b.amount - b.spent,
+      nota: 'Es un TECHO de gasto: mientras más alto el porcentaje, peor. Pasarse es lo malo.',
+    };
+  });
 
   // 4. Metas activas
   const metas = await prisma.goal.findMany({

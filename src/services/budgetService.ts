@@ -163,4 +163,130 @@ export async function recalculateBudgets(
   }
 }
 
-export default { recalculateBudgets };
+/**
+ * ─── Guardia contra presupuestos duplicados y solapados (2026-08-10) ──────────
+ *
+ * Dos presupuestos activos de la misma categoría cuyas fechas se pisan es SIEMPRE
+ * un error: `recalculateBudgets` (arriba) busca por rango de fechas, así que le
+ * asigna LAS MISMAS transacciones a los dos, y el dashboard —que suma todos los
+ * presupuestos activos— cuenta el gasto y el monto por partida doble.
+ *
+ * Antes esto se validaba en UN solo sitio (`controllers/budgets.ts`) de los SEIS
+ * que crean presupuestos: los cinco de Zenio hacían `prisma.budget.create` a
+ * pelo. Y la validación que había era un `findFirst` seguido de un `create`, dos
+ * pasos sin transacción: dos peticiones simultáneas pasaban ambas por el
+ * `findFirst`, ninguna encontraba nada, y las dos creaban.
+ *
+ * Por eso aquí no se valida "a mano": se toma un lock por (usuario, categoría)
+ * dentro de la transacción, de modo que dos creaciones simultáneas de la misma
+ * categoría se serializan y la segunda ya ve lo que insertó la primera. El lock
+ * es de transacción (`_xact_`), se libera solo al hacer commit o rollback, y solo
+ * bloquea a quien toque esa misma pareja usuario+categoría.
+ */
+
+export interface DatosPresupuesto {
+  user_id: string;
+  name: string;
+  category_id: string;
+  amount: number;
+  period: string;
+  start_date: Date;
+  end_date: Date;
+  alert_percentage?: number;
+  type?: BudgetType;
+  description?: string | null;
+}
+
+/** Error tipado para que cada llamador decida su formato de respuesta (409 en
+ *  REST, mensaje conversacional en Zenio) sin repetir la consulta. */
+export class PresupuestoSolapadoError extends Error {
+  constructor(public readonly existente: any) {
+    super('Ya existe un presupuesto activo que se solapa con este');
+    this.name = 'PresupuestoSolapadoError';
+  }
+}
+
+/** Presupuesto activo de la misma categoría cuyo período se cruce con [inicio, fin]. */
+export async function buscarPresupuestoSolapado(
+  cliente: any,
+  params: {
+    user_id: string;
+    category_id: string;
+    start_date: Date;
+    end_date: Date;
+    excluirId?: string;
+    /** Limitar la búsqueda a presupuestos de ESTA recurrencia. Solo lo usa la
+     *  renovación automática; ver el porqué en budgetRenewalService. Al crear NO
+     *  se pasa: ahí cualquier solapamiento es dañino, coincida o no el período. */
+    period?: string;
+  },
+) {
+  const { user_id, category_id, start_date, end_date, excluirId, period } = params;
+  return cliente.budget.findFirst({
+    where: {
+      user_id,
+      category_id,
+      is_active: true,
+      ...(excluirId ? { id: { not: excluirId } } : {}),
+      ...(period ? { period } : {}),
+      // Dos rangos se solapan si cada uno empieza antes de que termine el otro.
+      // Es la forma corta y equivalente a los tres casos que se enumeraban antes
+      // (empieza dentro / termina dentro / lo contiene), sin dejar huecos.
+      start_date: { lte: end_date },
+      end_date: { gte: start_date },
+    },
+    include: { category: { select: { id: true, name: true, icon: true } } },
+  });
+}
+
+/**
+ * Crea un presupuesto garantizando que no se solape con otro activo de la misma
+ * categoría. Lanza `PresupuestoSolapadoError` si lo hay. Úsala SIEMPRE en vez de
+ * `prisma.budget.create` — es el único punto donde la exclusión está garantizada.
+ */
+export async function crearPresupuestoSinSolapar(datos: DatosPresupuesto) {
+  return prisma.$transaction(async (tx) => {
+    // Serializa a los que compiten por la misma (usuario, categoría). Sin esto,
+    // dos peticiones a la vez comprueban en paralelo y las dos crean.
+    //
+    // OJO: tiene que ser `$executeRawUnsafe`, NO `$queryRawUnsafe`.
+    // pg_advisory_xact_lock() devuelve `void` y Prisma revienta al intentar
+    // deserializar esa columna ("Failed to deserialize column of type 'void'"),
+    // lo que dejaría la creación de presupuestos rota por completo. `tsc` no lo
+    // detecta porque el SQL es una cadena. Verificado contra Postgres real:
+    // dos transacciones con la misma clave se serializan, y con claves
+    // distintas siguen corriendo en paralelo.
+    await tx.$executeRawUnsafe(
+      'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
+      `budget:${datos.user_id}:${datos.category_id}`,
+    );
+
+    const existente = await buscarPresupuestoSolapado(tx, datos);
+    if (existente) throw new PresupuestoSolapadoError(existente);
+
+    return tx.budget.create({
+      data: {
+        user_id: datos.user_id,
+        name: datos.name,
+        category_id: datos.category_id,
+        amount: datos.amount,
+        period: datos.period,
+        start_date: datos.start_date,
+        end_date: datos.end_date,
+        alert_percentage: datos.alert_percentage ?? 80,
+        type: datos.type ?? BudgetType.EXPENSE,
+        description: datos.description ?? null,
+      },
+      // `isDefault` va incluido porque el resto de endpoints de presupuestos lo
+      // devuelven y las apps distinguen con él las categorías propias.
+      include: { category: { select: { id: true, name: true, icon: true, type: true, isDefault: true } } },
+    });
+  }, {
+    // El default de Prisma son 5s. Quien llegue segundo al lock espera a que el
+    // primero termine, así que se deja margen antes de abortar por timeout.
+    maxWait: 10000,
+    timeout: 15000,
+  });
+}
+
+export default { recalculateBudgets, crearPresupuestoSinSolapar, buscarPresupuestoSolapado };

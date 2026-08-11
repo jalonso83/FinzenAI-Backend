@@ -109,6 +109,17 @@ async function renewExpiredBudget(expiredBudget: any): Promise<void> {
       newEndDate = new Date(today.getFullYear(), today.getMonth() + 1, 0); // Último día del mes
       break;
       
+    case 'biweekly':
+      // Quincena del calendario en curso: del 1 al 15, o del 16 al fin de mes.
+      if (today.getDate() <= 15) {
+        newStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        newEndDate = new Date(today.getFullYear(), today.getMonth(), 15);
+      } else {
+        newStartDate = new Date(today.getFullYear(), today.getMonth(), 16);
+        newEndDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      }
+      break;
+
     case 'yearly':
       newStartDate = new Date(today.getFullYear(), 0, 1); // 1 enero
       newEndDate = new Date(today.getFullYear(), 11, 31); // 31 diciembre
@@ -140,6 +151,11 @@ async function renewExpiredBudget(expiredBudget: any): Promise<void> {
         category_id: expiredBudget.category_id,
         amount: expiredBudget.amount,
         period: expiredBudget.period,
+        // Igual que en budgetRenewalService: sin copiar `type`, un presupuesto de
+        // INGRESO renace como EXPENSE (el default del schema) y su `spent` pasa a
+        // acumular gastos; sin `description` se pierde la nota del usuario.
+        type: expiredBudget.type,
+        description: expiredBudget.description,
         alert_percentage: expiredBudget.alert_percentage,
         start_date: newStartDate,
         end_date: newEndDate,

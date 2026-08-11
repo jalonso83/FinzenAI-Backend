@@ -6,15 +6,26 @@ import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 
 import { logger } from '../utils/logger';
 import { recalculateBudgetSpent } from './transactions';
+import { crearPresupuestoSinSolapar, buscarPresupuestoSolapado, PresupuestoSolapadoError } from '../services/budgetService';
+// Etiqueta en español del período, para los mensajes que ve el usuario.
+// Antes se devolvía el valor crudo ('monthly') y la app lo mostraba tal cual.
+const etiquetaPeriodo = (period: string): string => ({
+  weekly: 'semanal',
+  biweekly: 'quincenal',
+  monthly: 'mensual',
+  yearly: 'anual',
+}[period] || period);
+
 // Tipos para las peticiones
 interface CreateBudgetRequest {
   name: string;
   category_id: string;
   amount: number;
-  period: string; // 'monthly', 'weekly', 'yearly'
+  period: string; // 'weekly' | 'biweekly' | 'monthly' | 'yearly'
   start_date: string;
   end_date: string;
   alert_percentage?: number;
+  description?: string;
   // EXPENSE (techo de gasto) | INCOME (lo que espera facturar en el período).
   // Opcional: si no viene, EXPENSE — así las apps viejas siguen funcionando.
   type?: BudgetType;
@@ -24,6 +35,7 @@ interface UpdateBudgetRequest {
   name?: string;
   category_id?: string;
   type?: BudgetType;
+  description?: string;
   amount?: number;
   period?: string;
   start_date?: string;
@@ -159,7 +171,8 @@ export const createBudget = async (req: Request, res: Response) => {
       start_date, 
       end_date, 
       alert_percentage = 80,
-      type = BudgetType.EXPENSE
+      type = BudgetType.EXPENSE,
+      description
     }: CreateBudgetRequest = req.body;
 
     // Validaciones
@@ -177,10 +190,11 @@ export const createBudget = async (req: Request, res: Response) => {
       });
     }
 
-    if (!['monthly', 'weekly', 'yearly'].includes(period)) {
+    // 'biweekly' = quincenas del calendario (1-15 y 16-fin de mes), no "15 días".
+    if (!['weekly', 'biweekly', 'monthly', 'yearly'].includes(period)) {
       return res.status(400).json({
         error: 'Validation error',
-        message: 'Period must be monthly, weekly, or yearly'
+        message: 'Period must be weekly, biweekly, monthly, or yearly'
       });
     }
 
@@ -234,67 +248,13 @@ export const createBudget = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar si ya existe un presupuesto activo con la misma categoría y período
-    const existingBudget = await prisma.budget.findFirst({
-      where: {
-        user_id: userId,
-        category_id,
-        period,
-        is_active: true,
-        OR: [
-          // Caso 1: El nuevo presupuesto empieza durante un presupuesto existente
-          {
-            AND: [
-              { start_date: { lte: startDate } },
-              { end_date: { gte: startDate } }
-            ]
-          },
-          // Caso 2: El nuevo presupuesto termina durante un presupuesto existente
-          {
-            AND: [
-              { start_date: { lte: endDate } },
-              { end_date: { gte: endDate } }
-            ]
-          },
-          // Caso 3: El nuevo presupuesto contiene completamente un presupuesto existente
-          {
-            AND: [
-              { start_date: { gte: startDate } },
-              { end_date: { lte: endDate } }
-            ]
-          }
-        ]
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            icon: true
-          }
-        }
-      }
-    });
-
-    if (existingBudget) {
-      return res.status(409).json({
-        error: 'Duplicate budget',
-        message: `Ya existe un presupuesto activo para "${existingBudget.category?.name}" (${existingBudget.period})`,
-        existingBudget: {
-          id: existingBudget.id,
-          name: existingBudget.name,
-          amount: Number(existingBudget.amount),
-          spent: Number(existingBudget.spent || 0),
-          period: existingBudget.period,
-          start_date: existingBudget.start_date,
-          end_date: existingBudget.end_date,
-          category: existingBudget.category
-        }
-      });
-    }
-
-    const budget = await prisma.budget.create({
-      data: {
+    // La comprobación de solapamiento y el create van juntos y bajo lock dentro de
+    // `crearPresupuestoSinSolapar`. Antes eran dos pasos sueltos: dos peticiones
+    // simultáneas pasaban las dos por el findFirst sin encontrar nada y creaban
+    // ambas. Ver la nota larga en services/budgetService.ts.
+    let budget;
+    try {
+      budget = await crearPresupuestoSinSolapar({
         user_id: userId,
         name,
         category_id,
@@ -303,20 +263,29 @@ export const createBudget = async (req: Request, res: Response) => {
         start_date: startDate,
         end_date: endDate,
         alert_percentage,
-        type
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            icon: true,
-            type: true,
-            isDefault: true
+        type,
+        description: description?.trim() || null
+      });
+    } catch (e) {
+      if (e instanceof PresupuestoSolapadoError) {
+        const existente = e.existente;
+        return res.status(409).json({
+          error: 'Duplicate budget',
+          message: `Ya existe un presupuesto ${etiquetaPeriodo(existente.period)} activo para "${existente.category?.name}" en estas fechas`,
+          existingBudget: {
+            id: existente.id,
+            name: existente.name,
+            amount: Number(existente.amount),
+            spent: Number(existente.spent || 0),
+            period: existente.period,
+            start_date: existente.start_date,
+            end_date: existente.end_date,
+            category: existente.category
           }
-        }
+        });
       }
-    });
+      throw e;
+    }
 
     // Inicializar `spent` con las transacciones que YA existen en el período.
     // Sin esto, un presupuesto creado después de registrar gastos nace en 0 y
@@ -343,7 +312,12 @@ export const createBudget = async (req: Request, res: Response) => {
           period: budget.period,
           categoryId: budget.category_id
         },
-        pointsAwarded: 20
+        // 0 A PROPÓSITO: los puntos totales se calculan sumando `pointsAwarded`
+        // de TODOS los eventos, y `handleBudgetCreated` ya crea su propia fila
+        // de +20. Poniendo 20 aquí también, crear un presupuesto valía +40 y el
+        // ciclo crear→borrar dejaba saldo positivo. Ahora crear suma 20 y
+        // borrar resta 20, que se anulan.
+        pointsAwarded: 0
       });
     } catch (error) {
       logger.error('Error dispatching gamification event:', error);
@@ -392,10 +366,10 @@ export const updateBudget = async (req: Request, res: Response) => {
       });
     }
 
-    if (updateData.period && !['monthly', 'weekly', 'yearly'].includes(updateData.period)) {
+    if (updateData.period && !['weekly', 'biweekly', 'monthly', 'yearly'].includes(updateData.period)) {
       return res.status(400).json({
         error: 'Validation error',
-        message: 'Period must be monthly, weekly, or yearly'
+        message: 'Period must be weekly, biweekly, monthly, or yearly'
       });
     }
 
@@ -448,6 +422,7 @@ export const updateBudget = async (req: Request, res: Response) => {
     if (updateData.name !== undefined) dataToUpdate.name = updateData.name;
     if (updateData.category_id !== undefined) dataToUpdate.category_id = updateData.category_id;
     if (updateData.type !== undefined) dataToUpdate.type = updateData.type;
+    if (updateData.description !== undefined) dataToUpdate.description = updateData.description?.trim() || null;
     if (updateData.amount !== undefined) dataToUpdate.amount = updateData.amount;
     if (updateData.period !== undefined) dataToUpdate.period = updateData.period;
     if (updateData.alert_percentage !== undefined) dataToUpdate.alert_percentage = updateData.alert_percentage;
@@ -469,6 +444,63 @@ export const updateBudget = async (req: Request, res: Response) => {
         return res.status(400).json({
           error: 'Validation error',
           message: 'Start date must be before end date'
+        });
+      }
+    }
+
+    // Editar también puede provocar un solapamiento: mover las fechas, cambiar de
+    // categoría o reactivar un presupuesto viejo puede dejarlo encima de otro que
+    // ya estaba activo. Se comprueba con los valores RESULTANTES (los nuevos si
+    // vienen en la petición, los actuales si no) y excluyendo el propio.
+    const resultante = {
+      category_id: dataToUpdate.category_id ?? existingBudget.category_id,
+      start_date: dataToUpdate.start_date ?? existingBudget.start_date,
+      end_date: dataToUpdate.end_date ?? existingBudget.end_date,
+      is_active: dataToUpdate.is_active ?? existingBudget.is_active,
+    };
+
+    // SOLO se comprueba si la petición toca de verdad la ventana: la categoría,
+    // las fechas, o reactiva un presupuesto apagado. Comprobar en toda edición
+    // sería un desastre: hay presupuestos solapados de antes en la base, y a
+    // quien tenga uno le rebotaría cualquier cambio —el monto, el nombre— con un
+    // 409 que además le echa la culpa a un cambio que no hizo. Editar el monto de
+    // un presupuesto ya solapado tiene que seguir funcionando; lo que se impide
+    // es CREAR solapamiento nuevo.
+    // Se compara el VALOR, no la presencia de la clave: los tres formularios
+    // (iOS, Android y web) mandan `category_id` y `is_active` en cada update
+    // aunque no hayan cambiado, así que mirar solo si el campo viene haría que
+    // esto se disparara siempre y volveríamos al 409 en toda edición.
+    const mismaFecha = (a: any, b: any) => new Date(a).getTime() === new Date(b).getTime();
+    const reactivando = dataToUpdate.is_active === true && !existingBudget.is_active;
+    const tocaLaVentana =
+      (dataToUpdate.category_id !== undefined && dataToUpdate.category_id !== existingBudget.category_id) ||
+      (dataToUpdate.start_date !== undefined && !mismaFecha(dataToUpdate.start_date, existingBudget.start_date)) ||
+      (dataToUpdate.end_date !== undefined && !mismaFecha(dataToUpdate.end_date, existingBudget.end_date)) ||
+      reactivando;
+
+    if (tocaLaVentana && resultante.is_active) {
+      const solapado = await buscarPresupuestoSolapado(prisma, {
+        user_id: userId,
+        category_id: resultante.category_id,
+        start_date: resultante.start_date,
+        end_date: resultante.end_date,
+        excluirId: id,
+      });
+
+      if (solapado) {
+        return res.status(409).json({
+          error: 'Duplicate budget',
+          message: `Ese cambio dejaría dos presupuestos de "${solapado.category?.name}" activos en las mismas fechas. Ya tienes uno ${etiquetaPeriodo(solapado.period)}.`,
+          existingBudget: {
+            id: solapado.id,
+            name: solapado.name,
+            amount: Number(solapado.amount),
+            spent: Number(solapado.spent || 0),
+            period: solapado.period,
+            start_date: solapado.start_date,
+            end_date: solapado.end_date,
+            category: solapado.category
+          }
         });
       }
     }
@@ -543,7 +575,12 @@ export const deleteBudget = async (req: Request, res: Response) => {
     try {
       await GamificationService.dispatchEvent({
         userId,
-        eventType: 'create_budget',
+        // NO es 'create_budget'. dispatchEvent ignora `pointsAwarded` para la
+        // lógica: entraba por el `case 'create_budget'` y sumaba +20 igual que
+        // al crear. Resultado: crear y borrar en bucle daba +40 netos por
+        // vuelta, BORRAR un presupuesto extendía la racha diaria y además
+        // contaba para la insignia "Planificador".
+        eventType: 'delete_budget',
         eventData: {
           budgetId: existingBudget.id,
           amount: existingBudget.amount,

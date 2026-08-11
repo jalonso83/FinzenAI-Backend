@@ -1294,6 +1294,13 @@ export const getBudgetReport = async (req: Request, res: Response): Promise<Resp
         name: budget.name,
         category: budget.category,
         period: budget.period,
+        // El período traducido va aparte del crudo: la app lo pinta tal cual y
+        // sin esto mostraba literalmente "biweekly". Y `type`/`description` se
+        // exponen para que el cliente pueda distinguir cuando entren los
+        // presupuestos de ingreso (hoy la consulta filtra EXPENSE).
+        periodLabel: ({ weekly: 'semanal', biweekly: 'quincenal', monthly: 'mensual', yearly: 'anual' } as Record<string, string>)[budget.period] || budget.period,
+        type: budget.type,
+        description: budget.description || null,
         budgetAmount,
         totalSpent,
         remaining,

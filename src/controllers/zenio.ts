@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { BudgetType } from '@prisma/client';
 import { Request, Response } from 'express';
 import { MappingSource } from '@prisma/client';
 import { prisma } from '../lib/prisma';
@@ -13,6 +14,7 @@ import { logger } from '../utils/logger';
 import { OpenAiUsageService } from '../services/openAiUsageService';
 import { calculateOpenAICost } from '../config/openaiPricing';
 
+import { crearPresupuestoSinSolapar, PresupuestoSolapadoError } from '../services/budgetService';
 const API_KEY = ENV.OPENAI_API_KEY;
 const ASSISTANT_ID = ENV.OPENAI_ASSISTANT_ID;
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
@@ -525,8 +527,8 @@ function validateBudgetData(data: any): { valid: boolean; errors: string[] } {
   // Validar period
   if (!data.period) {
     errors.push('Period es requerido');
-  } else if (!['monthly', 'weekly', 'yearly'].includes(data.period)) {
-    errors.push('Period debe ser "monthly", "weekly" o "yearly"');
+  } else if (!['monthly', 'weekly', 'biweekly', 'yearly'].includes(data.period)) {
+    errors.push('Period debe ser "monthly", "weekly", "biweekly" o "yearly"');
   }
   
   // Validar start_date
@@ -1037,8 +1039,8 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
     throw new Error('El monto del presupuesto a eliminar es requerido');
   }
 
-  if (recurrence && !['semanal', 'mensual', 'anual'].includes(recurrence)) {
-    throw new Error('La recurrencia debe ser: semanal, mensual o anual');
+  if (recurrence && !['semanal', 'quincenal', 'mensual', 'anual'].includes(recurrence)) {
+    throw new Error('La recurrencia debe ser: semanal, quincenal, mensual o anual');
   }
 
   // Ejecutar operación
@@ -1135,10 +1137,12 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
   
   switch (module) {
     case 'presupuestos':
-      // Para presupuestos solo categorías de gastos
-      filteredCategories = categories!.filter((cat: any) => 
-        typeof cat === 'object' ? cat.type === 'EXPENSE' : true
-      );
+      // TODAS: un presupuesto también puede ser de INGRESO (una meta de
+      // facturación). Con el filtro a EXPENSE se le ocultaban "Salario" y
+      // "Otros ingresos" a quien preguntaba por las categorías de presupuestos,
+      // y si una creación fallaba, Zenio le respondía con una lista que no
+      // incluía justo la que necesitaba, afirmándole que no existía.
+      filteredCategories = categories!;
       break;
     case 'transacciones':
       // Para transacciones todas las categorías (gastos e ingresos)
@@ -1681,6 +1685,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
 
   const periodMap: { [key: string]: string } = {
     'semanal': 'weekly',
+    'quincenal': 'biweekly',
     'mensual': 'monthly',
     'anual': 'yearly'
   };
@@ -1701,12 +1706,24 @@ async function insertBudget(category: string, amount: string, recurrence: string
   } else if (recurrence === 'mensual') {
     startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
     endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  } else if (recurrence === 'quincenal') {
+    // Quincena del CALENDARIO en curso: 1-15 o 16-fin de mes.
+    if (now.getDate() <= 15) {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth(), 15, 23, 59, 59, 999);
+    } else {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 16, 0, 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
   } else if (recurrence === 'anual') {
     startDate = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
     endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
   } else {
-    startDate = now;
-    endDate = now;
+    // Fallback = mensual, igual que `periodMap[recurrence] || 'monthly'` arriba.
+    // Antes esta rama ponía startDate = endDate = now: si el usuario no decía
+    // la recurrencia, el presupuesto nacía con duración cero.
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
   }
 
   const categoryValidation = await validateCategory(category, tipoPedido, categories);
@@ -1719,8 +1736,11 @@ async function insertBudget(category: string, amount: string, recurrence: string
     };
   }
 
-  const newBudget = await prisma.budget.create({
-    data: {
+  // Guardia atómica contra solapamientos: comprobar y crear en dos pasos sueltos
+  // es justamente lo que permitía la carrera. Ver services/budgetService.ts.
+  let newBudget;
+  try {
+    newBudget = await crearPresupuestoSinSolapar({
       user_id: userId,
       name: category,
       category_id: categoryValidation.categoryId!,
@@ -1728,20 +1748,20 @@ async function insertBudget(category: string, amount: string, recurrence: string
       period,
       start_date: startDate,
       end_date: endDate,
-      alert_percentage: 80, type: tipoBudget
-    },
-    include: {
-      category: {
-        select: {
-          id: true,
-          name: true,
-          icon: true,
-          type: true,
-          isDefault: true
-        }
-      }
+      alert_percentage: 80,
+      type: tipoBudget,
+    });
+  } catch (e: any) {
+    if (e instanceof PresupuestoSolapadoError) {
+      const y = e.existente;
+      return {
+        success: false,
+        message: `Ya tienes un presupuesto de ${y.category?.name} activo en esas fechas, por RD$${Number(y.amount).toLocaleString('es-DO')}. Le cambio el monto en vez de crear otro?`,
+        action: 'budget_duplicate',
+      };
     }
-  });
+    throw e;
+  }
 
   const categoryRecord = await prisma.category.findUnique({
     where: { id: categoryValidation.categoryId! }
@@ -1749,7 +1769,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
 
   return {
     success: true,
-    message: `✅ **Presupuesto creado exitosamente**\n\n📋 **Categoría:** ${categoryRecord ? categoryRecord.name : category}\n💰 **Monto:** RD$${parseFloat(amount).toLocaleString('es-DO')}\n📅 **Período:** ${recurrence === 'mensual' ? 'Mensual' : recurrence === 'semanal' ? 'Semanal' : 'Anual'}\n📆 **Desde:** ${startDate.toLocaleDateString('es-ES')}\n📆 **Hasta:** ${endDate.toLocaleDateString('es-ES')}\n\nEl presupuesto ha sido guardado. ¡Puedes verlo en la sección de Presupuestos!`,
+    message: `✅ **Presupuesto creado exitosamente**\n\n📋 **Categoría:** ${categoryRecord ? categoryRecord.name : category}\n💰 **Monto:** RD$${parseFloat(amount).toLocaleString('es-DO')}\n📅 **Período:** ${recurrence === 'mensual' ? 'Mensual' : recurrence === 'semanal' ? 'Semanal' : recurrence === 'quincenal' ? 'Quincenal' : 'Anual'}\n📆 **Desde:** ${startDate.toLocaleDateString('es-ES')}\n📆 **Hasta:** ${endDate.toLocaleDateString('es-ES')}\n\nEl presupuesto ha sido guardado. ¡Puedes verlo en la sección de Presupuestos!`,
     budget: newBudget,
     action: 'budget_created'
   };
@@ -1914,6 +1934,7 @@ async function listBudgets(category: string | undefined, userId: string, categor
     if (filtros.recurrence) {
       const periodMap: { [key: string]: string } = {
         'semanal': 'weekly',
+        'quincenal': 'biweekly',
         'mensual': 'monthly',
         'anual': 'yearly'
       };
@@ -1991,10 +2012,16 @@ async function listBudgets(category: string | undefined, userId: string, categor
     mensaje = `💰 **${budgetList.length} presupuestos encontrados${limitText}:**\n\n`;
     
     mensaje += budgetList.map(b => {
-      const periodo = b.period === 'weekly' ? 'semanal' : b.period === 'monthly' ? 'mensual' : 'anual';
+      const periodo = b.period === 'weekly' ? 'semanal' : b.period === 'biweekly' ? 'quincenal' : b.period === 'monthly' ? 'mensual' : 'anual';
       const monto = `RD$${b.amount.toLocaleString('es-DO')}`;
       const fechaCreacion = new Date(b.created_at).toLocaleDateString('es-ES');
-      return `💳 **${b.name}** - ${monto}\n   📅 ${periodo} | 🏷️ ${b.category.name}\n   📆 Creado: ${fechaCreacion}`;
+      // El tipo va explícito: en un presupuesto de INGRESO el monto es una META
+      // que se quiere ALCANZAR, no un techo que no se debe pasar.
+      const esIngreso = b.type === 'INCOME';
+      const icono = esIngreso ? '📈' : '💳';
+      const etiqueta = esIngreso ? `meta de ingresos ${monto}` : `límite ${monto}`;
+      const llevado = esIngreso ? 'Recibido' : 'Gastado';
+      return `${icono} **${b.name}** - ${etiqueta}\n   💰 ${llevado}: RD$${(b.spent || 0).toLocaleString('es-DO')}\n   📅 ${periodo} | 🏷️ ${b.category.name}\n   📆 Creado: ${fechaCreacion}`;
     }).join('\n\n');
   }
   
@@ -3068,9 +3095,10 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
 
     const categoryId = categoryValidation.categoryId!;
 
-    // Crear el presupuesto
-    const newBudget = await prisma.budget.create({
-      data: {
+    // Guardia atómica contra solapamientos - ver services/budgetService.ts.
+    let newBudget;
+    try {
+      newBudget = await crearPresupuestoSinSolapar({
         user_id: userId,
         name,
         category_id: categoryId,
@@ -3080,22 +3108,19 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
         end_date: endDate,
         alert_percentage: alertPercentage,
         // Zenio solo crea presupuestos de GASTO (validateCategory exige categoría
-        // de gasto). Explícito, no por default: si algún día ofrece presupuestos
-        // de ingreso, el tipo debe salir de la categoría resuelta.
-        type: 'EXPENSE'
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            icon: true,
-            type: true,
-            isDefault: true
-          }
-        }
+        // de gasto). Explícito, no por default.
+        type: BudgetType.EXPENSE,
+      });
+    } catch (e: any) {
+      if (e instanceof PresupuestoSolapadoError) {
+        return res.status(409).json({
+          error: 'Duplicate budget',
+          message: `Ya existe un presupuesto activo de "${e.existente.category?.name}" en esas fechas`,
+          existingBudget: e.existente,
+        });
       }
-    });
+      throw e;
+    }
 
     // Obtener el nombre de la categoría para el mensaje
     const categoryRecord = await prisma.category.findUnique({
@@ -3103,7 +3128,7 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
     });
     
     // Mensaje de confirmación
-    const confirmationMessage = `✅ **Presupuesto creado exitosamente**\n\n📋 **Nombre:** ${name}\n💰 **Monto:** RD$${amount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${categoryRecord ? categoryRecord.name : categoryName}\n📅 **Período:** ${period === 'monthly' ? 'Mensual' : period === 'weekly' ? 'Semanal' : 'Anual'}\n📆 **Desde:** ${startDate.toLocaleDateString('es-ES')}\n📆 **Hasta:** ${endDate.toLocaleDateString('es-ES')}\n\nEl presupuesto ha sido guardado. ¡Puedes verlo en la sección de Presupuestos!`;
+    const confirmationMessage = `✅ **Presupuesto creado exitosamente**\n\n📋 **Nombre:** ${name}\n💰 **Monto:** RD$${amount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${categoryRecord ? categoryRecord.name : categoryName}\n📅 **Período:** ${period === 'monthly' ? 'Mensual' : period === 'weekly' ? 'Semanal' : period === 'biweekly' ? 'Quincenal' : 'Anual'}\n📆 **Desde:** ${startDate.toLocaleDateString('es-ES')}\n📆 **Hasta:** ${endDate.toLocaleDateString('es-ES')}\n\nEl presupuesto ha sido guardado. ¡Puedes verlo en la sección de Presupuestos!`;
 
     return res.json({
       message: confirmationMessage,

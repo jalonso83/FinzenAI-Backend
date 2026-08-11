@@ -10,6 +10,7 @@
 
 import { Request, Response } from 'express';
 import OpenAI from 'openai';
+import { BudgetType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { onValidTransaction as onValidTransactionH13 } from '../services/h13/h13Service';
 import { ENV } from '../config/env';
@@ -31,6 +32,7 @@ import fs from 'fs';
 import FormData from 'form-data';
 import axios from 'axios';
 
+import { crearPresupuestoSinSolapar, PresupuestoSolapadoError } from '../services/budgetService';
 // =============================================
 // Cliente OpenAI para Responses API (sin header assistants)
 // =============================================
@@ -477,7 +479,7 @@ async function executeManageBudgetRecord(args: any, userId: string, categories?:
   if (operation === 'insert' && !amount) throw new Error('El monto es requerido para crear un presupuesto');
   if (operation === 'update' && (!amount || !previous_amount)) throw new Error('El monto anterior y el nuevo monto son requeridos');
   if (operation === 'delete' && !previous_amount) throw new Error('El monto del presupuesto a eliminar es requerido');
-  if (recurrence && !['semanal', 'mensual', 'anual'].includes(recurrence)) throw new Error('La recurrencia debe ser: semanal, mensual o anual');
+  if (recurrence && !['semanal', 'quincenal', 'mensual', 'anual'].includes(recurrence)) throw new Error('La recurrencia debe ser: semanal, quincenal, mensual o anual');
 
   switch (operation) {
     case 'insert': return await insertBudget(category, amount, recurrence, userId, categories, tipoPedido);
@@ -528,7 +530,12 @@ async function executeListCategories(args: any, categories?: any[]): Promise<any
   let filteredCategories: any[] = [];
   switch (module) {
     case 'presupuestos':
-      filteredCategories = categories!.filter((cat: any) => typeof cat === 'object' ? cat.type === 'EXPENSE' : true);
+      // NO se filtra a EXPENSE: los presupuestos tambien pueden ser de INGRESO
+      // (una meta de facturacion). Con el filtro puesto, a quien preguntaba por
+      // las categorias de presupuestos se le ocultaban "Salario" y "Otros
+      // ingresos", y si fallaba una creacion Zenio le afirmaba que esa categoria
+      // no existia.
+      filteredCategories = categories!;
       break;
     case 'transacciones':
     case 'metas':
@@ -752,7 +759,7 @@ async function insertBudget(category: string, amount: string, recurrence: string
     }
   }
 
-  const periodMap: { [k: string]: string } = { 'semanal': 'weekly', 'mensual': 'monthly', 'anual': 'yearly' };
+  const periodMap: { [k: string]: string } = { 'semanal': 'weekly', 'quincenal': 'biweekly', 'mensual': 'monthly', 'anual': 'yearly' };
   const period = periodMap[recurrence] || 'monthly';
   const now = new Date();
   let startDate: Date, endDate: Date;
@@ -761,6 +768,15 @@ async function insertBudget(category: string, amount: string, recurrence: string
     const day = now.getDay(); const diff = (day === 0 ? -6 : 1) - day;
     startDate = new Date(now); startDate.setDate(now.getDate() + diff); startDate.setHours(0, 0, 0, 0);
     endDate = new Date(startDate); endDate.setDate(startDate.getDate() + 6); endDate.setHours(23, 59, 59, 999);
+  } else if (recurrence === 'quincenal') {
+    // Quincena del CALENDARIO en curso: 1-15 o 16-fin de mes.
+    if (now.getDate() <= 15) {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth(), 15, 23, 59, 59, 999);
+    } else {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 16, 0, 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
   } else if (recurrence === 'anual') {
     startDate = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
     endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
@@ -774,10 +790,21 @@ async function insertBudget(category: string, amount: string, recurrence: string
     return { success: false, message: `Categoría no encontrada: "${category}". Disponibles: ${cv.suggestions?.join(', ')}`, suggestions: cv.suggestions, action: 'category_not_found' };
   }
 
-  const newBudget = await prisma.budget.create({
-    data: { user_id: userId, name: category, category_id: cv.categoryId!, amount: parseFloat(amount), period, start_date: startDate, end_date: endDate, alert_percentage: 80, type: tipoBudget },
-    include: { category: { select: { id: true, name: true, icon: true, type: true, isDefault: true } } },
-  });
+  // Guardia contra solapamientos - ver services/budgetService.ts.
+  let newBudget;
+  try {
+    newBudget = await crearPresupuestoSinSolapar({
+      user_id: userId, name: category, category_id: cv.categoryId!,
+      amount: parseFloat(amount), period, start_date: startDate, end_date: endDate,
+      alert_percentage: 80, type: tipoBudget,
+    });
+  } catch (e: any) {
+    if (e instanceof PresupuestoSolapadoError) {
+      const y = e.existente;
+      return { success: false, message: `Ya tienes un presupuesto de ${y.category?.name} activo en esas fechas, por RD$${Number(y.amount).toLocaleString('es-DO')}. Le cambio el monto en vez de crear otro?`, budget: y, action: 'budget_duplicate' };
+    }
+    throw e;
+  }
 
   const catRecord = await prisma.category.findUnique({ where: { id: cv.categoryId! } });
   return {
@@ -836,7 +863,7 @@ async function listBudgets(category: string, userId: string, categories?: any[],
   if (filtros) {
     if (filtros.limit) { limit = parseInt(filtros.limit); if (isNaN(limit) || limit <= 0 || limit > 100) throw new Error('Limit inválido'); }
     if (filtros.category) { const c = await prisma.category.findFirst({ where: { name: { equals: filtros.category, mode: 'insensitive' } } }); if (c) where.category_id = c.id; }
-    if (filtros.recurrence) { const pm: any = { 'semanal': 'weekly', 'mensual': 'monthly', 'anual': 'yearly' }; where.period = pm[filtros.recurrence] || filtros.recurrence; }
+    if (filtros.recurrence) { const pm: any = { 'semanal': 'weekly', 'quincenal': 'biweekly', 'mensual': 'monthly', 'anual': 'yearly' }; where.period = pm[filtros.recurrence] || filtros.recurrence; }
     if (filtros.min_amount) where.amount = { ...(where.amount || {}), gte: parseFloat(filtros.min_amount) };
     if (filtros.max_amount) where.amount = { ...(where.amount || {}), lte: parseFloat(filtros.max_amount) };
   } else if (category) {
@@ -860,7 +887,14 @@ async function listBudgets(category: string, userId: string, categories?: any[],
   if (budgets.length === 0) { mensaje = 'No se encontraron presupuestos.'; }
   else {
     mensaje = `${budgets.length} presupuestos encontrados:\n\n`;
-    mensaje += budgets.map((b: any) => `${b.category.name}: RD$${b.spent?.toLocaleString('es-DO') || '0'}/${b.amount.toLocaleString('es-DO')} (${b.period})`).join('\n');
+    // El tipo va explícito: sin él, "5.000/60.000" en un presupuesto de INGRESO
+    // se lee como si hubiera gastado poco (bueno) cuando lleva cobrado poco (malo).
+    mensaje += budgets.map((b: any) => {
+      const cifras = `RD$${b.spent?.toLocaleString('es-DO') || '0'}/${b.amount.toLocaleString('es-DO')}`;
+      return b.type === 'INCOME'
+        ? `${b.category.name} [META DE INGRESOS · recibido ${cifras}] (${b.period})`
+        : `${b.category.name} [gasto · ${cifras}] (${b.period})`;
+    }).join('\n');
   }
 
   return { success: true, message: mensaje, budgets, action: 'budget_list' };
@@ -1580,17 +1614,27 @@ export const createBudgetFromZenioV2 = async (req: Request, res: Response) => {
     const cv = await validateCategory(budget_data.category, 'gasto');
     if (!cv.valid) return res.status(400).json({ error: 'Categoría inválida', message: cv.error });
 
-    const newBudget = await prisma.budget.create({
-      data: {
+    // Guardia contra solapamientos — ver services/budgetService.ts.
+    let newBudget;
+    try {
+      newBudget = await crearPresupuestoSinSolapar({
         user_id: userId, name: budget_data.name, category_id: cv.categoryId!,
         amount: parseFloat(budget_data.amount), period: budget_data.period,
         start_date: new Date(budget_data.start_date), end_date: new Date(budget_data.end_date),
         alert_percentage: budget_data.alert_percentage || 80,
         // Zenio solo crea presupuestos de GASTO. Explícito, no por default.
-        type: 'EXPENSE',
-      },
-      include: { category: { select: { id: true, name: true, icon: true, type: true, isDefault: true } } },
-    });
+        type: BudgetType.EXPENSE,
+      });
+    } catch (e: any) {
+      if (e instanceof PresupuestoSolapadoError) {
+        return res.status(409).json({
+          error: 'Duplicate budget',
+          message: `Ya existe un presupuesto activo de "${e.existente.category?.name}" en esas fechas`,
+          existingBudget: e.existente,
+        });
+      }
+      throw e;
+    }
 
     return res.json({ message: 'Presupuesto creado exitosamente', budget: newBudget, action: 'budget_created' });
   } catch (error: any) {
@@ -1604,7 +1648,7 @@ function validateBudgetData(data: any): { valid: boolean; errors: string[] } {
   if (!data.name) errors.push('Name es requerido');
   if (!data.amount || isNaN(parseFloat(data.amount)) || parseFloat(data.amount) <= 0) errors.push('Amount debe ser positivo');
   if (!data.category) errors.push('Category es requerida');
-  if (!data.period || !['monthly', 'weekly', 'yearly'].includes(data.period)) errors.push('Period debe ser monthly, weekly o yearly');
+  if (!data.period || !['monthly', 'weekly', 'biweekly', 'yearly'].includes(data.period)) errors.push('Period debe ser monthly, weekly, biweekly o yearly');
   if (!data.start_date || !/^\d{4}-\d{2}-\d{2}$/.test(data.start_date)) errors.push('Start_date inválida');
   if (!data.end_date || !/^\d{4}-\d{2}-\d{2}$/.test(data.end_date)) errors.push('End_date inválida');
   if (data.start_date && data.end_date && new Date(data.start_date) >= new Date(data.end_date)) errors.push('Start_date debe ser antes que end_date');

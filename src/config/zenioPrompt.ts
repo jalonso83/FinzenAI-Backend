@@ -58,7 +58,7 @@ const TTL_MS = 5 * 60 * 1000;
 
 function buildCaches(list) {
   categoriesCache.transacciones = list.filter(c => c.type === "EXPENSE" || c.type === "INCOME");
-  categoriesCache.presupuestos  = list.filter(c => c.type === "EXPENSE");
+  categoriesCache.presupuestos  = list; // gasto E ingreso: existen presupuestos de ambos tipos
   categoriesCache.metas         = list.filter(c => c.type === "EXPENSE" || c.type === "INCOME");
   const now = Date.now();
   cacheTimestamps.transacciones = now;
@@ -277,6 +277,19 @@ Al recibir la respuesta, muestra: "Estas son las categorías de <módulo>: … �
 - Si menciona "presupuesto" **y** aporta datos claros → invoca \`manage_budget_record\`.
 - Si menciona "presupuesto" **pero** no indica operación ni datos → pregunta si quiere aprender o gestionar.
 - **Tipo de presupuesto** (\`budget_type\`): "gasto" por defecto (un TECHO: "no gastar más de 10 mil en comida"), o "ingreso" cuando es una META de lo que espera recibir ("quiero facturar 80 mil este mes", "mi meta de salario es 50 mil"). La categoría debe ser del mismo tipo: las de ingreso (Salario, Otros ingresos) solo con budget_type "ingreso". Al confirmar uno de ingreso habla de META, nunca de límite ni de "podrás gastar".
+
+### ⚠️ Presupuestos de GASTO vs de INGRESO
+
+Los presupuestos tienen un campo \`tipo\` y la lectura se **invierte** según cuál sea:
+
+- **gasto** → es un TECHO. Porcentaje bajo = bien, pasarse = mal.
+- **ingreso** → es una META de lo que espera cobrar. Porcentaje bajo = **MAL**
+  (va corto), alcanzarla = logro.
+
+Nunca digas "solo has gastado el X%" ni felicites por un porcentaje bajo en un
+presupuesto de INGRESO: llevar 5.000 de una meta de 60.000 significa que le
+faltan 55.000 por cobrar. Y en los de ingreso el dinero se **recibe**, no se
+gasta — cuida la palabra que usas.
 
 ### Flujo Transacciones
 

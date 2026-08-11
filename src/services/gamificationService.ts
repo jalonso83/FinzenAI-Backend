@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
 
 import { logger } from '../utils/logger';
+import { BudgetType } from '@prisma/client';
 export interface GamificationEventData {
   userId: string;
   eventType: string;
@@ -126,6 +127,9 @@ export class GamificationService {
     await this.awardPoints(event.userId, points, 'Presupuesto creado');
   }
 
+  // OJO si alguna vez se engancha esto: solo debe dispararse con presupuestos
+  // de GASTO. En uno de INGRESO, "excederse" es superar la meta de facturacion,
+  // o sea el mejor resultado posible, y aqui restaria 10 puntos.
   private static async handleBudgetOverspent(event: any): Promise<void> {
     const points = -10; // Penalización por sobrepasar presupuesto
     await this.awardPoints(event.userId, points, 'Presupuesto excedido');
@@ -357,7 +361,13 @@ export class GamificationService {
             }
           },
           budgets: {
-            where: { is_active: true }
+            // SOLO los de gasto. El componente de FinScore puntua "usar poco del
+            // presupuesto", lectura que en un presupuesto de INGRESO esta
+            // invertida: quien lleva cobrado el 8% de su meta sacaba la nota
+            // maxima (25/25) y quien CUMPLIA su meta de facturacion caia al
+            // tramo "excedido" (5/25). El usuario veia su FinScore bajar justo
+            // al registrar el ingreso que le hizo alcanzar la meta.
+            where: { is_active: true, type: BudgetType.EXPENSE }
           },
           goals: {
             where: { isActive: true }
@@ -430,7 +440,11 @@ export class GamificationService {
     let budgetCount = 0;
     
     for (const budget of user.budgets) {
-      const usagePercentage = (budget.spent / budget.amount) * 100;
+      // Sin esta guarda, un presupuesto de monto 0 mete Infinity/NaN en la suma
+      // y el FinScore acaba guardandose como NaN en finScoreHistory.
+      const monto = Number(budget.amount) || 0;
+      if (monto <= 0) continue;
+      const usagePercentage = (Number(budget.spent) || 0) / monto * 100;
       
       if (usagePercentage <= 80) {
         totalScore += 25;
@@ -444,7 +458,9 @@ export class GamificationService {
       budgetCount++;
     }
     
-    return budgetCount > 0 ? totalScore / budgetCount : 0;
+    // Si TODOS se saltaron (montos en 0), se devuelve la misma base que cuando
+    // no hay ninguno: castigar con 0 por tener presupuestos seria absurdo.
+    return budgetCount > 0 ? totalScore / budgetCount : 5;
   }
 
   private static calculateStreakScore(userStreak: any): number {
@@ -597,9 +613,15 @@ export class GamificationService {
   }
 
   private static async checkPresupuestoMaestro(userId: string): Promise<boolean> {
+    // "Cumplir un presupuesto" = no pasarse del techo, asi que SOLO cuentan los
+    // de gasto. En uno de INGRESO, `spent <= amount` significa justo lo
+    // contrario -- que NO llego a su meta de facturacion --, con lo que tres
+    // metas incumplidas (o recien creadas, con spent 0) desbloqueaban la
+    // insignia de disciplina de gasto, y superarlas la quitaba.
     const successfulBudgets = await prisma.budget.count({
       where: {
         user_id: userId,
+        type: BudgetType.EXPENSE,
         spent: { lte: prisma.budget.fields.amount }
       }
     });

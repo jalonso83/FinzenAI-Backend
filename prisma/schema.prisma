@@ -200,10 +200,20 @@ model Budget {
   amount           Float
   alert_percentage Float      @default(80)
   category_id      String
+  // Nota libre del usuario, igual que en Transaction. Opcional: las filas
+  // anteriores a 2026-08-10 no la tienen y siguen siendo válidas.
+  description      String?
   created_at       DateTime   @default(now())
   end_date         DateTime
   is_active        Boolean    @default(true)
   name             String
+  // 'weekly' | 'biweekly' | 'monthly' | 'yearly'.
+  //
+  // OJO con 'biweekly': NO son "15 días", son las QUINCENAS del calendario —
+  // del 1 al 15 y del 16 al último día del mes. Misma definición que la
+  // recurrencia BIWEEKLY de las transacciones, para que la palabra "quincenal"
+  // signifique lo mismo en toda la app. Sumar 15 días fijos desalinea el
+  // presupuesto del mes en dos o tres ciclos.
   period           String
   // Acumulado del período. El nombre dice "spent" por historia (nació cuando
   // solo existían presupuestos de gasto) y NO se renombra: la columna ya está en

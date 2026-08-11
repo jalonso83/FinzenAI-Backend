@@ -118,7 +118,8 @@ export class BroadcastService {
               WHERE b.user_id = u.id
                 AND b.is_active = true
                 AND b.start_date <= NOW() AND b.end_date >= NOW()
-                AND b.spent > b.amount))
+                AND b.type = 'EXPENSE'
+      AND b.spent > b.amount))
           OR ($11::boolean AND s.status::text = 'TRIALING'
               AND s."trialEndsAt" IS NOT NULL
               AND s."trialEndsAt" > NOW()

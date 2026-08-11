@@ -44,8 +44,8 @@ export const ZENIO_FUNCTION_TOOLS = [
         },
         recurrence: {
           type: 'string',
-          description: 'Frecuencia del presupuesto: semanal, mensual o anual',
-          enum: ['semanal', 'mensual', 'anual'],
+          description: 'Frecuencia del presupuesto: semanal, quincenal (1-15 y 16-fin de mes), mensual o anual',
+          enum: ['semanal', 'quincenal', 'mensual', 'anual'],
         },
         amount: {
           type: 'number',
@@ -72,7 +72,7 @@ export const ZENIO_FUNCTION_TOOLS = [
             },
             recurrence: {
               type: 'string',
-              enum: ['semanal', 'mensual', 'anual'],
+              enum: ['semanal', 'quincenal', 'mensual', 'anual'],
               description: 'Filtrar por frecuencia específica',
             },
             min_amount: {
