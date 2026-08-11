@@ -118,11 +118,25 @@ export class BudgetReminderService {
           for (const budget of budgets) {
             const budgetAmount = Number(budget.amount);
             const spent = Number(budget.spent) || 0;
+
+            // Sin esta guarda, un presupuesto con monto 0 daba `Infinity` (o
+            // `NaN` si además el gasto era 0) y el push salía literalmente como
+            // "Tu presupuesto 'X' está excedido por RD$Infinity". El mismo
+            // resguardo existe en budgetService desde la unificación.
+            if (!(budgetAmount > 0)) continue;
+
             const percentage = (spent / budgetAmount) * 100;
 
             // Si está por encima del umbral de preferencias
             if (percentage >= threshold) {
               // Verificar que no hayamos enviado recordatorio en las últimas 24h
+              //
+              // Se compara por ID del presupuesto, no por el nombre contenido en
+              // el título. Con `contains` un presupuesto llamado "Comida"
+              // silenciaba el recordatorio de "Comida rápida", "Comida a
+              // domicilio" y de cualquier otro que lo contuviera: el usuario
+              // dejaba de recibir avisos de presupuestos que sí estaban en rojo,
+              // y sin dejar rastro de por qué.
               const recentReminder = await prisma.notificationLog.findFirst({
                 where: {
                   userId,
@@ -130,8 +144,9 @@ export class BudgetReminderService {
                   createdAt: {
                     gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // últimas 24h
                   },
-                  title: {
-                    contains: budget.name
+                  data: {
+                    path: ['budgetId'],
+                    equals: budget.id
                   }
                 }
               });

@@ -191,7 +191,9 @@ export class BudgetRenewalService {
       await tx.budget.create({
         data: {
           user_id: expiredBudget.user_id,
-          name: expiredBudget.name,
+          // Con respaldo en el nombre de la categoría: así fue justo como se
+          // propagó un nombre vacío de julio a agosto, copiándolo sin mirar.
+          name: expiredBudget.name?.trim() || expiredBudget.category?.name || 'Presupuesto',
           category_id: expiredBudget.category_id,
           amount: expiredBudget.amount,
           period: expiredBudget.period,

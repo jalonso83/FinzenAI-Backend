@@ -476,11 +476,29 @@ async function handleGoal(args: any, userId: string, categories?: any[]): Promis
       const cv = await validateCategory(goal_data.category || 'Otros gastos', 'gasto', categories);
       if (!cv.valid) return { success: false, message: `Categoría no encontrada. Disponibles: ${cv.suggestions?.join(', ')}` };
 
+      // El objetivo es obligatorio y tiene que ser positivo.
+      //
+      // Antes esto era `parseFloat(goal_data.target_amount || '0')`: si el
+      // modelo no extraía el monto, la meta se creaba igualmente con objetivo 0.
+      // Es la puerta por la que entraron las 10 metas sin objetivo que hay en
+      // producción, y a esas personas el recordatorio semanal les llegaba
+      // diciendo «Tu meta está al NaN%. Faltan DOP0.00 para completarla».
+      // Los otros dos caminos de Zenio sí validaban; este, que es el que usan
+      // las apps, no.
+      const objetivo = parseFloat(goal_data.target_amount);
+      if (!(objetivo > 0)) {
+        return {
+          success: false,
+          message: `¿De cuánto quieres que sea la meta de "${goal_data.name || 'ahorro'}"? Necesito el monto para poder seguir tu avance.`,
+          action: 'goal_missing_amount',
+        };
+      }
+
       const monthlyValue = parseFloat(goal_data.monthly_value || '0');
       const goal = await prisma.goal.create({
         data: {
           userId, name: goal_data.name || 'Meta de ahorro',
-          targetAmount: parseFloat(goal_data.target_amount || '0'),
+          targetAmount: objetivo,
           categoryId: cv.categoryId!,
           targetDate: goal_data.due_date ? new Date(goal_data.due_date) : null,
           monthlyTargetPercentage: goal_data.monthly_type === 'porcentaje' ? monthlyValue : null,

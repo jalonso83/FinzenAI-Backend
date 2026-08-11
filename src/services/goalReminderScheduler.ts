@@ -299,6 +299,19 @@ export class GoalReminderScheduler {
     for (const goal of goals) {
       const currentAmount = Number(goal.currentAmount);
       const targetAmount = Number(goal.targetAmount);
+
+      // Sin objetivo no hay porcentaje que calcular, y la división daba `NaN`.
+      // No es hipotético: entre marzo y el 2026-08-09 se enviaron 50 avisos a 10
+      // usuarios que decían literalmente «Tu meta "Compra de carro" está al
+      // NaN%. Faltan DOP0.00 para completarla». Hay 10 metas con objetivo 0 en
+      // producción (anteriores a la validación de goals.ts, o creadas por otro
+      // camino). Se omite el recordatorio en vez de mandar un mensaje roto: la
+      // meta sigue ahí para que la persona le ponga un monto cuando quiera.
+      if (!(targetAmount > 0)) {
+        logger.log(`[GoalReminderScheduler] ⏭️ "${goal.name}" sin objetivo definido; no se envía recordatorio`);
+        continue;
+      }
+
       const percentageComplete = Math.round((currentAmount / targetAmount) * 100);
       const amountRemaining = targetAmount - currentAmount;
       const currency = goal.user?.currency || 'RD$';

@@ -264,10 +264,23 @@ export async function crearPresupuestoSinSolapar(datos: DatosPresupuesto) {
     const existente = await buscarPresupuestoSolapado(tx, datos);
     if (existente) throw new PresupuestoSolapadoError(existente);
 
+    // El nombre nunca puede quedar vacío. Había dos presupuestos así en
+    // producción y hacían daño de una forma nada evidente: el recordatorio
+    // diario deduplicaba buscando si el título CONTENÍA el nombre, y una cadena
+    // vacía coincide con todos los títulos, así que ese usuario tenía
+    // silenciados los avisos de TODOS sus presupuestos. La deduplicación ya se
+    // corrigió, pero con cinco caminos creando presupuestos el nombre no debe
+    // depender de que el cliente lo mande bien.
+    const categoria = await tx.category.findUnique({
+      where: { id: datos.category_id },
+      select: { name: true },
+    });
+    const nombre = datos.name?.trim() || categoria?.name || 'Presupuesto';
+
     return tx.budget.create({
       data: {
         user_id: datos.user_id,
-        name: datos.name,
+        name: nombre,
         category_id: datos.category_id,
         amount: datos.amount,
         period: datos.period,
