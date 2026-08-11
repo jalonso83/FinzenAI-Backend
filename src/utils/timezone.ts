@@ -260,3 +260,104 @@ export function getCountriesAtLocalHour(targetHour: number): string[] {
 
   return countries;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Fronteras de día en la zona horaria del usuario
+ *
+ * Por qué existe esto: el offset estático de TIMEZONE_OFFSETS no conoce el
+ * horario de verano (America/New_York figura como -5 todo el año) y, sobre todo,
+ * sumarle horas a un instante NO es lo mismo que situarse en la medianoche local.
+ *
+ * El bug que motivó estas funciones: la renovación de presupuestos calculaba el
+ * inicio del período como `instante + offset`, y acababa guardando ventanas que
+ * empezaban a las 19:59 UTC del día 1 (las ~16:00 hora local de RD). Todo lo que
+ * la persona gastara el primer día antes de esa hora no caía dentro de ningún
+ * presupuesto y desaparecía del cálculo. Medido en producción el 2026-08-10:
+ * 38 transacciones de 13 usuarios en ese hueco.
+ * ────────────────────────────────────────────────────────────────────────────*/
+
+/**
+ * Minutos que hay que sumarle a UTC para obtener la hora local de `timezone` en
+ * ese instante. Positivo al este de Greenwich, negativo al oeste (RD = -240).
+ * Se mide con Intl, así que respeta el horario de verano de esa fecha concreta.
+ */
+export function tzOffsetMinutes(timezone: string, at: Date): number {
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const partes = dtf.formatToParts(at);
+    const v = (tipo: string) => Number(partes.find((p) => p.type === tipo)?.value ?? 0);
+    const comoUtc = Date.UTC(v('year'), v('month') - 1, v('day'), v('hour'), v('minute'), v('second'));
+    return Math.round((comoUtc - at.getTime()) / 60_000);
+  } catch {
+    // Zona desconocida: se cae al offset estático, que al menos no revienta.
+    return getTimezoneOffset(timezone) * 60;
+  }
+}
+
+/** Fecha local ('YYYY-MM-DD') que corresponde a ese instante en esa zona. */
+export function diaLocalKey(timezone: string, at: Date): string {
+  const desplazado = new Date(at.getTime() + tzOffsetMinutes(timezone, at) * 60_000);
+  return desplazado.toISOString().slice(0, 10);
+}
+
+/** Instante UTC en que EMPIEZA el día local `dayKey` ('YYYY-MM-DD'). */
+export function inicioDiaLocalUtc(timezone: string, dayKey: string): Date {
+  const medianocheNominal = Date.parse(`${dayKey}T00:00:00Z`);
+
+  // Primera aproximación con el desfase medido a mediodía: con cualquier offset
+  // de ±11 h el mediodía UTC sigue cayendo dentro del mismo día local.
+  const sonda = new Date(`${dayKey}T12:00:00Z`);
+  let candidato = medianocheNominal - tzOffsetMinutes(timezone, sonda) * 60_000;
+
+  // Segunda pasada, midiendo el desfase EN el candidato. Hace falta los días en
+  // que cambia el horario de verano: el desfase de la medianoche no es el mismo
+  // que el del mediodía. Sin esto, el 1 de noviembre en Nueva York el período
+  // arrancaba a la 01:00 local en vez de a las 00:00, y el 8 de marzo se iba al
+  // día anterior. Una sola iteración basta: el salto es de una hora y la segunda
+  // medición ya cae del lado correcto.
+  const offsetReal = tzOffsetMinutes(timezone, new Date(candidato));
+  candidato = medianocheNominal - offsetReal * 60_000;
+
+  return new Date(candidato);
+}
+
+/** Último milisegundo del día local `dayKey`, como instante UTC. */
+export function finDiaLocalUtc(timezone: string, dayKey: string): Date {
+  // Se calcula como "inicio del día siguiente menos 1 ms" para que el cambio de
+  // hora (DST) no pueda dejar un hueco ni un solape en la frontera.
+  const siguiente = sumarDias(dayKey, 1);
+  return new Date(inicioDiaLocalUtc(timezone, siguiente).getTime() - 1);
+}
+
+/**
+ * Aritmética de calendario sobre 'YYYY-MM-DD', sin husos de por medio: se opera
+ * en UTC puro para que la zona horaria del servidor no altere el resultado.
+ */
+export function sumarDias(dayKey: string, dias: number): string {
+  const d = new Date(`${dayKey}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Suma meses conservando el día; si el día no existe en el mes destino (31 →
+ *  febrero), se queda en el último día de ese mes. */
+export function sumarMeses(dayKey: string, meses: number): string {
+  const d = new Date(`${dayKey}T00:00:00Z`);
+  const dia = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + meses);
+  const ultimoDelMes = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(dia, ultimoDelMes));
+  return d.toISOString().slice(0, 10);
+}
+
+/** Último día del mes al que pertenece `dayKey`, como 'YYYY-MM-DD'. */
+export function finDeMes(dayKey: string): string {
+  const d = new Date(`${dayKey}T00:00:00Z`);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+}

@@ -1,6 +1,14 @@
 import { prisma } from '../lib/prisma';
 import { logger } from '../utils/logger';
-import { getTimezoneByCountry, getTimezoneOffset } from '../utils/timezone';
+import {
+  getTimezoneByCountry,
+  diaLocalKey,
+  inicioDiaLocalUtc,
+  finDiaLocalUtc,
+  sumarDias,
+  sumarMeses,
+  finDeMes,
+} from '../utils/timezone';
 import { buscarPresupuestoSolapado } from './budgetService';
 
 export class BudgetRenewalService {
@@ -197,80 +205,68 @@ export class BudgetRenewalService {
   /**
    * Calcula las fechas del próximo período basado en el período y zona horaria
    */
+  /**
+   * ─── Reescrito 2026-08-10 ───────────────────────────────────────────────────
+   *
+   * Antes esto operaba sobre INSTANTES y les sumaba el offset a mano
+   * (`nextDay.getTime() + offset*3600000`), rematando con un `setHours(23,59,59)`
+   * que se evaluaba en la zona del SERVIDOR (UTC en Railway), no en la del
+   * usuario. El resultado real en producción: ventanas que empezaban a las 19:59
+   * UTC del día 1 — las ~16:00 hora local en RD. Todo lo que la persona gastara
+   * el primer día antes de esa hora no entraba en ningún presupuesto. Y el error
+   * se realimentaba, porque el `end` corrupto de un ciclo era el `lastEndDate`
+   * del siguiente.
+   *
+   * Ahora se trabaja con FECHAS DE CALENDARIO ('YYYY-MM-DD') y solo al final se
+   * convierten a instantes usando las fronteras reales del día local. Además
+   * `getTimezoneOffset` era estático y no conocía el horario de verano; los
+   * helpers nuevos lo miden con Intl para cada fecha concreta.
+   */
   private static calculateNextPeriod(
-    lastEndDate: Date, 
-    period: string, 
+    lastEndDate: Date,
+    period: string,
     timezone: string
   ): { start: Date; end: Date } {
-    
-    const offset = getTimezoneOffset(timezone);
-    
-    // Calcular el día siguiente al vencimiento en la zona horaria del usuario
-    const nextDay = new Date(lastEndDate);
-    nextDay.setDate(nextDay.getDate() + 1);
-    
-    let endDate: Date;
-    
+
+    // El período nuevo arranca el día local SIGUIENTE al último día del anterior.
+    // Se parte del día de calendario, no del instante: así sale bien tanto con
+    // los `end_date` correctos como con los corruptos que dejó la versión vieja.
+    const diaFinAnterior = diaLocalKey(timezone, lastEndDate);
+    const inicio = sumarDias(diaFinAnterior, 1);
+
+    let fin: string;
+
     switch (period.toLowerCase()) {
       case 'weekly':
-        endDate = new Date(nextDay);
-        endDate.setDate(endDate.getDate() + 6); // 7 días total (incluyendo el día de inicio)
+        fin = sumarDias(inicio, 6); // 7 días contando el de inicio
         break;
-        
-      case 'biweekly':
+
+      case 'biweekly': {
         // Quincenas del CALENDARIO, no "+15 días": del 1 al 15 y del 16 al
         // último día del mes. Sumar 15 días fijos desincronizaría el
         // presupuesto del mes en pocos ciclos (los meses no miden 30 días).
-        endDate = new Date(nextDay);
-        if (nextDay.getDate() <= 15) {
-          endDate.setDate(15);
-        } else {
-          // Día 0 del mes siguiente = último día de este mes, y `setMonth` con
-          // el día explícito evita el desbordamiento cuando el día actual no
-          // existe en el mes siguiente (31 → feb).
-          //
-          // OJO: hay que CONSERVAR la hora de `nextDay`. Construyéndolo con
-          // `new Date(y, m+1, 0)` salía a las 00:00 y el ajuste de zona horaria
-          // de abajo (restar 4 h en RD) lo tiraba al día anterior, con lo que el
-          // último día del mes quedaba fuera de toda ventana y sus gastos no
-          // sumaban a ningún presupuesto.
-          endDate = new Date(nextDay);
-          endDate.setMonth(endDate.getMonth() + 1, 0);
-        }
+        const diaDelMes = Number(inicio.slice(8, 10));
+        fin = diaDelMes <= 15 ? `${inicio.slice(0, 8)}15` : finDeMes(inicio);
         break;
+      }
 
       case 'monthly':
-        endDate = new Date(nextDay);
-        endDate.setMonth(endDate.getMonth() + 1);
-        endDate.setDate(endDate.getDate() - 1); // Último día del mes
+        fin = sumarDias(sumarMeses(inicio, 1), -1);
         break;
 
       case 'yearly':
-        endDate = new Date(nextDay);
-        endDate.setFullYear(endDate.getFullYear() + 1);
-        endDate.setDate(endDate.getDate() - 1); // Último día del año
+        fin = sumarDias(sumarMeses(inicio, 12), -1);
         break;
-        
+
       default:
         // Fallback a mensual
-        endDate = new Date(nextDay);
-        endDate.setMonth(endDate.getMonth() + 1);
-        endDate.setDate(endDate.getDate() - 1);
+        fin = sumarDias(sumarMeses(inicio, 1), -1);
         break;
     }
 
-    // Ajustar para la zona horaria del usuario (usando la misma lógica que zenio)
-    // Para zonas horarias negativas (UTC-4), sumamos las horas
-    // Para zonas horarias positivas (UTC+1), restamos las horas  
-    const adjustedStart = new Date(nextDay.getTime() + (offset * 60 * 60 * 1000));
-    const adjustedEnd = new Date(endDate.getTime() + (offset * 60 * 60 * 1000));
-
-    // Ajustar al final del día para end_date
-    adjustedEnd.setHours(23, 59, 59, 999);
-
     return {
-      start: adjustedStart,
-      end: adjustedEnd
+      start: inicioDiaLocalUtc(timezone, inicio),
+      end: finDiaLocalUtc(timezone, fin),
     };
   }
 
