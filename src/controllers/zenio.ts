@@ -1340,6 +1340,15 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
     }
   }
 
+  // Editar por Zenio no recalculaba los presupuestos. Dos llamadas porque la
+  // edición pudo mover la transacción de categoría o de fecha.
+  try {
+    await recalculateBudgetSpent(userId, trans.category_id, trans.date);
+    if (updated.category_id !== trans.category_id || updated.date.getTime() !== trans.date.getTime()) {
+      await recalculateBudgetSpent(userId, updated.category_id, updated.date);
+    }
+  } catch {}
+
   return {
     success: true,
     message: 'Transacción actualizada exitosamente',
@@ -1414,6 +1423,10 @@ async function deleteTransaction(criterios: any, userId: string, categories?: an
 
   const trans = candidates[0];
   await prisma.transaction.delete({ where: { id: trans.id } });
+
+  // Borrar por Zenio tiene que ajustar el presupuesto igual que borrar desde la
+  // app, sea de gasto o de ingreso.
+  try { await recalculateBudgetSpent(userId, trans.category_id, trans.date); } catch {}
 
   return {
     success: true,
@@ -1676,6 +1689,10 @@ async function insertBudget(category: string, amount: string, recurrence: string
     }
     throw e;
   }
+
+  // Inicializar `spent` con lo que ya existe en el período (el controlador REST
+  // sí lo hacía; por aquí el presupuesto nacía siempre en 0).
+  try { await recalculateBudgetSpent(userId, categoryValidation.categoryId!, startDate); } catch {}
 
   const categoryRecord = await prisma.category.findUnique({
     where: { id: categoryValidation.categoryId! }
@@ -3036,11 +3053,14 @@ export const createBudgetFromZenio = async (req: Request, res: Response) => {
       throw e;
     }
 
+    // Inicializar `spent` con las transacciones ya existentes del período.
+    try { await recalculateBudgetSpent(userId, categoryId, startDate); } catch {}
+
     // Obtener el nombre de la categoría para el mensaje
     const categoryRecord = await prisma.category.findUnique({
       where: { id: categoryId }
     });
-    
+
     // Mensaje de confirmación
     const confirmationMessage = `✅ **Presupuesto creado exitosamente**\n\n📋 **Nombre:** ${name}\n💰 **Monto:** RD$${amount.toLocaleString('es-DO')}\n🏷️ **Categoría:** ${categoryRecord ? categoryRecord.name : categoryName}\n📅 **Período:** ${period === 'monthly' ? 'Mensual' : period === 'weekly' ? 'Semanal' : period === 'biweekly' ? 'Quincenal' : 'Anual'}\n📆 **Desde:** ${startDate.toLocaleDateString('es-ES')}\n📆 **Hasta:** ${endDate.toLocaleDateString('es-ES')}\n\nEl presupuesto ha sido guardado. ¡Puedes verlo en la sección de Presupuestos!`;
 

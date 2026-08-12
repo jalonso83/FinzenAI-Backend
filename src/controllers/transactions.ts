@@ -732,16 +732,21 @@ export const updateTransaction = async (req: Request, res: Response) => {
       }
     });
 
-    // Si la transacción original o la nueva es de gasto, recalcular ambos presupuestos
-    if ((existingTransaction?.type === 'EXPENSE' || transaction.type === 'EXPENSE')) {
-      // Recalcular para la categoría y fecha original
-      if (existingTransaction?.type === 'EXPENSE') {
-        await recalculateBudgetSpent(userId, existingTransaction.category_id, existingTransaction.date);
-      }
-      // Recalcular para la nueva categoría y fecha si cambió
-      if (transaction.type === 'EXPENSE') {
-        await recalculateBudgetSpent(userId, transaction.category_id, transaction.date);
-      }
+    // Recalcular los presupuestos afectados por la edición, de gasto o de ingreso.
+    //
+    // Son DOS recálculos porque la edición pudo mover la transacción de categoría
+    // o de fecha: hay que descontarla de donde estaba y sumarla donde quedó. El
+    // filtro por 'EXPENSE' que había aquí dejaba los presupuestos de INGRESO sin
+    // actualizar al editar el monto o la fecha de un ingreso.
+    await recalculateBudgetSpent(userId, existingTransaction.category_id, existingTransaction.date);
+
+    // El segundo solo si de verdad cambió algo: si la categoría y la fecha son las
+    // mismas, la llamada anterior ya cubrió ese presupuesto.
+    if (
+      transaction.category_id !== existingTransaction.category_id ||
+      transaction.date.getTime() !== existingTransaction.date.getTime()
+    ) {
+      await recalculateBudgetSpent(userId, transaction.category_id, transaction.date);
     }
 
     // ============================================
@@ -805,10 +810,14 @@ export const deleteTransaction = async (req: Request, res: Response) => {
       where: { id }
     });
 
-    // Si era gasto, recalcular presupuesto
-    if (existingTransaction.type === 'EXPENSE') {
-      await recalculateBudgetSpent(userId, existingTransaction.category_id, existingTransaction.date);
-    }
+    // Recalcular el presupuesto de la categoría, sea de gasto o de ingreso.
+    //
+    // OJO: antes esto estaba dentro de `if (type === 'EXPENSE')`, igual que en el
+    // alta. Con presupuestos de INGRESO eso dejaba el `spent` inflado para
+    // siempre: borrabas el ingreso y el presupuesto seguía marcando el monto
+    // viejo. El servicio ya filtra por el tipo que le toca a cada presupuesto,
+    // así que llamarlo siempre es correcto para ambos tipos.
+    await recalculateBudgetSpent(userId, existingTransaction.category_id, existingTransaction.date);
 
     // Restar puntos de gamificación por eliminar transacción
     try {

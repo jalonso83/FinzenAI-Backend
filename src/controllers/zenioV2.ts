@@ -627,6 +627,15 @@ async function updateTransaction(transactionData: any, criterios: any, userId: s
 
   const updated = await prisma.transaction.update({ where: { id: trans.id }, data: updateData, include: { category: { select: { id: true, name: true, icon: true, type: true } } } });
 
+  // Igual que en el borrado: editar por Zenio no recalculaba nada. Dos llamadas
+  // porque la edición pudo mover la transacción de categoría o de fecha.
+  try {
+    await recalculateBudgetSpent(userId, trans.category_id, trans.date);
+    if (updated.category_id !== trans.category_id || updated.date.getTime() !== trans.date.getTime()) {
+      await recalculateBudgetSpent(userId, updated.category_id, updated.date);
+    }
+  } catch {}
+
   // Sistema de aprendizaje: mapeo de merchant
   if (updateData.category_id && trans.category_id !== updateData.category_id) {
     const merchantName = trans.description || updated.description;
@@ -665,6 +674,12 @@ async function deleteTransaction(criterios: any, userId: string, categories?: an
 
   const trans = candidates[0];
   await prisma.transaction.delete({ where: { id: trans.id } });
+
+  // Borrar por Zenio tiene que ajustar el presupuesto igual que borrar desde la
+  // app. Antes no se recalculaba NADA aquí, así que el `spent` quedaba inflado
+  // tanto en presupuestos de gasto como de ingreso.
+  try { await recalculateBudgetSpent(userId, trans.category_id, trans.date); } catch {}
+
   return { success: true, message: 'Transacción eliminada exitosamente', transaction: trans, action: 'transaction_deleted' };
 }
 
@@ -774,6 +789,11 @@ async function insertBudget(category: string, amount: string, recurrence: string
     }
     throw e;
   }
+
+  // Inicializar `spent` con lo que YA existe en el período. Sin esto el
+  // presupuesto nace en 0 aunque el usuario lleve medio mes registrando: el
+  // controlador REST sí lo hacía (budgets.ts) y Zenio no.
+  try { await recalculateBudgetSpent(userId, cv.categoryId!, startDate); } catch {}
 
   const catRecord = await prisma.category.findUnique({ where: { id: cv.categoryId! } });
   return {
@@ -1604,6 +1624,9 @@ export const createBudgetFromZenioV2 = async (req: Request, res: Response) => {
       }
       throw e;
     }
+
+    // Inicializar `spent` con las transacciones ya existentes del período.
+    try { await recalculateBudgetSpent(userId, cv.categoryId!, new Date(budget_data.start_date)); } catch {}
 
     return res.json({ message: 'Presupuesto creado exitosamente', budget: newBudget, action: 'budget_created' });
   } catch (error: any) {

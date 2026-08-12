@@ -259,7 +259,22 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
       if (transaction_data.description) updateData.description = transaction_data.description;
       if (transaction_data.date) updateData.date = new Date(transaction_data.date + 'T00:00:00');
 
-      const updated = await prisma.transaction.update({ where: { id: candidates[0].id }, data: updateData, include: { category: { select: { id: true, name: true, icon: true, type: true } } } });
+      const anterior = candidates[0];
+      const updated = await prisma.transaction.update({ where: { id: anterior.id }, data: updateData, include: { category: { select: { id: true, name: true, icon: true, type: true } } } });
+
+      // Editar por los agentes de Zenio no recalculaba nada: era el último hueco
+      // de la familia. Dos llamadas porque la edición pudo mover la transacción
+      // de categoría o de fecha (hay que descontarla de donde estaba y sumarla
+      // donde quedó). Sin notificar: una corrección no es un movimiento nuevo.
+      // Vale para presupuestos de gasto Y de ingreso; el servicio filtra por el
+      // tipo que le toca a cada presupuesto.
+      try {
+        await recalculateBudgetSpent(userId, anterior.category_id, anterior.date);
+        if (updated.category_id !== anterior.category_id || updated.date.getTime() !== anterior.date.getTime()) {
+          await recalculateBudgetSpent(userId, updated.category_id, updated.date);
+        }
+      } catch {}
+
       return { success: true, message: 'Transacción actualizada.', transaction: updated, action: 'transaction_updated' };
     }
     case 'delete': {
@@ -342,6 +357,10 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
         }
         throw e;
       }
+      // Inicializar `spent` con lo que ya existe en el período: si no, el
+      // presupuesto nace en 0 aunque el usuario lleve semanas registrando.
+      try { await recalculateBudgetSpent(userId, cv.categoryId!, startDate); } catch {}
+
       return { success: true, message: `Presupuesto creado: ${budget.category.name} por RD$${parseFloat(amount).toLocaleString('es-DO')} (${recurrence || 'mensual'})`, budget, action: 'budget_created' };
     }
     case 'list': {
