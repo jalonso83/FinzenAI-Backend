@@ -474,6 +474,20 @@ model Subscription {
   // para el dashboard, en lugar de contar llamadas al modelo.
   zenioMessagesTotal  Int      @default(0)
 
+  // ─── Concesiones manuales (win-back, disculpa por un bug, beta testers) ────
+  // Un plan REGALADO por nosotros, con fecha de caducidad. Vive en sus propios
+  // campos y NO en `plan` a propósito: Stripe y RevenueCat sobrescriben `plan`
+  // cada vez que sincronizan (`downgradeToFree`, los webhooks de renovación),
+  // así que un regalo guardado ahí se borraría solo, y encima de forma
+  // silenciosa — justo delante de alguien a quien le acabas de prometer algo.
+  //
+  // No hace falta cron para apagarlo: `getUserSubscription` compara la fecha en
+  // cada lectura, así que no hay estados a medias ni suscripciones colgadas si
+  // el scheduler se cae.
+  grantedPlan   SubscriptionPlan?
+  grantedUntil  DateTime?
+  grantedReason String? // por qué se otorgó y a raíz de qué; queda como registro
+
   // RevenueCat (In-App Purchases)
   paymentProvider       PaymentProvider @default(STRIPE)
   revenueCatAppUserId   String?

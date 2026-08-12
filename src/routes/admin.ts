@@ -6,6 +6,7 @@ import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUni
 import { getFeedbackList, updateFeedback } from '../controllers/feedback';
 import { createBroadcast, listBroadcasts, previewBroadcast, sendBroadcast, getBroadcastStats, approveBroadcast, rejectBroadcast, deleteBroadcast, activateBroadcast, deactivateBroadcast } from '../controllers/broadcasts';
 import { getH10Stats, getH13Stats } from '../controllers/experiments';
+import { grantPlan, revokeGrant, listGrants } from '../controllers/planGrants';
 
 const router: ExpressRouter = Router();
 
@@ -43,6 +44,11 @@ router.post('/broadcasts/:id/activate', activateBroadcast);     // evergreen: DR
 router.post('/broadcasts/:id/deactivate', deactivateBroadcast); // evergreen: ACTIVE → ENDED
 router.delete('/broadcasts/:id', deleteBroadcast);        // nunca enviada: borra; enviada: oculta (soft)
 router.get('/broadcasts/:id/stats', getBroadcastStats);
+
+// Concesiones manuales de plan (win-back, disculpas, beta testers)
+router.get('/grants', listGrants);
+router.post('/users/:userId/grant', grantPlan);
+router.delete('/users/:userId/grant', revokeGrant);
 
 // Experimentos
 router.get('/experiments/h10/stats', getH10Stats);

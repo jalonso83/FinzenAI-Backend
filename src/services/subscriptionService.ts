@@ -3,6 +3,13 @@ import { PLANS, PlanType } from '../config/stripe';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
 
 import { logger } from '../utils/logger';
+
+/** Orden de los planes, para poder compararlos. Mismo criterio que `requirePlan`. */
+const JERARQUIA_DE_PLAN: Record<string, number> = { FREE: 0, PREMIUM: 1, PRO: 2 };
+export function jerarquiaDePlan(plan: string): number {
+  return JERARQUIA_DE_PLAN[plan] ?? 0;
+}
+
 export class SubscriptionService {
   /**
    * Obtener suscripción de un usuario
@@ -46,6 +53,28 @@ export class SubscriptionService {
         });
       }
 
+      // ─── Concesión manual vigente ──────────────────────────────────────────
+      // Un plan regalado por nosotros gana sobre el real mientras no caduque.
+      // Se resuelve AQUÍ, y no en cada llamador, porque este método es el único
+      // sitio por el que pasan todos los controles de plan: `requirePlan`,
+      // `checkBudgetLimit`, `checkGoalLimit`, `checkZenioLimit`, `canUseFeature`
+      // y `checkResourceLimit`. Resolverlo en un solo punto es lo que hace que
+      // la concesión funcione en toda la app sin tocar nada más.
+      //
+      // Solo sube, nunca baja: si el usuario ya paga un plan mejor que el
+      // regalado, se queda con el suyo. Regalar Plus a quien tiene Pro no puede
+      // quitarle Pro.
+      const concesionVigente =
+        subscription.grantedPlan != null &&
+        subscription.grantedUntil != null &&
+        subscription.grantedUntil > new Date() &&
+        PLANS[subscription.grantedPlan as PlanType] != null;
+
+      const planReal = plan;
+      if (concesionVigente && jerarquiaDePlan(subscription.grantedPlan as PlanType) > jerarquiaDePlan(plan)) {
+        plan = subscription.grantedPlan as PlanType;
+      }
+
       const limits = PLANS[plan].limits;
       const features = PLANS[plan].features;
 
@@ -61,6 +90,14 @@ export class SubscriptionService {
 
       return {
         ...subscription,
+        // `plan` se pisa a propósito con el EFECTIVO: es lo que leen la app y
+        // los middlewares para decidir qué puede hacer el usuario, y durante una
+        // concesión lo que puede hacer es lo del plan regalado. El de la BD
+        // queda expuesto aparte como `planReal` para el panel de admin y para
+        // no perder de vista lo que de verdad paga.
+        plan,
+        planReal,
+        grantActive: concesionVigente && plan !== planReal,
         limits,
         features,
         planDetails: PLANS[plan],
