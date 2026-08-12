@@ -261,7 +261,20 @@ export async function crearPresupuestoSinSolapar(datos: DatosPresupuesto) {
       `budget:${datos.user_id}:${datos.category_id}`,
     );
 
-    const existente = await buscarPresupuestoSolapado(tx, datos);
+    // Los campos van UNO A UNO, sin pasar `datos` entero: ese objeto lleva
+    // `period`, y `buscarPresupuestoSolapado` lo interpreta como "busca solo
+    // dentro de esta recurrencia". Pasándolo sin querer, crear un presupuesto
+    // QUINCENAL solo se comparaba contra otros quincenales y no veía el MENSUAL
+    // que ya cubría esas fechas — que es justo el solapamiento que hay que
+    // impedir. Aquí no se filtra por período a propósito: cualquier solapamiento
+    // es dañino, coincida o no la recurrencia. El único que sí debe pasarlo es
+    // la renovación automática, y lo hace explícitamente.
+    const existente = await buscarPresupuestoSolapado(tx, {
+      user_id: datos.user_id,
+      category_id: datos.category_id,
+      start_date: datos.start_date,
+      end_date: datos.end_date,
+    });
     if (existente) throw new PresupuestoSolapadoError(existente);
 
     // El nombre nunca puede quedar vacío. Había dos presupuestos así en
