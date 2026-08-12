@@ -33,6 +33,7 @@ import FormData from 'form-data';
 import axios from 'axios';
 
 import { crearPresupuestoSinSolapar, PresupuestoSolapadoError } from '../services/budgetService';
+import { validarCategoria } from '../utils/validarCategoria';
 // =============================================
 // Cliente OpenAI para Responses API (sin header assistants)
 // =============================================
@@ -187,43 +188,11 @@ function validateCriterios(criterios: any): { valid: boolean; errors: string[] }
   return { valid: errors.length === 0, errors };
 }
 
-async function validateCategory(categoryName: string, type: string, availableCategories?: any[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
-  try {
-    if (availableCategories && availableCategories.length > 0) {
-      const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      // OJO — bug corregido 2026-08-09: se calculaba `dbType` y NO se usaba en
-      // esta rama, así que la búsqueda por nombre podía devolver una categoría
-      // del tipo contrario. Con la app mandando siempre su lista, el filtro de
-      // la rama de BD casi nunca se alcanzaba. Así se crearon en producción 6
-      // presupuestos de gasto sobre categorías de ingreso ("Salario",
-      // "Otros ingresos"), que quedaban en 0 para siempre.
-      // Si el cliente no manda `type`, la lista queda vacía y se cae a la BD.
-      const listaBusqueda = availableCategories.filter((cat: any) => typeof cat === 'object' && cat?.type === dbType);
-      const foundCategory = listaBusqueda.find((cat: any) => {
-        const catName = typeof cat === 'object' && cat.name ? cat.name : cat;
-        return normalizarTexto(catName) === normalizarTexto(categoryName);
-      });
-      if (foundCategory) {
-        if (typeof foundCategory === 'object' && foundCategory.id) return { valid: true, categoryId: foundCategory.id };
-        const cleanName = typeof foundCategory === 'object' && foundCategory.name ? foundCategory.name : foundCategory;
-        const allCategories = await prisma.category.findMany({ where: { type: dbType } });
-        const category = allCategories.find(cat => normalizarTexto(cat.name) === normalizarTexto(cleanName));
-        if (category) return { valid: true, categoryId: category.id };
-      } else {
-        // Sugerir solo del tipo pedido.
-        const base = listaBusqueda.length > 0 ? listaBusqueda : availableCategories;
-        const suggestions = base.map((cat: any) => typeof cat === 'object' && cat.name ? cat.name : cat);
-        return { valid: false, error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.join(', ')}`, suggestions };
-      }
-    } else {
-      const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      const allCategories = await prisma.category.findMany({ where: { type: dbType } });
-      const category = allCategories.find(cat => normalizarTexto(cat.name) === normalizarTexto(categoryName));
-      if (category) return { valid: true, categoryId: category.id };
-      else return { valid: false, error: `No se encontró la categoría "${categoryName}".`, suggestions: allCategories.map(c => c.name) };
-    }
-    return { valid: false, error: 'Categoría no válida' };
-  } catch { return { valid: false, error: 'Error al validar la categoría' }; }
+async function validateCategory(categoryName: string, expectedType: string, categories?: any[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
+  // Implementación única en utils/validarCategoria.ts. Antes había tres copias
+  // divergentes: solo una hacía coincidencia parcial, así que "presupuesto de
+  // salario" funcionaba en el chat y fallaba en el onboarding con el mismo texto.
+  return validarCategoria(categoryName, expectedType, categories);
 }
 
 function validateGoalData(data: any): { valid: boolean; errors: string[] } {

@@ -42,14 +42,11 @@ import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
 import { recalculateBudgets } from '../services/budgetService';
 
-import { crearPresupuestoSinSolapar, PresupuestoSolapadoError } from '../services/budgetService';
+import { crearPresupuestoSinSolapar, buscarPresupuestoSolapado, PresupuestoSolapadoError } from '../services/budgetService';
+import { validarCategoria } from '../utils/validarCategoria';
 // =============================================
 // FUNCIONES DE UTILIDAD (replicadas de zenioV2.ts)
 // =============================================
-
-function normalizarTexto(texto: string): string {
-  return texto.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
 
 function reemplazarExpresionesTemporalesPorFecha(message: string): string {
   const ahora = new Date();
@@ -74,52 +71,11 @@ function reemplazarExpresionesTemporalesPorFecha(message: string): string {
 // VALIDACIÓN DE CATEGORÍAS
 // =============================================
 
-async function validateCategory(categoryName: string, expectedType: string, categories?: any[]): Promise<{ valid: boolean; categoryId?: string; suggestions?: string[] }> {
-  const normalized = normalizarTexto(categoryName);
-  const typeFilter = expectedType === 'gasto' ? 'EXPENSE' : expectedType === 'ingreso' ? 'INCOME' : null;
-
-  // Buscar en las categorías que mandó el cliente.
-  //
-  // OJO — bug corregido 2026-08-09: esta rama buscaba SOLO por nombre y devolvía
-  // la primera coincidencia, ignorando `expectedType`. El filtro por tipo existía
-  // únicamente en la rama de BD de más abajo, que casi nunca se alcanzaba porque
-  // la app siempre manda su lista.
-  //
-  // Consecuencia real: un usuario le pedía a Zenio "ponme un presupuesto de
-  // salario de 22 mil", la función encontraba "Salario" —la categoría de
-  // INGRESO, la única con ese nombre— y se creaba un presupuesto de gasto sobre
-  // una categoría de ingreso. Ese presupuesto se quedaba en 0 para siempre,
-  // porque el recálculo solo sumaba gastos. Se encontraron 6 casos así en
-  // producción, de 2 usuarios, el más antiguo de mayo.
-  const listaCliente = (() => {
-    if (!categories || categories.length === 0) return [];
-    if (!typeFilter) return categories;
-    // La app manda {id, name, type}. Si un cliente viejo no mandara `type`, se
-    // devuelve lista vacía a propósito para caer a la rama de BD, que sí filtra.
-    const tipadas = categories.filter((c: any) => c?.type);
-    return tipadas.filter((c: any) => c.type === typeFilter);
-  })();
-
-  if (listaCliente.length > 0) {
-    const exactMatch = listaCliente.find((c: any) => normalizarTexto(c.name) === normalized);
-    if (exactMatch) return { valid: true, categoryId: exactMatch.id };
-
-    const partialMatch = listaCliente.filter((c: any) => normalizarTexto(c.name).includes(normalized) || normalized.includes(normalizarTexto(c.name)));
-    if (partialMatch.length === 1) return { valid: true, categoryId: partialMatch[0].id };
-    if (partialMatch.length > 1) return { valid: false, suggestions: partialMatch.map((c: any) => c.name) };
-  }
-
-  // Buscar en BD
-  const allCategories = await prisma.category.findMany();
-  const filtered = typeFilter ? allCategories.filter(c => c.type === typeFilter) : allCategories;
-
-  const exact = filtered.find(c => normalizarTexto(c.name) === normalized);
-  if (exact) return { valid: true, categoryId: exact.id };
-
-  const partial = filtered.filter(c => normalizarTexto(c.name).includes(normalized) || normalized.includes(normalizarTexto(c.name)));
-  if (partial.length === 1) return { valid: true, categoryId: partial[0].id };
-
-  return { valid: false, suggestions: filtered.map(c => c.name) };
+async function validateCategory(categoryName: string, expectedType: string, categories?: any[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
+  // Implementación única en utils/validarCategoria.ts. Antes había tres copias
+  // divergentes: solo una hacía coincidencia parcial, así que "presupuesto de
+  // salario" funcionaba en el chat y fallaba en el onboarding con el mismo texto.
+  return validarCategoria(categoryName, expectedType, categories);
 }
 
 // =============================================
@@ -167,6 +123,41 @@ async function handleToolCall(
   }
 
   return { toolCallId: call.call_id, result, action: result?.action };
+}
+
+
+/**
+ * Ventana de calendario que le corresponde a una recurrencia, en el momento
+ * actual. Estaba escrito dentro del insert; se saca aparte para que el update
+ * pueda cambiar de recurrencia sin duplicar la lógica.
+ */
+function ventanaDeRecurrencia(recurrence?: string): { period: string; startDate: Date; endDate: Date } {
+  const periodMap: Record<string, string> = { 'semanal': 'weekly', 'quincenal': 'biweekly', 'mensual': 'monthly', 'anual': 'yearly' };
+  const period = periodMap[recurrence || ''] || 'monthly';
+  const now = new Date();
+  let startDate: Date, endDate: Date;
+
+  if (recurrence === 'semanal') {
+    const day = now.getDay(); const diff = (day === 0 ? -6 : 1) - day;
+    startDate = new Date(now); startDate.setDate(now.getDate() + diff); startDate.setHours(0, 0, 0, 0);
+    endDate = new Date(startDate); endDate.setDate(startDate.getDate() + 6); endDate.setHours(23, 59, 59, 999);
+  } else if (recurrence === 'quincenal') {
+    // Quincena del CALENDARIO en curso: 1-15 o 16-fin de mes.
+    if (now.getDate() <= 15) {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      endDate = new Date(now.getFullYear(), now.getMonth(), 15, 23, 59, 59, 999);
+    } else {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 16);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+  } else if (recurrence === 'anual') {
+    startDate = new Date(now.getFullYear(), 0, 1); endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+  } else {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  }
+
+  return { period, startDate, endDate };
 }
 
 // --- Transaction handler ---
@@ -329,31 +320,7 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
       const cv = await validateCategory(category, tipoPedido, categories);
       if (!cv.valid) return { success: false, message: `Categoría no encontrada: "${category}". Disponibles: ${cv.suggestions?.join(', ')}` };
 
-      const periodMap: Record<string, string> = { 'semanal': 'weekly', 'quincenal': 'biweekly', 'mensual': 'monthly', 'anual': 'yearly' };
-      const period = periodMap[recurrence] || 'monthly';
-      const now = new Date();
-      let startDate: Date, endDate: Date;
-
-      if (recurrence === 'semanal') {
-        const day = now.getDay(); const diff = (day === 0 ? -6 : 1) - day;
-        startDate = new Date(now); startDate.setDate(now.getDate() + diff); startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(startDate); endDate.setDate(startDate.getDate() + 6); endDate.setHours(23, 59, 59, 999);
-      } else if (recurrence === 'quincenal') {
-        // Quincena del CALENDARIO en curso: 1-15 o 16-fin de mes.
-        const d = now.getDate();
-        if (d <= 15) {
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          endDate = new Date(now.getFullYear(), now.getMonth(), 15, 23, 59, 59, 999);
-        } else {
-          startDate = new Date(now.getFullYear(), now.getMonth(), 16);
-          endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-        }
-      } else if (recurrence === 'anual') {
-        startDate = new Date(now.getFullYear(), 0, 1); endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
-      } else {
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-      }
+      const { period, startDate, endDate } = ventanaDeRecurrencia(recurrence);
 
       // Guardia contra solapamientos: Zenio creaba presupuestos SIN comprobar
       // nada, asi que por aqui se podia duplicar aunque el controlador REST lo
@@ -364,6 +331,9 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
           user_id: userId, name: category, category_id: cv.categoryId!,
           amount: parseFloat(amount), period, start_date: startDate, end_date: endDate,
           alert_percentage: 80, type: tipoBudget,
+          // La tool la anuncia ("se puede poner al crear") y se estaba
+          // descartando en silencio.
+          description: args.description?.trim() || null,
         });
       } catch (e: any) {
         if (e instanceof PresupuestoSolapadoError) {
@@ -415,23 +385,98 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
     case 'update': {
       if (!category) throw new Error('Categoría requerida para update');
       const { previous_amount } = args;
-      if (!previous_amount || !amount) throw new Error('Monto anterior y nuevo monto requeridos');
 
-      const where: any = { user_id: userId, is_active: true, amount: parseFloat(previous_amount) };
-      const cat = await prisma.category.findFirst({ where: { name: { equals: category, mode: 'insensitive' } } });
-      if (cat) where.category_id = cat.id;
-      else {
-        const all = await prisma.category.findMany();
-        const found = all.find(c => normalizarTexto(c.name) === normalizarTexto(category));
-        if (found) where.category_id = found.id;
+      // Antes exigía monto anterior Y monto nuevo, y solo sabía cambiar el
+      // monto. Si el usuario pedía "cámbiale la descripción" o "pásalo a
+      // quincenal", Zenio no podía y encima fallaba con un error seco.
+      const nuevaDescripcion = args.description;
+      const quiereCambiarRecurrencia = !!recurrence;
+      const quiereCambiarMonto = amount !== undefined && amount !== null && amount !== '';
+      if (!quiereCambiarMonto && nuevaDescripcion === undefined && !quiereCambiarRecurrencia) {
+        return { success: false, message: '¿Qué quieres cambiarle a ese presupuesto: el monto, la recurrencia o la descripción?' };
       }
+
+      // La categoría se resuelve respetando el tipo pedido. Antes se buscaba por
+      // nombre sin filtrar, así que con una categoría de ingreso y otra de gasto
+      // con el mismo nombre se apuntaría al presupuesto equivocado.
+      const where: any = { user_id: userId, is_active: true };
+      if (previous_amount) where.amount = parseFloat(previous_amount);
+      let cvU = await validateCategory(category, tipoPedido, categories);
+      if (!cvU.valid) {
+        // Al ACTUALIZAR no hay que ser estricto con el tipo: el presupuesto ya
+        // existe y lleva el suyo. El modelo no siempre manda `budget_type`, y
+        // sin este reintento "súbeme a 80 mil mi meta de salario" respondía
+        // "categoría no encontrada" con una lista de categorías de gasto.
+        const tipoContrario = tipoPedido === 'ingreso' ? 'gasto' : 'ingreso';
+        cvU = await validateCategory(category, tipoContrario, categories);
+      }
+      if (!cvU.valid) return { success: false, message: `Categoría no encontrada: "${category}". Disponibles: ${cvU.suggestions?.join(', ')}` };
+      where.category_id = cvU.categoryId;
 
       const candidates = await prisma.budget.findMany({ where, include: { category: { select: { id: true, name: true, icon: true, type: true } } } });
       if (candidates.length === 0) return { success: false, message: 'No se encontró el presupuesto.' };
-      if (candidates.length > 1) return { success: false, message: 'Se encontraron varios presupuestos. Especifica más.' };
+      if (candidates.length > 1) return { success: false, message: `Tienes ${candidates.length} presupuestos de ${category}. ¿De cuál monto es el que quieres cambiar?` };
 
-      const updated = await prisma.budget.update({ where: { id: candidates[0].id }, data: { amount: parseFloat(amount) }, include: { category: { select: { id: true, name: true, icon: true, type: true } } } });
-      return { success: true, message: 'Presupuesto actualizado.', budget: updated, action: 'budget_updated' };
+      const actual = candidates[0];
+      const datos: any = {};
+      const cambios: string[] = [];
+
+      if (quiereCambiarMonto) {
+        const monto = parseFloat(amount);
+        if (!(monto > 0)) return { success: false, message: 'El monto debe ser mayor que cero.' };
+        datos.amount = monto;
+        cambios.push(`monto a RD$${monto.toLocaleString('es-DO')}`);
+      }
+
+      if (nuevaDescripcion !== undefined) {
+        datos.description = String(nuevaDescripcion).trim() || null;
+        cambios.push(datos.description ? 'la descripción' : 'quitada la descripción');
+      }
+
+      if (quiereCambiarRecurrencia) {
+        const v = ventanaDeRecurrencia(recurrence);
+        if (v.period !== actual.period) {
+          // Cambiar de recurrencia mueve la ventana, así que puede chocar con
+          // otro presupuesto activo de la misma categoría.
+          const choque = await buscarPresupuestoSolapado(prisma, {
+            user_id: userId,
+            category_id: actual.category_id,
+            start_date: v.startDate,
+            end_date: v.endDate,
+            excluirId: actual.id,
+          });
+          if (choque) {
+            return { success: false, message: `No puedo pasarlo a ${recurrence}: chocaría con otro presupuesto de ${category} que ya tienes activo en esas fechas.`, action: 'budget_duplicate' };
+          }
+          datos.period = v.period;
+          datos.start_date = v.startDate;
+          datos.end_date = v.endDate;
+          cambios.push(`recurrencia a ${recurrence}`);
+        }
+      }
+
+      if (Object.keys(datos).length === 0) {
+        return { success: true, message: 'Ese presupuesto ya estaba así, no hice ningún cambio.', budget: actual, action: 'budget_updated' };
+      }
+
+      const updated = await prisma.budget.update({
+        where: { id: actual.id },
+        data: datos,
+        include: { category: { select: { id: true, name: true, icon: true, type: true } } },
+      });
+
+      // Si se movió la ventana, el acumulado del período anterior ya no aplica.
+      if (datos.start_date) {
+        await recalculateBudgets(userId, actual.category_id, datos.start_date, { notify: false });
+      }
+
+      const esMeta = updated.type === 'INCOME';
+      return {
+        success: true,
+        message: `Listo, le cambié ${cambios.join(' y ')} a tu ${esMeta ? 'meta de ingresos' : 'presupuesto'} de ${updated.category.name}.`,
+        budget: updated,
+        action: 'budget_updated',
+      };
     }
     case 'delete': {
       if (!category) throw new Error('Categoría requerida para delete');
@@ -670,11 +715,25 @@ async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
     .slice(0, 5)
     .map(([cat, monto]) => ({ categoria: cat, monto, porcentaje: totalGastosMesActual > 0 ? Math.round((monto / totalGastosMesActual) * 100) : 0 }));
 
-  // 3. Presupuestos activos
+  // 3. Presupuestos activos, SOLO los que están vigentes hoy.
+  //
+  // Antes se traían todos los `is_active` sin mirar la ventana, así que se
+  // colaban quincenas ya cerradas junto a la actual y Zenio las comentaba como
+  // si siguieran corriendo.
+  const ahoraParaPresupuestos = new Date();
   const presupuestos = await prisma.budget.findMany({
-    where: { user_id: userId, is_active: true },
+    where: {
+      user_id: userId,
+      is_active: true,
+      start_date: { lte: ahoraParaPresupuestos },
+      end_date: { gte: ahoraParaPresupuestos },
+    },
     include: { category: { select: { name: true, icon: true } } },
   });
+
+  const ETIQUETA_PERIODO: Record<string, string> = {
+    weekly: 'semanal', biweekly: 'quincenal', monthly: 'mensual', yearly: 'anual',
+  };
 
   // OJO: en un presupuesto de INGRESO todo se invierte. `spent` no es "gastado"
   // sino "recibido", y un porcentaje BAJO es MALO (va corto de facturación), no
@@ -688,29 +747,45 @@ async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
     const pct = b.amount > 0 ? Math.round((b.spent / b.amount) * 100) : 0;
     const esIngreso = b.type === 'INCOME';
 
+    // Días que le quedan a ESTE presupuesto, no al mes. El prompt del Analista
+    // pide decir "quedan N días del período" y solo se le daba
+    // `diasRestantesMes`: en una meta quincenal Zenio decía "te faltan 40.000 y
+    // quedan 22 días" cuando la quincena cerraba en 4. Justo donde el porcentaje
+    // bajo es el problema, se subestimaba la urgencia.
+    const msRestantes = b.end_date.getTime() - ahoraParaPresupuestos.getTime();
+    const diasRestantesPeriodo = Math.max(0, Math.ceil(msRestantes / 86400000));
+    const periodoInfo = {
+      periodo: ETIQUETA_PERIODO[b.period] || b.period,
+      diasRestantesPeriodo,
+      cierra: b.end_date.toISOString().split('T')[0],
+      descripcion: b.description || undefined,
+    };
+
     if (esIngreso) {
       return {
         tipo: 'ingreso',
         categoria: b.category.name,
+        ...periodoInfo,
         meta: b.amount,
         recibido: b.spent,
         porcentajeAlcanzado: pct,
         // Invertido: cuanto MENOS lleva, peor va.
         estado: pct >= 100 ? 'LOGRADO' : pct >= 70 ? 'VERDE' : pct >= 40 ? 'AMARILLO' : 'ROJO',
         falta: Math.max(0, b.amount - b.spent),
-        nota: 'Es una META de ingresos: mientras más alto el porcentaje, mejor. Quedarse corto es lo malo.',
+        nota: 'Es una META de ingresos: mientras más alto el porcentaje, mejor. Quedarse corto es lo malo. Si hablas de plazo, usa `diasRestantesPeriodo`, NO los días que quedan del mes.',
       };
     }
 
     return {
       tipo: 'gasto',
       categoria: b.category.name,
+      ...periodoInfo,
       asignado: b.amount,
       gastado: b.spent,
       porcentajeUso: pct,
       estado: pct >= 90 ? 'ROJO' : pct >= 70 ? 'AMARILLO' : 'VERDE',
       restante: b.amount - b.spent,
-      nota: 'Es un TECHO de gasto: mientras más alto el porcentaje, peor. Pasarse es lo malo.',
+      nota: 'Es un TECHO de gasto: mientras más alto el porcentaje, peor. Pasarse es lo malo. Si hablas de plazo, usa `diasRestantesPeriodo`, NO los días que quedan del mes.',
     };
   });
 

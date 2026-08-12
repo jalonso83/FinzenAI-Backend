@@ -17,7 +17,7 @@ export const ZENIO_FUNCTION_TOOLS = [
   {
     type: 'function' as const,
     name: 'manage_budget_record',
-    description: 'Inserta, actualiza, elimina o lista presupuestos. Para listar, usa filtros_busqueda para criterios específicos como límite, categoría, recurrencia, monto. Para update/delete especifica category y previous_amount.',
+    description: 'Inserta, actualiza, elimina o lista presupuestos. Para listar, usa filtros_busqueda. Para update/delete especifica category (y previous_amount si tiene varios de esa categoría). En update se puede cambiar el monto, la recurrencia y la descripción, por separado o a la vez.',
     strict: false,
     parameters: {
       type: 'object',
@@ -53,7 +53,11 @@ export const ZENIO_FUNCTION_TOOLS = [
         },
         previous_amount: {
           type: 'number',
-          description: 'Monto anterior (requerido para update o delete)',
+          description: 'Monto anterior. Sirve para identificar CUÁL presupuesto en update/delete cuando hay varios de la misma categoría. Si el usuario solo tiene uno, no hace falta.',
+        },
+        description: {
+          type: 'string',
+          description: 'Nota libre del presupuesto (ej: "incluye el súper y la farmacia"). Se puede poner al crear y cambiar después con update. Manda cadena vacía para quitarla.',
         },
         filtros_busqueda: {
           type: 'object',

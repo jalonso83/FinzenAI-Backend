@@ -15,6 +15,7 @@ import { OpenAiUsageService } from '../services/openAiUsageService';
 import { calculateOpenAICost } from '../config/openaiPricing';
 
 import { crearPresupuestoSinSolapar, PresupuestoSolapadoError } from '../services/budgetService';
+import { validarCategoria } from '../utils/validarCategoria';
 const API_KEY = ENV.OPENAI_API_KEY;
 const ASSISTANT_ID = ENV.OPENAI_ASSISTANT_ID;
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
@@ -330,98 +331,11 @@ function validateCriterios(criterios: any): { valid: boolean; errors: string[] }
 }
 
 // Función para validar categoría contra la base de datos o lista proporcionada
-async function validateCategory(categoryName: string, type: string, availableCategories?: any[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
-  try {
-    if (availableCategories && availableCategories.length > 0) {
-      // Usar la lista proporcionada por el frontend
-      const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-
-      // OJO — bug corregido 2026-08-09: esta rama buscaba SOLO por nombre en la
-      // lista del cliente y devolvía la primera coincidencia, ignorando `type`.
-      // El `dbType` se calculaba y no se usaba. Como la app siempre manda su
-      // lista, el filtro por tipo de la rama de BD casi nunca se alcanzaba.
-      //
-      // Consecuencia real: "ponme un presupuesto de salario de 22 mil" resolvía
-      // a "Salario" —la categoría de INGRESO— y creaba un presupuesto de gasto
-      // sobre ella, que se quedaba en 0 para siempre. 6 casos en producción.
-      //
-      // Si un cliente viejo no manda `type`, la lista filtrada queda vacía y se
-      // cae a la búsqueda en BD, que sí filtra por tipo.
-      const candidatas = availableCategories.filter((cat: any) => {
-        if (typeof cat !== 'object' || !cat?.type) return false;
-        return cat.type === dbType;
-      });
-      const listaBusqueda = candidatas.length > 0 ? candidatas : [];
-
-      // Buscar la categoría en la lista filtrada (case insensitive y sin acentos)
-      const foundCategory = listaBusqueda.find((cat: any) => {
-        const catName = typeof cat === 'object' && cat.name ? cat.name : cat;
-        return normalizarTexto(catName) === normalizarTexto(categoryName);
-      });
-
-      if (foundCategory) {
-        // Si encontramos la categoría en la lista del frontend, usar directamente su ID
-        if (typeof foundCategory === 'object' && foundCategory.id) {
-          return { valid: true, categoryId: foundCategory.id };
-        }
-        
-        // Fallback: buscar en la BD usando el nombre normalizado
-        const cleanName = typeof foundCategory === 'object' && foundCategory.name ? foundCategory.name : foundCategory;
-        
-        // Buscar en la BD usando normalización de texto para ignorar acentos y mayúsculas
-        const allCategories = await prisma.category.findMany({
-          where: { type: dbType }
-        });
-        
-        const category = allCategories.find(cat => 
-          normalizarTexto(cat.name) === normalizarTexto(cleanName)
-        );
-        
-        if (category) {
-          return { valid: true, categoryId: category.id };
-        }
-      } else {
-        // Filtrar categorías por tipo y devolver solo los nombres
-        // Sugerir SOLO categorías del tipo pedido: ofrecerle una de ingreso a
-        // quien busca una de gasto es lo que originó el problema.
-        const base = listaBusqueda.length > 0 ? listaBusqueda : availableCategories;
-        const suggestions = base.map((cat: any) => typeof cat === 'object' && cat.name ? cat.name : cat);
-        return {
-          valid: false,
-          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${suggestions.join(', ')}`,
-          suggestions: suggestions
-        };
-      }
-    } else {
-      // Comportamiento original: consultar base de datos
-      const dbType = type === 'gasto' ? 'EXPENSE' : 'INCOME';
-      
-      // Buscar en la BD usando normalización de texto para ignorar acentos y mayúsculas
-      const allCategories = await prisma.category.findMany({
-        where: { type: dbType }
-      });
-      
-      const category = allCategories.find(cat => 
-        normalizarTexto(cat.name) === normalizarTexto(categoryName)
-      );
-      
-      if (category) {
-        return { valid: true, categoryId: category.id };
-      } else {
-        // Sugerir categorías válidas
-        return {
-          valid: false,
-          error: `No se encontró la categoría "${categoryName}". Elige una de las siguientes: ${allCategories.map((c: any) => c.name).join(', ')}`,
-          suggestions: allCategories.map((c: any) => c.name)
-        };
-      }
-    }
-    
-    // Return por defecto
-    return { valid: false, error: 'Categoría no válida' };
-  } catch (error) {
-    return { valid: false, error: 'Error al validar la categoría' };
-  }
+async function validateCategory(categoryName: string, expectedType: string, categories?: any[]): Promise<{ valid: boolean; error?: string; categoryId?: string; suggestions?: string[] }> {
+  // Implementación única en utils/validarCategoria.ts. Antes había tres copias
+  // divergentes: solo una hacía coincidencia parcial, así que "presupuesto de
+  // salario" funcionaba en el chat y fallaba en el onboarding con el mismo texto.
+  return validarCategoria(categoryName, expectedType, categories);
 }
 
 // Función para obtener categorías válidas usando las proporcionadas

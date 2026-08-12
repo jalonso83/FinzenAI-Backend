@@ -35,6 +35,22 @@ const ANALYSIS_PATTERNS = [
   // Variantes comunes
   /como\s+voy\s+(este|en\s+el)\s+mes/i,
   /cuanto\s+gaste|cuanto\s+he\s+gastado/i,
+
+  // ─── Ingresos y facturación ────────────────────────────────────────────────
+  // Toda la batería de arriba está escrita en clave de GASTO o ahorro. Quien usa
+  // presupuestos de ingreso —freelancers, gente que factura— pregunta con otro
+  // vocabulario, y esas preguntas caían en el Asistente, que no tiene
+  // `analizar_finanzas` y por tanto no puede responderlas.
+  //
+  // Ojo con "cobré": eso es registrar un ingreso y lo atrapa OPERATION_PATTERNS.
+  // Aquí solo entran las formas de CONSULTA ("llevo cobrado", "he facturado").
+  /cuanto\s+(llevo|he|voy)\b.{0,20}(facturad|cobrad|ingresad|recibid)/i,
+  /(llevo|he)\s+(facturado|cobrado|ingresado|recibido)/i,
+  /meta\s+(de\s+)?(ingreso|facturaci)/i,
+  /presupuestos?\s+de\s+ingreso/i,
+  /\bvoy\s+corto\b/i,
+  /cuanto\s+me\s+falta\s+(por\s+)?(facturar|cobrar|ingresar)/i,
+  /como\s+va\s+mi/i,
 ];
 
 // Patrones para detectar intención operativa (ASISTENTE)
