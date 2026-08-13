@@ -41,7 +41,8 @@ import { merchantMappingService } from '../services/merchantMappingService';
 import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
 import { recalculateBudgets } from '../services/budgetService';
-import { puedeCrearPresupuestoDeIngresos } from '../utils/presupuestoDeIngresos';
+import { puedeCrearPresupuestoDeIngresos, esMetaDeIngresosAmbigua, PREGUNTA_DESAMBIGUA } from '../utils/presupuestoDeIngresos';
+import { limpiarRespuestaZenio, contieneJsonVisible } from '../utils/limpiarRespuestaZenio';
 
 import { crearPresupuestoSinSolapar, buscarPresupuestoSolapado, PresupuestoSolapadoError } from '../services/budgetService';
 import { validarCategoria } from '../utils/validarCategoria';
@@ -111,7 +112,7 @@ async function handleToolCall(
         result = await handleBudget(args, userId, categories, mensajeUsuario);
         break;
       case 'manage_goal_record':
-        result = await handleGoal(args, userId, categories);
+        result = await handleGoal(args, userId, categories, mensajeUsuario);
         break;
       case 'list_categories':
         result = await handleListCategories(args, categories);
@@ -535,9 +536,17 @@ async function handleBudget(args: any, userId: string, categories?: any[], mensa
 }
 
 // --- Goal handler ---
-async function handleGoal(args: any, userId: string, categories?: any[]): Promise<any> {
+async function handleGoal(args: any, userId: string, categories?: any[], mensajeUsuario?: string): Promise<any> {
   const { operation, goal_data, filtros_busqueda } = args;
   if (!operation) throw new Error('Operación requerida');
+
+  // Guard simétrico al de los presupuestos de ingreso. "Crea una meta de
+  // ingresos de 50 mil en Salario" no se puede resolver adivinando hacia
+  // ninguno de los dos lados: al bloquear solo el presupuesto, el modelo pasó a
+  // crear una META DE AHORRO llamada "Salario", que está igual de mal.
+  if (operation === 'insert' && esMetaDeIngresosAmbigua(mensajeUsuario)) {
+    return { success: false, message: PREGUNTA_DESAMBIGUA, action: 'clarify_income_budget' };
+  }
 
   switch (operation) {
     case 'insert': {
@@ -1089,7 +1098,16 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
     }
 
     // 11. Obtener respuesta final (limpiando los marcadores de citación de file_search)
-    const assistantResponse = stripFileCitations(response.output_text) || 'No se pudo obtener respuesta.';
+    // Se limpia SIEMPRE, no solo cuando falla el prompt: el agente a veces
+    // escribe en el mensaje la llamada que iba a hacer (ver la nota larga en
+    // utils/limpiarRespuestaZenio) y al usuario le sale el JSON en pantalla.
+    const textoCrudo = stripFileCitations(response.output_text) || 'No se pudo obtener respuesta.';
+    if (contieneJsonVisible(textoCrudo)) {
+      // A `error` a propósito: en producción el logger solo saca errores, y esto
+      // hay que poder verlo sin desplegar nada.
+      logger.error(`[ZenioAgents] JSON visible en la respuesta (agente: ${agentType}), recortado antes de enviar`);
+    }
+    const assistantResponse = limpiarRespuestaZenio(textoCrudo);
 
     // 12. Incrementar contador
     let zenioUsage = { used: 0, limit: 15, remaining: 15 };

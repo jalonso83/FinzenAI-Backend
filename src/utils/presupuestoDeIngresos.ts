@@ -19,6 +19,28 @@
 
 const PALABRAS_DE_META = /\b(met(a|as)|objetivos?|ahorr\w*)\b/i;
 const DICE_PRESUPUESTO = /\bpresupuesto?s?\b/i;
+/** Dinero que ENTRA: lo que hace ambigua a una "meta". */
+const PALABRAS_DE_INGRESO = /\b(ingreso?s?|facturaci[oó]n|facturar|cobrar|cobro|salario|sueldo|honorarios?)\b/i;
+
+export const PREGUNTA_DESAMBIGUA =
+  'Para no equivocarme: ¿quieres un **presupuesto de ingresos** (para seguir cuánto ' +
+  'llevas facturado o cobrado en el período) o una **meta de ahorro** (juntar una ' +
+  'cantidad para algo concreto)? Son cosas distintas y no quiero crearte la que no es.';
+
+/**
+ * "meta de ingresos", "meta de facturación", "objetivo de salario"…
+ *
+ * Estas peticiones no se pueden resolver adivinando en NINGUNA de las dos
+ * direcciones. Bloquear solo el presupuesto no arregla nada: sin este control,
+ * "crea una meta de ingresos de 50 mil en Salario" dejaba de crear el
+ * presupuesto y pasaba a crear una META DE AHORRO llamada "Salario" — igual de
+ * equivocado, solo que del otro lado. Visto en producción el 12-ago-2026.
+ */
+export function esMetaDeIngresosAmbigua(mensaje?: string | null): boolean {
+  if (!mensaje) return false;
+  if (DICE_PRESUPUESTO.test(mensaje)) return false; // ya lo nombró, no hay duda
+  return PALABRAS_DE_META.test(mensaje) && PALABRAS_DE_INGRESO.test(mensaje);
+}
 
 export interface VeredictoIngresos {
   /** ¿Se puede crear el presupuesto de ingresos con este mensaje? */
@@ -50,11 +72,5 @@ export function puedeCrearPresupuestoDeIngresos(mensaje?: string | null): Veredi
 
   if (DICE_PRESUPUESTO.test(mensaje)) return { permitido: true };
 
-  return {
-    permitido: false,
-    pregunta:
-      'Para no equivocarme: ¿quieres un **presupuesto de ingresos** (para seguir cuánto ' +
-      'llevas facturado o cobrado en el período) o una **meta de ahorro** (juntar una ' +
-      'cantidad para algo concreto)? Son cosas distintas y no quiero crearte la que no es.',
-  };
+  return { permitido: false, pregunta: PREGUNTA_DESAMBIGUA };
 }
