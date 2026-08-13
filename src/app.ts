@@ -7,6 +7,7 @@ import { prisma, disconnectPrisma } from './lib/prisma';
 import { BudgetScheduler } from './services/budgetScheduler';
 import { EmailSyncScheduler } from './services/emailSyncScheduler';
 import { ReminderScheduler } from './services/reminderScheduler';
+import { GrantExpiryScheduler } from './services/grantExpiryScheduler';
 import { AntExpenseScheduler } from './services/antExpenseScheduler';
 import { GoalReminderScheduler } from './services/goalReminderScheduler';
 import { TipScheduler } from './services/tipScheduler';
@@ -249,6 +250,9 @@ async function startServer() {
 
     // Iniciar scheduler de recordatorios de pago
     ReminderScheduler.startScheduler();
+
+    // Avisa a quien tiene un plan regalado que se le acaba en 3 días
+    GrantExpiryScheduler.startScheduler();
 
     // Iniciar scheduler de alertas de gastos hormiga
     AntExpenseScheduler.startScheduler();

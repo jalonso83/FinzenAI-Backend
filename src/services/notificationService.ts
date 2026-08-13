@@ -23,6 +23,18 @@ export interface NotificationPayload {
   body: string;
   data?: Record<string, string>;
   imageUrl?: string;
+  /**
+   * Entregar aunque el usuario esté en su horario silencioso.
+   *
+   * El silencio NO aplaza: si cae dentro, la notificación se descarta y no se
+   * reintenta. Para un recordatorio diario da igual —mañana hay otro—, pero un
+   * aviso puntual y único se pierde para siempre. Es el caso de "te regalamos
+   * Pro por 90 días": si se otorga de madrugada, la persona no se entera nunca
+   * de que tiene el regalo.
+   *
+   * Úsalo SOLO en avisos únicos y transaccionales. Nada promocional.
+   */
+  ignoreQuietHours?: boolean;
 }
 
 export interface SendNotificationResult {
@@ -155,7 +167,7 @@ export class NotificationService {
         where: { id: userId },
         select: { country: true },
       });
-      if (preferences && this.isInQuietHours(preferences, userForTz?.country)) {
+      if (!payload.ignoreQuietHours && preferences && this.isInQuietHours(preferences, userForTz?.country)) {
         logger.log(`[NotificationService] User ${userId} is in quiet hours, skipping notification`);
         return { success: true, successCount: 0, failureCount: 0 };
       }
@@ -429,6 +441,13 @@ export class NotificationService {
         // Transaccional, no promocional: avisa de un cobro rechazado y de que el
         // plan va a cambiar. No debe poder silenciarse — si el usuario no se
         // entera, pierde su plan sin saber por qué.
+        return true;
+      case 'SUBSCRIPTION_GRANTED':
+        // Igual de transaccional: cambia lo que su cuenta puede hacer, primero
+        // al regalarle el plan y después al caducar. Mandarlo como MARKETING
+        // sería peor de lo que parece — quien silenció el marketing suele ser
+        // justo el usuario desenganchado al que se le regala para recuperarlo,
+        // así que el aviso no llegaría precisamente a quien va dirigido.
         return true;
       default:
         return true;

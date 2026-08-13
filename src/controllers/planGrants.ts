@@ -3,6 +3,7 @@ import { SubscriptionPlan } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { subscriptionService } from '../services/subscriptionService';
 import { PLANS } from '../config/stripe';
+import { notifyGrantStarted } from '../services/grantNotices';
 import { logger } from '../utils/logger';
 
 /**
@@ -36,7 +37,10 @@ const DIAS_MAX = 365;
 export const grantPlan = async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const { plan, days, reason } = req.body ?? {};
+    // `notify` por defecto TRUE: el caso normal es que la persona se entere. Se
+    // apaga cuando el aviso lo das tú por otro canal (un correo escrito a mano),
+    // donde un push automático diciendo lo mismo abarata el gesto.
+    const { plan, days, reason, notify = true, message } = req.body ?? {};
 
     if (!plan || !(plan in PLANS) || plan === 'FREE') {
       return res.status(400).json({
@@ -89,8 +93,18 @@ export const grantPlan = async (req: Request, res: Response) => {
         grantedPlan: plan as SubscriptionPlan,
         grantedUntil,
         grantedReason: reason.trim(),
+        // Una concesión nueva reabre el aviso de caducidad: si no, quien ya
+        // recibió el "te quedan 3 días" de una anterior no volvería a recibirlo
+        // nunca, y esta se le apagaría en silencio.
+        grantExpiryNoticeSent: false,
       },
     });
+
+    if (notify) {
+      // Sin `await`: el aviso es best-effort y no debe hacer esperar —ni fallar—
+      // a la respuesta. La concesión ya está aplicada.
+      void notifyGrantStarted(userId, plan as SubscriptionPlan, grantedUntil, message);
+    }
 
     const actualizada = await subscriptionService.getUserSubscription(userId);
 
@@ -132,7 +146,7 @@ export const revokeGrant = async (req: Request, res: Response) => {
 
     await prisma.subscription.update({
       where: { userId },
-      data: { grantedPlan: null, grantedUntil: null, grantedReason: null },
+      data: { grantedPlan: null, grantedUntil: null, grantedReason: null, grantExpiryNoticeSent: false },
     });
 
     const actualizada = await subscriptionService.getUserSubscription(userId);

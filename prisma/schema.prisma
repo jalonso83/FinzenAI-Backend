@@ -487,6 +487,9 @@ model Subscription {
   grantedPlan   SubscriptionPlan?
   grantedUntil  DateTime?
   grantedReason String? // por qué se otorgó y a raíz de qué; queda como registro
+  // Aviso de "se te acaba en 3 días" ya enviado para ESTA concesión. Se pone a
+  // false al otorgar una nueva, para que la siguiente vuelva a avisar.
+  grantExpiryNoticeSent Boolean @default(false)
 
   // RevenueCat (In-App Purchases)
   paymentProvider       PaymentProvider @default(STRIPE)
@@ -907,6 +910,7 @@ enum NotificationType {
   TRIAL_ENDING
   TRIAL_ENDED
   SUBSCRIPTION_PAST_DUE  // cobro rechazado / plan degradado: transaccional, no opt-out
+  SUBSCRIPTION_GRANTED   // le regalamos un plan por un tiempo, o está por caducar: transaccional
   MARKETING       // broadcast: ofertas, promociones (opt-out independiente)
   ANNOUNCEMENT    // broadcast: novedades / cambios de producto
   RECURRING_TRANSACTION // el cron registró un gasto/ingreso automático
