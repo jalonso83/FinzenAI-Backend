@@ -71,9 +71,21 @@ export const grantPlan = async (req: Request, res: Response) => {
     const grantedUntil = new Date();
     grantedUntil.setDate(grantedUntil.getDate() + dias);
 
-    await prisma.subscription.update({
+    // `upsert` y no `update`: hoy todos los usuarios tienen fila de suscripción
+    // (se crea en el registro), pero si alguna vez falta, un `update` devolvería
+    // un 500 sin explicar nada. Regalar un plan no debería depender de que la
+    // fila exista — se crea en FREE, que es el plan real de quien nunca pagó, y
+    // la concesión va encima.
+    await prisma.subscription.upsert({
       where: { userId },
-      data: {
+      create: {
+        userId,
+        plan: SubscriptionPlan.FREE,
+        grantedPlan: plan as SubscriptionPlan,
+        grantedUntil,
+        grantedReason: reason.trim(),
+      },
+      update: {
         grantedPlan: plan as SubscriptionPlan,
         grantedUntil,
         grantedReason: reason.trim(),
