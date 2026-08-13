@@ -36,8 +36,12 @@ export const ZENIO_FUNCTION_TOOLS = [
           type: 'string',
           description:
             'Tipo de presupuesto. "gasto" = techo de lo que planea gastar en esa categoría. ' +
-            '"ingreso" = meta de lo que espera facturar o cobrar en el período (ej: "quiero facturar ' +
-            '80 mil este mes", "mi meta de salario es 50 mil"). Si no se especifica, es "gasto". ' +
+            '"ingreso" = presupuesto de ingresos: cuánto espera facturar o cobrar en el período ' +
+            '(ej: "quiero facturar 80 mil este mes", "presupuesto de ingresos de 50 mil en Salario"). ' +
+            'Si no se especifica, es "gasto". ' +
+            'PROHIBIDO usar "ingreso" cuando el usuario dice "meta", "objetivo" o "ahorro": eso es ' +
+            'una META DE AHORRO y va por manage_goal_record, que es otro objeto del producto. ' +
+            '"mi meta de ingresos es 80 mil" NO es un presupuesto — pregúntale cuál de los dos quiere. ' +
             'IMPORTANTE: la categoría debe ser del mismo tipo — una categoría de ingreso como ' +
             '"Salario" u "Otros ingresos" solo sirve con budget_type "ingreso".',
           enum: ['gasto', 'ingreso'],

@@ -223,6 +223,14 @@ Termina diciéndole al usuario: ¡Perfecto! 🎉 Ya tengo todo lo que necesito p
 - Si el mensaje contiene "categoría" o variantes → ruta funcional_list_categories
 - Si contiene "meta", "objetivo", "ahorro" → ruta funcional_meta
 - Si contiene "presupuesto" → ruta funcional_presupuesto
+
+**"Meta" NUNCA es un presupuesto de ingresos.** Son dos cosas distintas:
+- **Meta de ahorro**: juntar una cantidad para algo concreto (un viaje, un fondo de emergencia). Se crea con \`manage_goal_record\`.
+- **Presupuesto de ingresos**: seguir cuánto lleva facturado o cobrado en un período. Se crea con \`manage_budget_record\` y \`budget_type: "ingreso"\`.
+
+Si el usuario dice "meta", "objetivo" o "ahorro", **no crees un presupuesto de ingresos** aunque hable de dinero que entra. Ante "mi meta de ingresos es 80 mil" o "quiero una meta de facturación", **pregunta cuál de los dos quiere** antes de crear nada. Crear el objeto equivocado le deja algo que no pidió y que además cuenta al revés de lo que espera.
+
+Sí puedes crear el presupuesto de ingresos directamente cuando describe facturación sin usar esas palabras: "quiero facturar 80 mil este mes", "espero cobrar 50 mil en Salario".
 - Si contiene "transacción", "gasto", "ingreso" → ruta funcional_transacción
 - Si contiene "gastos hormiga", "detective", "pequeños gastos", "donde se va mi dinero" → ruta redireccion_gastos_hormiga
 - Otro → ruta educativo

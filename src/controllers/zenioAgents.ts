@@ -41,6 +41,7 @@ import { merchantMappingService } from '../services/merchantMappingService';
 import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
 import { recalculateBudgets } from '../services/budgetService';
+import { puedeCrearPresupuestoDeIngresos } from '../utils/presupuestoDeIngresos';
 
 import { crearPresupuestoSinSolapar, buscarPresupuestoSolapado, PresupuestoSolapadoError } from '../services/budgetService';
 import { validarCategoria } from '../utils/validarCategoria';
@@ -87,7 +88,11 @@ async function handleToolCall(
   userId: string,
   userName: string,
   categories?: any[],
-  timezone?: string
+  timezone?: string,
+  /** Mensaje original del usuario. Lo necesita el guard de "meta" ≠ presupuesto
+   *  de ingresos: los argumentos que arma el modelo ya vienen interpretados, y
+   *  la ambigüedad hay que resolverla sobre lo que la persona escribió. */
+  mensajeUsuario?: string,
 ): Promise<{ toolCallId: string; result: any; action?: string }> {
   if (call.type !== 'function_call') {
     return { toolCallId: call.call_id, result: { skipped: true } };
@@ -103,7 +108,7 @@ async function handleToolCall(
         result = await handleTransaction(args, userId, categories, timezone);
         break;
       case 'manage_budget_record':
-        result = await handleBudget(args, userId, categories);
+        result = await handleBudget(args, userId, categories, mensajeUsuario);
         break;
       case 'manage_goal_record':
         result = await handleGoal(args, userId, categories);
@@ -307,15 +312,26 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
 }
 
 // --- Budget handler ---
-async function handleBudget(args: any, userId: string, categories?: any[]): Promise<any> {
-  // `budget_type` decide si es un TECHO de gasto o una META de ingreso. Por
-  // defecto 'gasto', que es el comportamiento histórico. La categoría tiene que
-  // ser del mismo tipo: validateCategory lo exige, así que pedir un presupuesto
-  // de gasto sobre "Salario" ahora falla limpio en vez de crear algo roto.
+async function handleBudget(args: any, userId: string, categories?: any[], mensajeUsuario?: string): Promise<any> {
+  // `budget_type` decide si es un TECHO de gasto o un PRESUPUESTO DE INGRESOS.
+  // Por defecto 'gasto', que es el comportamiento histórico. La categoría tiene
+  // que ser del mismo tipo: validateCategory lo exige, así que pedir un
+  // presupuesto de gasto sobre "Salario" falla limpio en vez de crear algo roto.
   const { operation, category, amount, recurrence, filtros_busqueda } = args;
   const tipoPedido: 'gasto' | 'ingreso' = args.budget_type === 'ingreso' ? 'ingreso' : 'gasto';
   const tipoBudget = tipoPedido === 'ingreso' ? 'INCOME' : 'EXPENSE';
   if (!operation) throw new Error('Operación requerida');
+
+  // "Meta" es una meta de AHORRO, nunca un presupuesto de ingresos. Si el
+  // mensaje habla de metas y no nombra el presupuesto, se pregunta en vez de
+  // adivinar: crear el objeto equivocado le deja al usuario algo que no pidió y
+  // que además cuenta al revés de lo que espera. Ver utils/presupuestoDeIngresos.
+  if (tipoPedido === 'ingreso' && (operation === 'insert' || operation === 'update')) {
+    const veredicto = puedeCrearPresupuestoDeIngresos(mensajeUsuario);
+    if (!veredicto.permitido) {
+      return { success: false, message: veredicto.pregunta, action: 'clarify_income_budget' };
+    }
+  }
 
   switch (operation) {
     case 'insert': {
@@ -394,7 +410,7 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
         return b.type === 'INCOME'
           ? { ...comun, tipo: 'ingreso', meta: monto, recibido: acumulado,
               porcentajeAlcanzado: pct, falta: Math.max(0, monto - acumulado),
-              nota: 'META de ingresos: `recibido` es lo COBRADO. Porcentaje bajo = va corto, no es bueno. Nunca digas "gastado" ni felicites por un porcentaje bajo.' }
+              nota: 'PRESUPUESTO de ingresos: `recibido` es lo COBRADO. Porcentaje bajo = va corto, no es bueno. Nunca digas "gastado" ni felicites por un porcentaje bajo.' }
           : { ...comun, tipo: 'gasto', asignado: monto, gastado: acumulado,
               porcentajeUso: pct, disponible: Math.max(0, monto - acumulado),
               nota: 'TECHO de gasto: porcentaje alto = alerta.' };
@@ -492,7 +508,7 @@ async function handleBudget(args: any, userId: string, categories?: any[]): Prom
       const esMeta = updated.type === 'INCOME';
       return {
         success: true,
-        message: `Listo, le cambié ${cambios.join(' y ')} a tu ${esMeta ? 'meta de ingresos' : 'presupuesto'} de ${updated.category.name}.`,
+        message: `Listo, le cambié ${cambios.join(' y ')} a tu ${esMeta ? 'presupuesto de ingresos' : 'presupuesto'} de ${updated.category.name}.`,
         budget: updated,
         action: 'budget_updated',
       };
@@ -791,7 +807,7 @@ async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
         // Invertido: cuanto MENOS lleva, peor va.
         estado: pct >= 100 ? 'LOGRADO' : pct >= 70 ? 'VERDE' : pct >= 40 ? 'AMARILLO' : 'ROJO',
         falta: Math.max(0, b.amount - b.spent),
-        nota: 'Es una META de ingresos: mientras más alto el porcentaje, mejor. Quedarse corto es lo malo. Si hablas de plazo, usa `diasRestantesPeriodo`, NO los días que quedan del mes.',
+        nota: 'Es un PRESUPUESTO de ingresos: mientras más alto el porcentaje, mejor. Quedarse corto es lo malo. Si hablas de plazo, usa `diasRestantesPeriodo`, NO los días que quedan del mes.',
       };
     }
 
@@ -1036,7 +1052,7 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
 
       const toolResults = [];
       for (const call of functionCalls) {
-        const result = await handleToolCall(call, userId, userName, categories, userTimezone);
+        const result = await handleToolCall(call, userId, userName, categories, userTimezone, message);
         toolResults.push(result);
         if (result.action) executedActions.push({ action: result.action, data: result.result });
       }

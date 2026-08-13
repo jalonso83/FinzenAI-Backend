@@ -881,7 +881,7 @@ async function listBudgets(category: string, userId: string, categories?: any[],
     mensaje += budgets.map((b: any) => {
       const cifras = `RD$${b.spent?.toLocaleString('es-DO') || '0'}/${b.amount.toLocaleString('es-DO')}`;
       return b.type === 'INCOME'
-        ? `${b.category.name} [META DE INGRESOS · recibido ${cifras}] (${b.period})`
+        ? `${b.category.name} [PRESUPUESTO DE INGRESOS · recibido ${cifras}] (${b.period})`
         : `${b.category.name} [gasto · ${cifras}] (${b.period})`;
     }).join('\n');
   }

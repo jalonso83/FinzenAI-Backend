@@ -1950,7 +1950,7 @@ async function listBudgets(category: string | undefined, userId: string, categor
       // que se quiere ALCANZAR, no un techo que no se debe pasar.
       const esIngreso = b.type === 'INCOME';
       const icono = esIngreso ? '📈' : '💳';
-      const etiqueta = esIngreso ? `meta de ingresos ${monto}` : `límite ${monto}`;
+      const etiqueta = esIngreso ? `presupuesto de ingresos ${monto}` : `límite ${monto}`;
       const llevado = esIngreso ? 'Recibido' : 'Gastado';
       return `${icono} **${b.name}** - ${etiqueta}\n   💰 ${llevado}: RD$${(b.spent || 0).toLocaleString('es-DO')}\n   📅 ${periodo} | 🏷️ ${b.category.name}\n   📆 Creado: ${fechaCreacion}`;
     }).join('\n\n');

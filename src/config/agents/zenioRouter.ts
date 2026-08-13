@@ -46,7 +46,10 @@ const ANALYSIS_PATTERNS = [
   // Aquí solo entran las formas de CONSULTA ("llevo cobrado", "he facturado").
   /cuanto\s+(llevo|he|voy)\b.{0,20}(facturad|cobrad|ingresad|recibid)/i,
   /(llevo|he)\s+(facturado|cobrado|ingresado|recibido)/i,
-  /meta\s+(de\s+)?(ingreso|facturaci)/i,
+  // OJO: aquí NO va /meta de ingresos/. "Meta" pertenece a las metas de ahorro,
+  // que son otro objeto del producto. Ese patrón mandaba "mi meta de ingresos"
+  // al analista de presupuestos y contradecía la regla del prompt, que enruta
+  // "meta" a metas. Ahora la ambigüedad se resuelve preguntando, no adivinando.
   /presupuestos?\s+de\s+ingreso/i,
   /\bvoy\s+corto\b/i,
   /cuanto\s+me\s+falta\s+(por\s+)?(facturar|cobrar|ingresar)/i,
