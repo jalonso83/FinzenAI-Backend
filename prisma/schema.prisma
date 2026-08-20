@@ -591,6 +591,12 @@ model FeatureUsage {
   userId    String
   feature   String
   action    String
+  // Contexto del evento, opcional. Nace (2026-08-20) para guardar CON QUÉ PLAN
+  // se activó un trial: `action` sigue siendo 'inicio_trial' a secas para no
+  // romper las consultas que ya lo usan como definición canónica, y el plan
+  // viaja aquí. Sin esto el dato se pierde para siempre, porque
+  // `subscriptions.plan` se sobreescribe a FREE cuando el trial vence.
+  metadata  Json?
   createdAt DateTime @default(now())
 
   @@index([feature, createdAt])

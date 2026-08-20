@@ -2,8 +2,30 @@ import { Request, Response, NextFunction } from 'express';
 import { BudgetType } from '@prisma/client';
 import { subscriptionService } from '../services/subscriptionService';
 import { prisma } from '../lib/prisma';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 import { logger } from '../utils/logger';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Medición del CHOQUE contra un límite de plan (2026-08-20)
+//
+// Hasta ahora estos 403 se devolvían sin dejar rastro, y esa era la diferencia
+// entre "creó 4 presupuestos y paró" y "quiso el quinto y no pudo". Sin el
+// evento no se distinguen, así que los 296 usuarios con el cupo lleno eran una
+// cota superior de intención, no un dato.
+//
+// Importa por tres cosas: convierte esa cota en intención real; da el disparador
+// del trial en el único instante en que la persona quiere algo que no puede
+// hacer (hoy la oferta vive en una pantalla que el 88% nunca visita); y es la
+// medición sin la cual no se puede aplicar la regla acordada de subir la cuota
+// de Zenio cuando muchos lleguen al tope.
+//
+// `recordFeatureUsage` NO se espera con await y se traga sus propios errores
+// (ver lib/featureUsage.ts): si la escritura falla, el 403 sale igual. Anotar
+// jamás puede romperle la respuesta al usuario.
+// ─────────────────────────────────────────────────────────────────────────────
+const FEATURE_LIMITE = 'limite';
+
 /**
  * Middleware: Verificar límite de presupuestos
  */
@@ -39,6 +61,8 @@ export const checkBudgetLimit = async (
       const desglose = ingresos > 0
         ? ` Ahora mismo tienes ${gastos} de gastos y ${ingresos} de ingresos: ambos ocupan el mismo cupo.`
         : '';
+
+      recordFeatureUsage(userId, FEATURE_LIMITE, 'presupuestos');
 
       return res.status(403).json({
         message: `Has alcanzado el límite de ${limitCheck.limit} presupuestos activos en tu plan actual.${desglose}`,
@@ -89,6 +113,8 @@ export const checkGoalLimit = async (
     );
 
     if (!limitCheck.allowed) {
+      recordFeatureUsage(userId, FEATURE_LIMITE, 'metas');
+
       return res.status(403).json({
         message: `Has alcanzado el límite de ${limitCheck.limit} metas activas en tu plan actual`,
         upgrade: true,
@@ -164,6 +190,12 @@ export const checkZenioLimit = async (
     if (currentCount >= zenioLimit) {
       // Calcular fecha de próximo reset (primer día del próximo mes)
       const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+      // A diferencia de los otros tres, este techo se puede tocar varias veces
+      // en el mismo mes: el contador no se reinicia hasta el día 1. Cada intento
+      // cuenta como una fila, que es lo que se quiere — la insistencia ES la
+      // señal de intención.
+      recordFeatureUsage(userId, FEATURE_LIMITE, 'zenio');
 
       return res.status(403).json({
         message: `Has alcanzado el límite de ${zenioLimit} consultas de Zenio este mes`,

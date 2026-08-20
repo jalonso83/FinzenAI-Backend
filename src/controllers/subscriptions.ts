@@ -176,7 +176,12 @@ export const startTrial = async (req: Request, res: Response) => {
     // llegan a activar. Se registra aquí y no se deduce de subscription.
     // trialStartedAt porque el scheduler pone ese campo en NULL al vencer el
     // trial — o sea que los trials ya terminados serían invisibles.
-    recordFeatureUsage(userId, 'suscripciones', 'inicio_trial');
+    // El PLAN va en metadata y no en `action`: 'inicio_trial' es la definición
+    // canónica de "trial iniciado" y hay consultas que ya filtran por ese valor
+    // exacto. Sin esto el plan se pierde: `subscriptions.plan` vuelve a FREE al
+    // vencer el trial, así que hoy no se puede saber cuántos tomaron Plus y
+    // cuántos Pro.
+    recordFeatureUsage(userId, 'suscripciones', 'inicio_trial', { plan });
 
     logger.log(`✅ Trial iniciado para usuario ${userId} - Plan: ${plan} - Termina: ${trialEndsAt.toISOString()}`);
 

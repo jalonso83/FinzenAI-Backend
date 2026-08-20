@@ -3,6 +3,7 @@ import { ReminderService, PAYMENT_TYPE_INFO, CreateReminderInput, UpdateReminder
 import { PaymentType } from '@prisma/client';
 import { subscriptionService } from '../services/subscriptionService';
 import { PLANS } from '../config/stripe';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 import { logger } from '../utils/logger';
 // Extender Request para incluir usuario autenticado
@@ -110,6 +111,11 @@ export const createReminder = async (req: AuthRequest, res: Response) => {
       const currentRemindersCount = await ReminderService.countActiveReminders(userId);
 
       if (currentRemindersCount >= remindersLimit) {
+        // Mismo evento que los otros tres techos del plan (ver la nota larga en
+        // middleware/planLimits.ts). Este vive aquí y no en el middleware
+        // porque el límite de recordatorios se valida dentro del controlador.
+        recordFeatureUsage(userId, 'limite', 'recordatorios');
+
         return res.status(403).json({
           error: 'Límite de plan alcanzado',
           message: `Tu plan ${subscription.plan} permite máximo ${remindersLimit} recordatorios activos. Mejora a Plus para recordatorios ilimitados.`,

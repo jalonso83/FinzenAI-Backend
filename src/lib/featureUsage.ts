@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
 import { logger } from '../utils/logger';
 
@@ -11,8 +12,16 @@ import { logger } from '../utils/logger';
  * @param feature ej. 'ant_expense'
  * @param action  ej. 'analysis' (uso real) | 'config' (abrió la pantalla)
  */
-export function recordFeatureUsage(userId: string, feature: string, action: string): void {
+export function recordFeatureUsage(
+  userId: string,
+  feature: string,
+  action: string,
+  /** Contexto opcional del evento (ej. `{ plan: 'PRO' }` al activar un trial).
+   *  NO metas aquí nada que sirva para filtrar: para eso está `action`, que es
+   *  columna indexada. Esto es para lo que se quiere leer, no buscar. */
+  metadata?: Prisma.InputJsonValue,
+): void {
   prisma.featureUsage
-    .create({ data: { userId, feature, action } })
+    .create({ data: { userId, feature, action, metadata } })
     .catch((e) => logger.error('[FeatureUsage] Error registrando uso:', e));
 }
