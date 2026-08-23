@@ -4,8 +4,24 @@ import { GmailService } from '../services/gmailService';
 import { OutlookService } from '../services/outlookService';
 import { EmailSyncService } from '../services/emailSyncService';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 import { logger } from '../utils/logger';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embudo de "Gastos en automático" (2026-08-23)
+//
+// Hasta ahora no había forma de distinguir "nunca lo intentó" de "lo intentó y
+// falló": los dos casos se veían igual, como la nada. La fila de EmailConnection
+// solo se crea cuando el OAuth termina bien, así que abandonar a mitad no dejaba
+// rastro alguno.
+//
+// Tres eventos, y la diferencia entre cada par es un diagnóstico distinto:
+//   abrio_pantalla → inicio_conexion   la caída aquí es el COPY: llegó y no convenció
+//   inicio_conexion → conecto          la caída aquí es el PERMISO de Google
+//   pocos abrio_pantalla               entonces el problema es DESCUBRIMIENTO
+// ─────────────────────────────────────────────────────────────────────────────
+const FEATURE_EMAIL_SYNC = 'email_sync';
 
 const ALLOWED_REDIRECT_PREFIXES = [
   'finzenai://',
@@ -28,6 +44,14 @@ export const getGmailAuthUrl = async (req: Request, res: Response) => {
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
     }
+
+    // Embudo de Gastos en automático — paso 2 de 3 (ver la nota de
+    // getConnectionStatus). Se registra ANTES de devolver la URL: lo que se
+    // mide es la INTENCIÓN de conectar, y a partir de aquí el usuario sale de
+    // nuestra app hacia la pantalla de consentimiento de Google. Si nunca
+    // vuelve, la diferencia entre este evento y `conecto` es exactamente la
+    // gente que se asustó con el permiso.
+    recordFeatureUsage(userId, FEATURE_EMAIL_SYNC, 'inicio_conexion', { proveedor: 'gmail' });
 
     // Verificar si ya hay una conexión de Gmail activa
     const existingGmail = await prisma.emailConnection.findFirst({
@@ -129,6 +153,8 @@ export const getOutlookAuthUrl = async (req: Request, res: Response) => {
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
     }
+
+    recordFeatureUsage(userId, FEATURE_EMAIL_SYNC, 'inicio_conexion', { proveedor: 'outlook' });
 
     // Verificar si ya hay una conexión de Outlook activa
     const existingOutlook = await prisma.emailConnection.findFirst({
@@ -241,6 +267,17 @@ export const getConnectionStatus = async (req: Request, res: Response) => {
     if (!userId) {
       return res.status(401).json({ error: 'No autorizado' });
     }
+
+    // Embudo de Gastos en automático — paso 1 de 3. La pantalla llama a este
+    // endpoint al montarse y no lo llama nadie más, así que equivale a "abrió
+    // la pantalla" (mismo truco con el que se mide `ver_planes`).
+    //
+    // OJO al leerlo: la ruta está detrás de requirePlan('PRO'), así que este
+    // embudo mide SOLO a usuarios Pro. Al usuario gratis que toca la opción del
+    // menú se le abre el modal de Suscripciones y su toque se pierde entre los
+    // `ver_planes` — para separarlo hace falta que la app mande el origen, y
+    // eso es cambio de app.
+    recordFeatureUsage(userId, FEATURE_EMAIL_SYNC, 'abrio_pantalla');
 
     const status = await EmailSyncService.getConnectionStatus(userId);
 

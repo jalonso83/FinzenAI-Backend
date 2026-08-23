@@ -3,6 +3,7 @@ import { NotificationType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { NotificationService } from './notificationService';
 import { EmailSyncService } from './emailSyncService';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 import { logger } from '../utils/logger';
 // Tipos de notificación de trial y sus días correspondientes
@@ -326,6 +327,24 @@ export class TrialScheduler {
       });
 
       logger.log(`[TrialScheduler] 🔄 Trial terminado para usuario ${userId} - Cambiado a plan FREE`);
+
+      // Denominador del vencimiento: cuántos trials terminan sin convertir.
+      //
+      // Se registra AQUÍ y no se deduce de la suscripción porque el update de
+      // arriba acaba de borrar `trialStartedAt`, `trialEndsAt` y de poner el
+      // plan en FREE — pasado este punto no queda ni rastro de que este usuario
+      // tuvo un trial ni de con qué plan. Es el mismo motivo por el que
+      // `inicio_trial` se registra en su momento.
+      //
+      // Con esto, el día que exista la pantalla de vencimiento ya habrá un
+      // "antes" con qué comparar, en vez de empezar a medir desde cero.
+      const diasReales = subscription.trialStartedAt
+        ? Math.round((Date.now() - subscription.trialStartedAt.getTime()) / 86400000)
+        : null;
+      recordFeatureUsage(userId, 'suscripciones', 'trial_vencido', {
+        plan: subscription.plan,
+        dias: diasReales,
+      });
 
       // Notificación: best-effort. Si falla (FCM caído, token inválido, etc.)
       // logueamos y seguimos — el trial ya terminó correctamente en DB.

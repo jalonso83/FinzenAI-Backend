@@ -234,6 +234,11 @@ export const checkAdvancedReports = async (
     const hasAccess = await subscriptionService.canUseFeature(userId, 'advancedReports');
 
     if (!hasAccess) {
+      // Estos dos miden algo distinto a los cuatro techos: los techos dicen
+      // "quise MÁS de lo que ya tengo"; estos dicen "quise algo que NUNCA he
+      // tenido", que es justo lo que el trial vende.
+      recordFeatureUsage(userId, FEATURE_LIMITE, 'reportes_avanzados');
+
       return res.status(403).json({
         message: 'Los reportes avanzados solo están disponibles en planes Premium y Pro',
         upgrade: true,
@@ -265,6 +270,8 @@ export const checkExportData = async (
     const hasAccess = await subscriptionService.canUseFeature(userId, 'exportData');
 
     if (!hasAccess) {
+      recordFeatureUsage(userId, FEATURE_LIMITE, 'exportar');
+
       return res.status(403).json({
         message: 'La exportación de datos solo está disponible en planes Premium y Pro',
         upgrade: true,

@@ -7,6 +7,7 @@ import { NotificationService } from './notificationService';
 import { recalculateBudgets } from './budgetService';
 import { GamificationService } from './gamificationService';
 import { encrypt, decrypt } from '../utils/encryption';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 import { logger } from '../utils/logger';
 export interface SyncResult {
@@ -67,6 +68,15 @@ export class EmailSyncService {
         isActive: true
       }
     });
+
+    // Embudo de Gastos en automático — paso 3 de 3. Se registra aquí y no en
+    // el callback HTTP porque este es el punto donde la conexión existe de
+    // verdad: si el intercambio de tokens falla, no se llega hasta acá.
+    //
+    // Y se registra en `feature_usage` aunque la fila de EmailConnection ya lo
+    // implique, porque esa fila se BORRA en cascada al bajar de Pro — el
+    // historial de quién llegó a conectar solo sobrevive aquí.
+    recordFeatureUsage(userId, 'email_sync', 'conecto', { proveedor: 'gmail' });
 
     // Crear filtros de bancos por defecto según el país del usuario
     const userCountry = this.mapCountryToCode(user?.country || 'República Dominicana');
@@ -135,6 +145,9 @@ export class EmailSyncService {
         isActive: true
       }
     });
+
+    // Paso 3 de 3 del embudo — ver la nota en la rama de Gmail.
+    recordFeatureUsage(userId, 'email_sync', 'conecto', { proveedor: 'outlook' });
 
     // Crear filtros de bancos por defecto según el país del usuario
     const userCountry = this.mapCountryToCode(user?.country || 'República Dominicana');
