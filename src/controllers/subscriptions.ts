@@ -109,12 +109,25 @@ export const startTrial = async (req: Request, res: Response) => {
       if (existingDeviceTrial) {
         logger.warn(`⚠️ Dispositivo ${deviceId} ya usó trial con usuario ${existingDeviceTrial.usedByUserId}`);
 
-        // Marcar hasUsedTrial para que el cliente no intente trial de nuevo
-        // y pueda ir directo al flujo de compra
-        await prisma.user.update({
-          where: { id: userId },
-          data: { hasUsedTrial: true }
-        });
+        // AQUÍ SE MARCABA `hasUsedTrial = true` a este usuario, y era un bug.
+        //
+        // La intención era que la app dejara de ofrecerle el botón y lo mandara
+        // directo a comprar. Razonable, pero el mecanismo estaba mal: usaba la
+        // bandera de "YA CONSUMIÓ su prueba" para decir "AQUÍ no puede". A esta
+        // persona se le negaba el trial y encima quedaba marcada como si lo
+        // hubiera disfrutado, con dos consecuencias permanentes:
+        //   1. No podía activar una prueba nunca más, de una que jamás tuvo.
+        //   2. Perdía también los 7 días que Stripe concede en el checkout,
+        //      porque stripeService lee esta misma bandera.
+        // Y de paso inflaba el conteo: 85 marcados contra 20 trials reales.
+        //
+        // Efecto secundario asumido a propósito (2026-08-23): como la app decide
+        // mostrar el botón con `canUseTrial = !hasUsedTrial`, ahora lo va a
+        // seguir viendo y recibirá este mismo error si insiste. Se aceptó porque
+        // solo le ocurre a quien crea una SEGUNDA cuenta en la misma instalación
+        // —justo el caso que este bloqueo existe para frenar— y porque el dato
+        // honesto vale más que ocultarle un botón a esa persona.
+        recordFeatureUsage(userId, 'suscripciones', 'trial_bloqueado_dispositivo');
 
         return res.status(400).json({
           message: 'Este dispositivo ya ha utilizado un período de prueba. Puedes suscribirte directamente.',
