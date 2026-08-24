@@ -373,7 +373,14 @@ export const analyzeAntExpenses = async (req: Request, res: Response) => {
     const isBasicAnalysis = analysisType === 'basic';
 
     // Medición de uso (fire-and-forget, no toca la app): corrió un análisis = uso real.
-    recordFeatureUsage(userId, 'ant_expense', 'analysis');
+    //
+    // El MODO va en metadata desde 2026-08-24: el análisis completo es de pago y
+    // el básico es de Gratis, así que sin distinguirlos este evento mezclaba dos
+    // cosas distintas y no servía para saber si la versión premium se usa.
+    recordFeatureUsage(userId, 'ant_expense', 'analysis', {
+      modo: analysisType,
+      plan: subscription.plan,
+    });
 
     logger.log(`[AntDetective] Usuario ${userId}, Plan: ${subscription.plan}, Análisis: ${analysisType}`);
 

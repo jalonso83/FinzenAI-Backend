@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 import { logger } from '../utils/logger';
 interface Alert {
@@ -274,7 +275,15 @@ export const exportCategoryReport = async (req: Request, res: Response): Promise
     }
 
     const { format = 'json' } = req.query;
-    
+
+    // Uso REAL de exportar. Se registra el plan porque esta ruta NO está
+    // protegida en el servidor: `checkExportData` existe en el middleware pero
+    // no está montada en ninguna ruta, y el bloqueo vive solo en la app
+    // (`canExportData()` del store). O sea que aquí puede aparecer un usuario
+    // FREE, y saberlo es justo el dato: significaría que el gate del cliente se
+    // está saltando.
+    recordFeatureUsage(userId, 'premium', 'exportar', { formato: String(format) });
+
     // Obtener los datos del reporte
     const { 
       startDate, 

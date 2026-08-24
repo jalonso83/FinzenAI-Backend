@@ -341,9 +341,28 @@ export class TrialScheduler {
       const diasReales = subscription.trialStartedAt
         ? Math.round((Date.now() - subscription.trialStartedAt.getTime()) / 86400000)
         : null;
+
+      // Edad de la cuenta AL VENCER. Es lo que permite comparar a esta persona
+      // con alguien que nunca tomó trial pero lleva el mismo tiempo registrado,
+      // en la misma ventana relativa.
+      //
+      // Sin esto, la comparación se hace mal: la primera vez medimos al grupo
+      // del trial desde que activó y al control desde que se registró, lo que
+      // pudo estar comparando la semana 3 de unos contra la semana 1 de otros.
+      // Con la retención cayendo de 19% en D1 a 7,5% en D7, ese desalineamiento
+      // solo podía explicar el resultado entero.
+      const usuario = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdAt: true },
+      });
+      const edadCuentaDias = usuario
+        ? Math.round((Date.now() - usuario.createdAt.getTime()) / 86400000)
+        : null;
+
       recordFeatureUsage(userId, 'suscripciones', 'trial_vencido', {
         plan: subscription.plan,
         dias: diasReales,
+        edadCuentaDias,
       });
 
       // Notificación: best-effort. Si falla (FCM caído, token inválido, etc.)

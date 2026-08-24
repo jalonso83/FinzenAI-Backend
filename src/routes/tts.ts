@@ -10,6 +10,7 @@ import { apiLimiter } from '../config/rateLimiter';
 import { openAiTtsService } from '../services/openAiTtsService';
 import { logger } from '../utils/logger';
 import { prisma } from '../lib/prisma';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 const router: RouterType = Router();
 
@@ -42,6 +43,12 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
     });
 
     const currency = user?.currency || 'usd';
+
+    // Uso REAL de una función premium (la voz de Zenio es de Plus y Pro).
+    // Hasta ahora solo medíamos cuándo alguien NO PODÍA usar algo; esto mide
+    // cuándo lo usa, que es lo que dice si el plan de pago entrega valor.
+    if (user?.id) recordFeatureUsage(user.id, 'premium', 'zenio_voz');
+
     const result = await openAiTtsService.generateSpeech({ text, currency, userId: user?.id });
 
     if (!result.success || !result.audio) {

@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { NotificationService } from './notificationService';
 import { subscriptionService } from './subscriptionService';
 import { PLANS } from '../config/stripe';
+import { recordFeatureUsage } from '../lib/featureUsage';
 
 /**
  * Recálculo del acumulado de los presupuestos afectados por un movimiento, y las
@@ -133,6 +134,12 @@ export async function recalculateBudgets(
       try {
         // Cruce del umbral de aviso (sin haber llegado todavía al 100%).
         if (pctAntes < umbral && pctAhora >= umbral && pctAhora < 100) {
+          // Entrega REAL de una función de pago: las alertas de umbral son de
+          // Plus y Pro (`budgetAlerts: false` en FREE). A diferencia de las
+          // demás, esta el usuario no la pide — se la entregamos. Medirla dice
+          // si el plan de pago está haciendo algo por él además de existir.
+          recordFeatureUsage(userId, 'premium', 'alerta_umbral');
+
           await NotificationService.notifyBudgetAlert(
             userId,
             budget.name,
