@@ -7,6 +7,7 @@ import {
   getOutlookAuthUrl,
   handleOutlookCallback,
   getConnectionStatus,
+  getSyncProgress,
   triggerSync,
   disconnectEmail,
   getImportHistory,
@@ -44,6 +45,11 @@ router.get('/outlook/auth-url', authenticateToken, requirePlan('PRO'), getOutloo
 
 // Obtener estado de conexion
 router.get('/status', authenticateToken, requirePlan('PRO'), getConnectionStatus);
+
+// Avance de la sincronización en curso. Se consulta cada pocos segundos desde la
+// pantalla de conexión, así que va aparte de /status: una fila, sin joins, y sin
+// registrar `abrio_pantalla` — sondear no es abrir la pantalla.
+router.get('/progress', authenticateToken, requirePlan('PRO'), getSyncProgress);
 
 // Iniciar sincronizacion manual
 router.post('/sync', authenticateToken, requirePlan('PRO'), triggerSync);

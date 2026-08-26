@@ -95,6 +95,8 @@ export class EmailSyncService {
       logger.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
     }
 
+    this.arrancarPrimeraSincronizacion(userId, 'GMAIL', connection.id);
+
     return connection;
   }
 
@@ -166,7 +168,94 @@ export class EmailSyncService {
       logger.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
     }
 
+    this.arrancarPrimeraSincronizacion(userId, 'OUTLOOK', connection.id);
+
     return connection;
+  }
+
+  /**
+   * Progreso de la sincronización en curso (o de la última terminada).
+   *
+   * Pensado para que la pantalla de conexión lo consulte cada pocos segundos y
+   * pueda mostrar avance real —"revisando 23 de 47"— en vez de una rueda que no
+   * dice nada. Devuelve siempre algo: si no hay ninguna corrida, `estado: null`.
+   *
+   * Es deliberadamente barato: una sola fila, sin joins, para que se pueda
+   * consultar cada 2 o 3 segundos sin pesar.
+   */
+  static async getSyncProgress(userId: string): Promise<{
+    estado: 'IN_PROGRESS' | 'SUCCESS' | 'FAILED' | null;
+    correosEncontrados: number;
+    correosProcesados: number;
+    transaccionesCreadas: number;
+    terminado: boolean;
+  }> {
+    const ultima = await prisma.emailSyncLog.findFirst({
+      where: { emailConnection: { userId } },
+      orderBy: { startedAt: 'desc' },
+      select: {
+        status: true,
+        emailsFound: true,
+        emailsProcessed: true,
+        transactionsCreated: true,
+        completedAt: true,
+      },
+    });
+
+    if (!ultima) {
+      return { estado: null, correosEncontrados: 0, correosProcesados: 0, transaccionesCreadas: 0, terminado: false };
+    }
+
+    return {
+      estado: ultima.status as 'IN_PROGRESS' | 'SUCCESS' | 'FAILED',
+      correosEncontrados: ultima.emailsFound,
+      correosProcesados: ultima.emailsProcessed,
+      transaccionesCreadas: ultima.transactionsCreated,
+      terminado: ultima.status !== 'IN_PROGRESS',
+    };
+  }
+
+  /**
+   * ─── Primera sincronización, disparada al conectar ──────────────────────────
+   *
+   * Antes de esto, conectar el correo no hacía que entrara nada: la app mostraba
+   * "¡Conectado!" y las transacciones no aparecían hasta que el usuario tocara
+   * "Sincronizar Todas" a mano o hasta que pasara el scheduler horas después.
+   * Es decir, el momento de más ilusión del producto —acabo de darle acceso a mi
+   * correo— terminaba en una pantalla vacía. La peor primera impresión posible,
+   * y justo la que el rediseño quiere aprovechar.
+   *
+   * Va SIN await y con su propio catch a propósito: la conexión ya está creada y
+   * el usuario ya recibió su respuesta. Si esta corrida falla, el scheduler la
+   * recogerá igual en su siguiente pasada — pero el 201 del OAuth no se puede
+   * quedar esperando a que terminemos de leer un buzón.
+   *
+   * El aviso de que terminó ya existe: la notificación EMAIL_SYNC_COMPLETE que
+   * dispara el propio flujo de sincronización.
+   */
+  private static arrancarPrimeraSincronizacion(
+    userId: string,
+    proveedor: 'GMAIL' | 'OUTLOOK',
+    connectionId: string,
+  ): void {
+    // Solo ESTA conexión, no todas las del usuario. `syncAllUserConnections`
+    // aborta entero si encuentra alguna en IN_PROGRESS, así que conectar Gmail y
+    // Outlook seguidos habría hecho que la segunda se registrara como fallo
+    // cuando en realidad solo estaba esperando su turno.
+    void this.syncUserEmails(connectionId)
+      .then((result) => {
+        logger.log(`[EmailSync] Primera sincronización de ${proveedor} para ${userId}: ${result.transactionsCreated} transacciones`);
+        recordFeatureUsage(userId, 'email_sync', 'primera_sync', {
+          proveedor,
+          transacciones: result.transactionsCreated,
+        });
+      })
+      .catch((error) => {
+        // No se le devuelve al usuario: ya tiene su "conectado". Queda en el log
+        // y en el próximo pase del scheduler.
+        logger.error(`[EmailSync] Falló la primera sincronización de ${proveedor} para ${userId}:`, error);
+        recordFeatureUsage(userId, 'email_sync', 'primera_sync_fallo', { proveedor });
+      });
   }
 
   /**
@@ -345,6 +434,16 @@ export class EmailSyncService {
 
       result.emailsFound = messages.length;
 
+      // ─── Progreso en vivo ─────────────────────────────────────────────────
+      // El total se escribe apenas se conoce, ANTES de procesar nada, para que
+      // la app pueda decir "revisando 0 de 47" en vez de un giro sin fondo. Sin
+      // esto el usuario solo ve una rueda: la sincronización tarda lo que tarde
+      // y no hay forma de saber si avanza o se colgó.
+      await prisma.emailSyncLog.update({
+        where: { id: syncLog.id },
+        data: { emailsFound: messages.length },
+      }).catch(() => { /* el progreso nunca puede romper la sincronización */ });
+
       if (messages.length === 0) {
         result.success = true;
         await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS');
@@ -485,6 +584,19 @@ export class EmailSyncService {
           }
 
           result.emailsProcessed++;
+
+          // Progreso cada 5 correos, no en cada uno: con buzones grandes serían
+          // cientos de escrituras por sincronización y el avance no se nota más
+          // por ir de uno en uno.
+          if (result.emailsProcessed % 5 === 0) {
+            await prisma.emailSyncLog.update({
+              where: { id: syncLog.id },
+              data: {
+                emailsProcessed: result.emailsProcessed,
+                transactionsCreated: result.transactionsCreated,
+              },
+            }).catch(() => { /* nunca romper la sincronización por el progreso */ });
+          }
 
         } catch (error: any) {
           logger.error(`[EmailSync] Error processing message ${message.id}:`, error);

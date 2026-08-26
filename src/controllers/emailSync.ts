@@ -280,18 +280,39 @@ export const getConnectionStatus = async (req: Request, res: Response) => {
     recordFeatureUsage(userId, FEATURE_EMAIL_SYNC, 'abrio_pantalla');
 
     const status = await EmailSyncService.getConnectionStatus(userId);
+    // El progreso viaja junto al estado para que la pantalla de conexión no
+    // tenga que pedir dos cosas: con una sola llamada sabe si está conectado y
+    // por dónde va la sincronización.
+    const progreso = await EmailSyncService.getSyncProgress(userId);
 
     return res.json({
       success: true,
-      ...status
+      ...status,
+      progreso,
     });
-
   } catch (error: any) {
     logger.error('[EmailSync] Error getting status:', error);
-    return res.status(500).json({
-      error: 'Error al obtener estado',
-      message: error.message
-    });
+    return res.status(500).json({ error: 'Error obteniendo estado', message: error.message });
+  }
+};
+
+/**
+ * GET /api/email-sync/progress — solo el avance, para consultar cada pocos
+ * segundos mientras corre la primera sincronización. Separado de /status para
+ * que sondear sea barato: una fila, sin joins.
+ */
+export const getSyncProgress = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    const progreso = await EmailSyncService.getSyncProgress(userId);
+    return res.json({ success: true, ...progreso });
+  } catch (error: any) {
+    logger.error('[EmailSync] Error getting progress:', error);
+    return res.status(500).json({ error: 'Error obteniendo progreso', message: error.message });
   }
 };
 
