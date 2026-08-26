@@ -4,15 +4,25 @@ import { prisma } from '../lib/prisma';
 import { NotificationService } from './notificationService';
 import { EmailSyncService } from './emailSyncService';
 import { recordFeatureUsage } from '../lib/featureUsage';
+import { planQueConcedeElTrial, duracionTrialDias } from '../config/trial';
 
 import { logger } from '../utils/logger';
-// Tipos de notificación de trial y sus días correspondientes
+// Avisos anclados al INICIO del trial: son los de arranque, y su sentido no
+// cambia con la duración. "Bienvenido" el día 1 es el día 1 dure lo que dure.
+//
+// TRIAL_ENDING salió de esta lista a propósito. Estaba fijo en el día 7, que con
+// un trial de 7 días era el último —correcto— pero con uno de 21 avisaría "se te
+// acaba" a alguien que todavía tiene dos semanas. Es el aviso que más empuja a
+// pagar; dispararlo a destiempo lo desperdicia y encima le miente al usuario.
+// Ahora se calcula por los días que FALTAN. Ver `DIAS_ANTES_DEL_AVISO_FINAL`.
 const TRIAL_NOTIFICATIONS: { day: number; type: NotificationType }[] = [
   { day: 1, type: 'TRIAL_WELCOME' },
   { day: 3, type: 'TRIAL_DAY_3' },
   { day: 5, type: 'TRIAL_DAY_5' },
-  { day: 7, type: 'TRIAL_ENDING' },
 ];
+
+/** Cuántos días antes del vencimiento se manda el aviso final. */
+const DIAS_ANTES_DEL_AVISO_FINAL = 2;
 
 export class TrialScheduler {
   private static isRunning: boolean = false;
@@ -170,8 +180,20 @@ export class TrialScheduler {
           // Calcular día del trial
           const dayOfTrial = this.calculateDayOfTrial(trialStartedAt);
 
-          // Buscar la notificación correspondiente al día actual
-          const notificationToSend = TRIAL_NOTIFICATIONS.find(n => n.day === dayOfTrial);
+          // Días que FALTAN para vencer. El aviso final se ancla aquí y no al
+          // día transcurrido, para que siga cayendo al final del trial aunque se
+          // cambie la duración desde la configuración.
+          const diasRestantes = Math.ceil(
+            (trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)
+          );
+
+          // El aviso final gana sobre los de arranque si ambos cayeran el mismo
+          // día (pasa con trials cortos, donde el día 5 y "faltan 2" coinciden):
+          // avisar de que se acaba pesa más que un recordatorio de mitad.
+          const notificationToSend =
+            diasRestantes <= DIAS_ANTES_DEL_AVISO_FINAL
+              ? ({ day: dayOfTrial, type: 'TRIAL_ENDING' as NotificationType })
+              : TRIAL_NOTIFICATIONS.find(n => n.day === dayOfTrial);
 
           if (notificationToSend && !sentNotifications.includes(notificationToSend.type)) {
             const sent = await this.sendTrialNotification(
@@ -179,7 +201,8 @@ export class TrialScheduler {
               user.name,
               notificationToSend.type,
               subscription.id,
-              sentNotifications
+              sentNotifications,
+              diasRestantes
             );
 
             if (sent) {
@@ -222,7 +245,8 @@ export class TrialScheduler {
     userName: string,
     notificationType: NotificationType,
     subscriptionId: string,
-    sentNotifications: string[]
+    sentNotifications: string[],
+    diasRestantes?: number
   ): Promise<boolean> {
     try {
       let result;
@@ -235,10 +259,10 @@ export class TrialScheduler {
           result = await NotificationService.notifyTrialDay3(userId);
           break;
         case 'TRIAL_DAY_5':
-          result = await NotificationService.notifyTrialDay5(userId);
+          result = await NotificationService.notifyTrialDay5(userId, diasRestantes);
           break;
         case 'TRIAL_ENDING':
-          result = await NotificationService.notifyTrialEnding(userId);
+          result = await NotificationService.notifyTrialEnding(userId, diasRestantes);
           break;
         default:
           return false;
@@ -312,6 +336,14 @@ export class TrialScheduler {
       logger.log(`[TrialScheduler] ⏰ Trial expirado de usuario ${userId} (sub ${subscriptionId}). Degradando a FREE.`);
       const sentNotifications = (subscription.trialNotificationsSent as string[]) || [];
 
+      // Foto del valor entregado, ANTES de borrar las conexiones de correo (más
+      // abajo): `ImportedBankEmail` cuelga de ellas en cascada, así que después
+      // del cleanup este número ya no existe. Es lo único que le podemos decir a
+      // la persona sobre lo que el trial hizo por ella.
+      const importadasEnElTrial = await prisma.importedBankEmail
+        .count({ where: { emailConnection: { userId } } })
+        .catch(() => 0);
+
       // CRÍTICO: el update de la suscripción va PRIMERO. Si las operaciones de
       // best-effort de abajo (notificación, cleanup de email) fallan, el cambio
       // de status ya quedó persistido y el user no se queda stuck en TRIALING.
@@ -322,6 +354,11 @@ export class TrialScheduler {
           plan: 'FREE',
           trialStartedAt: null,
           trialEndsAt: null,
+          // Única huella que queda de que esta persona tuvo un trial: los otros
+          // dos campos se acaban de borrar. De aquí salen el aterrizaje suave y
+          // la medición a 7 y 30 días del vencimiento.
+          trialEndedAt: new Date(),
+          trialImportedCount: importadasEnElTrial,
           trialNotificationsSent: [...sentNotifications, 'TRIAL_ENDED']
         }
       });
@@ -363,6 +400,11 @@ export class TrialScheduler {
         plan: subscription.plan,
         dias: diasReales,
         edadCuentaDias,
+        // Separa a quien probó Gastos en automático de quien nunca lo tocó. De
+        // los 29 del trial viejo no lo usó ninguno, así que ese 0 de retención
+        // medía un trial que no entregaba nada. Sin este campo, la primera
+        // cohorte del trial nuevo tendría el mismo problema de lectura.
+        importadas: importadasEnElTrial,
       });
 
       // Notificación: best-effort. Si falla (FCM caído, token inválido, etc.)
@@ -539,14 +581,14 @@ export class TrialScheduler {
 
       // Usuario elegible - iniciar trial
       const now = new Date();
-      const trialEndsAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 días
+      const trialEndsAt = new Date(now.getTime() + duracionTrialDias() * 24 * 60 * 60 * 1000);
 
       // Crear suscripción con trial
       await prisma.subscription.upsert({
         where: { userId },
         update: {
           status: 'TRIALING',
-          plan: 'PREMIUM', // Durante el trial tienen acceso PREMIUM
+          plan: planQueConcedeElTrial() ?? 'PREMIUM', // D1. Sin variable: PREMIUM, como siempre
           trialStartedAt: now,
           trialEndsAt: trialEndsAt,
           trialNotificationsSent: []
@@ -554,7 +596,7 @@ export class TrialScheduler {
         create: {
           userId,
           status: 'TRIALING',
-          plan: 'PREMIUM', // Durante el trial tienen acceso PREMIUM
+          plan: planQueConcedeElTrial() ?? 'PREMIUM', // D1. Sin variable: PREMIUM, como siempre
           trialStartedAt: now,
           trialEndsAt: trialEndsAt,
           trialNotificationsSent: []

@@ -8,6 +8,7 @@ import { sanitizeLimit, PAGINATION } from '../config/pagination';
 import jwt from 'jsonwebtoken';
 import { ENV } from '../config/env';
 import { recordFeatureUsage } from '../lib/featureUsage';
+import { planQueConcedeElTrial, duracionTrialDias, aterrizajeTrial } from '../config/trial';
 
 import { logger } from '../utils/logger';
 /**
@@ -65,8 +66,9 @@ export const createCheckout = async (req: Request, res: Response) => {
 };
 
 /**
- * Iniciar período de prueba de 7 días (sin tarjeta)
- * El usuario selecciona un plan y obtiene trial gratis
+ * Iniciar período de prueba sin tarjeta.
+ * La duración y el plan concedido salen de `config/trial.ts` (D4 y D1): el
+ * cliente ya no elige plan, el servidor concede Pro.
  */
 export const startTrial = async (req: Request, res: Response) => {
   try {
@@ -142,23 +144,41 @@ export const startTrial = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Ya tienes una suscripción activa' });
     }
 
-    // Iniciar trial de 7 días
+    // D1 — El servidor decide el plan, no el cliente.
+    //
+    // El `plan` del body se sigue validando arriba (para no aceptar basura) pero
+    // ya no se usa para conceder. Antes se guardaba tal cual, así que quien
+    // tocaba "Plus" en la pantalla probaba un trial sin Gastos en automático:
+    // la única función que justifica pagar quedaba fuera justo durante los días
+    // en que la persona está decidiendo si paga.
+    //
+    // Se ignora en el servidor y no en la app a propósito: así el cambio también
+    // alcanza a las versiones ya instaladas, que van a seguir mandando PREMIUM.
+    // Sin la variable puesta se respeta lo que pidió el cliente = lo de hoy.
+    const planConcedido = planQueConcedeElTrial() ?? plan;
+
+    // D4 — Duración configurable (21 días). Ver `config/trial.ts`.
     const now = new Date();
-    const trialEndsAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 días
+    const trialEndsAt = new Date(now.getTime() + duracionTrialDias() * 24 * 60 * 60 * 1000);
+
+    if (plan !== planConcedido) {
+      logger.log(`[Trial] ${userId} pidió ${plan}; se concede ${planConcedido} (D1).`);
+    }
 
     await prisma.subscription.upsert({
       where: { userId },
       update: {
         status: 'TRIALING',
-        plan: plan,
+        plan: planConcedido,
         trialStartedAt: now,
         trialEndsAt: trialEndsAt,
+        trialEndedAt: null, // por si es una concesión sobre un trial anterior
         trialNotificationsSent: []
       },
       create: {
         userId,
         status: 'TRIALING',
-        plan: plan,
+        plan: planConcedido,
         trialStartedAt: now,
         trialEndsAt: trialEndsAt,
         trialNotificationsSent: []
@@ -194,18 +214,34 @@ export const startTrial = async (req: Request, res: Response) => {
     // exacto. Sin esto el plan se pierde: `subscriptions.plan` vuelve a FREE al
     // vencer el trial, así que hoy no se puede saber cuántos tomaron Plus y
     // cuántos Pro.
-    recordFeatureUsage(userId, 'suscripciones', 'inicio_trial', { plan });
+    //
+    // Van los DOS planes desde D1. `plan` es el que la persona tocó en la
+    // pantalla y `planConcedido` el que recibió. Mientras la app vieja siga
+    // instalada, `plan` es lo más cerca de una preferencia declarada que vamos a
+    // tener, y contesta la pregunta que hoy no se puede contestar: si la gente
+    // elegía Plus por sí sola, forzar Pro es el arreglo; si ya elegía Pro y aun
+    // así no conectaba el correo, el problema es la pantalla, no el acceso.
+    recordFeatureUsage(userId, 'suscripciones', 'inicio_trial', {
+      plan: planConcedido,
+      planPedido: plan,
+      dias: duracionTrialDias(),
+    });
 
-    logger.log(`✅ Trial iniciado para usuario ${userId} - Plan: ${plan} - Termina: ${trialEndsAt.toISOString()}`);
+    logger.log(`✅ Trial iniciado para usuario ${userId} - Plan: ${planConcedido} - Termina: ${trialEndsAt.toISOString()}`);
 
+    // El mensaje y los días salen de la configuración, no de un 7 escrito a
+    // mano: la app vieja los muestra tal cual llegan, así que el día que se
+    // mueva la duración no queda diciéndole al usuario un número que ya no es.
+    // Y `plan` devuelve el CONCEDIDO, no el pedido — si no, la pantalla
+    // celebraría "Plus" a alguien que acaba de recibir Pro.
     res.json({
       success: true,
-      message: '¡Tu período de prueba de 7 días ha comenzado!',
+      message: `¡Tu período de prueba de ${duracionTrialDias()} días ha comenzado!`,
       trial: {
-        plan,
+        plan: planConcedido,
         startedAt: now,
         endsAt: trialEndsAt,
-        daysRemaining: 7
+        daysRemaining: duracionTrialDias()
       }
     });
   } catch (error: any) {
@@ -610,5 +646,97 @@ export const checkCheckoutSession = async (req: Request, res: Response) => {
       message: 'Error al verificar sesión',
       error: error.message
     });
+  }
+};
+
+/**
+ * GET /api/subscriptions/trial-expiry
+ *
+ * Todo lo que la pantalla de vencimiento necesita pintar, decidido en el
+ * servidor. La app no trae nada de esto cocido por dentro: pregunta y pinta.
+ *
+ * Es la condición que puso Junior en D6. Si el "qué conservas" viviera dentro
+ * de la app, encender el aterrizaje suave costaría compilar, enviar a las
+ * tiendas y esperar revisión. Preguntándolo, cuesta cambiar una variable en
+ * Railway y está vivo esa misma tarde en los teléfonos ya instalados.
+ */
+export const getTrialExpiryState = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user!.id;
+
+    const subscription = await prisma.subscription.findUnique({
+      where: { userId },
+      select: { plan: true, trialEndedAt: true, trialImportedCount: true },
+    });
+
+    const aterrizaje = aterrizajeTrial();
+    const vencioElTrial = subscription?.plan === 'FREE' && subscription?.trialEndedAt != null;
+    const suave = vencioElTrial && aterrizaje.activo;
+
+    // Sale de la foto que tomó el scheduler al vencer, NO de contar
+    // `ImportedBankEmail` ahora: esa tabla cuelga de la conexión de correo con
+    // onDelete: Cascade y la conexión se borra en ese mismo momento, así que
+    // contarla aquí devolvería 0 siempre.
+    //
+    // Las transacciones en sí NO se borran: siguen en el historial del usuario.
+    // Por eso el mensaje honesto es "tus N transacciones se quedan; lo que se
+    // detiene es que entren solas".
+    const transaccionesImportadas = vencioElTrial ? (subscription?.trialImportedCount ?? 0) : 0;
+
+    return res.json({
+      vencioElTrial,
+      trialEndedAt: subscription?.trialEndedAt ?? null,
+      transaccionesImportadas,
+      // Qué se detuvo. Fijo, porque es lo que define al plan Pro.
+      seDetuvo: vencioElTrial ? ['gastos_en_automatico'] : [],
+      // Qué conserva por encima de FREE. Vacío = apagón (lo de hoy).
+      aterrizajeSuave: suave,
+      conserva: suave
+        ? {
+            budgets: Math.max(PLANS.FREE.limits.budgets, aterrizaje.budgets),
+            goals: Math.max(PLANS.FREE.limits.goals, aterrizaje.goals),
+            zenioQueries: Math.max(PLANS.FREE.limits.zenioQueries, aterrizaje.zenioQueries),
+          }
+        : null,
+      limitesFree: {
+        budgets: PLANS.FREE.limits.budgets,
+        goals: PLANS.FREE.limits.goals,
+        zenioQueries: PLANS.FREE.limits.zenioQueries,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Error obteniendo estado de vencimiento:', error);
+    return res.status(500).json({ message: 'Error obteniendo estado de vencimiento' });
+  }
+};
+
+/**
+ * POST /api/subscriptions/trial-expiry/event
+ *
+ * Eventos de la pantalla de vencimiento. Entran ANTES de que la pantalla
+ * exista, y es a propósito: si la medición sale el mismo día que la pantalla,
+ * no hay un "antes" con qué comparar y en dos meses estamos donde estamos hoy
+ * con Email Sync — una función viva que nadie sabe si se usa.
+ *
+ * Acciones esperadas: 'vio', 'toco_recuperar', 'cerro'.
+ */
+export const recordTrialExpiryEvent = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user!.id;
+    const { accion } = req.body as { accion?: string };
+
+    const permitidas = ['vio', 'toco_recuperar', 'cerro'];
+    if (!accion || !permitidas.includes(accion)) {
+      return res.status(400).json({ message: `accion debe ser una de: ${permitidas.join(', ')}` });
+    }
+
+    recordFeatureUsage(userId, 'vencimiento_trial', accion, {
+      aterrizajeSuave: aterrizajeTrial().activo,
+    });
+
+    return res.json({ ok: true });
+  } catch (error: any) {
+    logger.error('Error registrando evento de vencimiento:', error);
+    return res.status(500).json({ message: 'Error registrando evento' });
   }
 };

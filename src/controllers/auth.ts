@@ -10,6 +10,7 @@ import { TrialScheduler } from '../services/trialScheduler';
 import { ReferralService } from '../services/referralService';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
+import { planQueConcedeElTrial, duracionTrialDias } from '../config/trial';
 
 import { logger } from '../utils/logger';
 
@@ -165,14 +166,19 @@ async function startUserTrial(
     // IMPORTANTE: Si falla el trial, crear suscripción TRIALING manualmente
     // El usuario debe obtener su trial aunque haya un error
     try {
+      // Mismas perillas que el camino normal (D1 y D4). Este es el plan B del
+      // registro y es fácil que se quede atrás: si aquí quedaran 7 días y
+      // PREMIUM fijos, cada fallo del scheduler crearía en silencio un trial
+      // distinto al que reciben los demás, y esa gente ensuciaría la cohorte
+      // justo cuando estamos midiendo si el trial nuevo funciona.
       const now = new Date();
-      const trialEndsAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 días
+      const trialEndsAt = new Date(now.getTime() + duracionTrialDias() * 24 * 60 * 60 * 1000);
 
       await prisma.subscription.upsert({
         where: { userId },
         update: {
           status: 'TRIALING',
-          plan: 'PREMIUM',
+          plan: planQueConcedeElTrial() ?? 'PREMIUM',
           trialStartedAt: now,
           trialEndsAt: trialEndsAt,
           trialNotificationsSent: []
@@ -180,7 +186,7 @@ async function startUserTrial(
         create: {
           userId,
           status: 'TRIALING',
-          plan: 'PREMIUM',
+          plan: planQueConcedeElTrial() ?? 'PREMIUM',
           trialStartedAt: now,
           trialEndsAt: trialEndsAt,
           trialNotificationsSent: []

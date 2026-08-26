@@ -8,6 +8,7 @@ import { recalculateBudgets } from './budgetService';
 import { GamificationService } from './gamificationService';
 import { encrypt, decrypt } from '../utils/encryption';
 import { recordFeatureUsage } from '../lib/featureUsage';
+import { historialPrimeraSyncDias } from '../config/trial';
 
 import { logger } from '../utils/logger';
 export interface SyncResult {
@@ -404,10 +405,15 @@ export class EmailSyncService {
         where: { emailConnectionId: connectionId }
       });
 
-      // Si no hay emails importados, buscar ultimos 30 dias (primera sync real)
-      // Si ya hay emails, buscar desde la ultima sincronizacion
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const afterDate = importedCount === 0 ? thirtyDaysAgo : (connection.lastSyncAt || thirtyDaysAgo);
+      // Primera sync: mira hacia atrás lo que diga la configuración (90 días por
+      // defecto, antes eran 30). Es el momento "wow": conectas y aparece tu
+      // historial ya anotado, y cuanto más atrás llegue más lleno se ve. Es
+      // configurable porque el techo real lo pone el correo del usuario, no
+      // nosotros, y puede haber que moverlo leyendo resultados.
+      //
+      // Syncs siguientes: solo desde la última, para no repetir trabajo.
+      const inicioHistorial = new Date(Date.now() - historialPrimeraSyncDias() * 24 * 60 * 60 * 1000);
+      const afterDate = importedCount === 0 ? inicioHistorial : (connection.lastSyncAt || inicioHistorial);
 
       // Buscar emails según el proveedor
       let messages: any[] = [];

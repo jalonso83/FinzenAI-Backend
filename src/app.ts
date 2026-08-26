@@ -12,6 +12,7 @@ import { AntExpenseScheduler } from './services/antExpenseScheduler';
 import { GoalReminderScheduler } from './services/goalReminderScheduler';
 import { TipScheduler } from './services/tipScheduler';
 import { TrialScheduler } from './services/trialScheduler';
+import { describirConfigTrial } from './config/trial';
 import { ReferralScheduler } from './services/referralScheduler';
 import { BudgetReminderScheduler } from './services/budgetReminderScheduler';
 import { WeeklyReportScheduler } from './services/weeklyReportScheduler';
@@ -266,7 +267,12 @@ async function startServer() {
     // Iniciar scheduler de tips financieros (IA)
     TipScheduler.startScheduler();
 
-    // Iniciar scheduler de notificaciones de trial
+    // Iniciar scheduler de notificaciones de trial.
+    // Se loguea con `logger.error` a propósito: en producción el logger solo
+    // deja pasar errores, y esta línea tiene que verse justo en producción —
+    // es la que dice si el trial nuevo está encendido o si alguien olvidó las
+    // variables el día del build.
+    logger.error(`[Trial] Configuración activa → ${describirConfigTrial()}`);
     TrialScheduler.startScheduler();
 
     // Iniciar scheduler de expiración de referidos

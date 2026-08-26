@@ -11,6 +11,8 @@ import {
   changePlan,
   getPaymentHistory,
   checkCheckoutSession,
+  getTrialExpiryState,
+  recordTrialExpiryEvent,
 } from '../controllers/subscriptions';
 
 const router: Router = express.Router();
@@ -28,6 +30,24 @@ router.get('/plans', getPlans);
  * @access  Private
  */
 router.post('/start-trial', auth, startTrial);
+
+/**
+ * @route   GET /api/subscriptions/trial-expiry
+ * @desc    Qué perdió y qué conserva el usuario tras vencer el trial (D6).
+ *          La app pinta lo que responda esto; no decide nada por su cuenta,
+ *          para poder ablandar el vencimiento sin otro ciclo de tienda.
+ * @access  Private
+ */
+router.get('/trial-expiry', auth, getTrialExpiryState);
+
+/**
+ * @route   POST /api/subscriptions/trial-expiry/event
+ * @desc    Eventos de la pantalla de vencimiento: 'vio' | 'toco_recuperar' | 'cerro'.
+ *          Entra antes que la pantalla, a propósito: sin un "antes" no se puede
+ *          saber si la pantalla nueva sirvió de algo.
+ * @access  Private
+ */
+router.post('/trial-expiry/event', auth, recordTrialExpiryEvent);
 
 /**
  * @route   POST /api/subscriptions/checkout

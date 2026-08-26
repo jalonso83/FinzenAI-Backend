@@ -457,6 +457,23 @@ model Subscription {
   cancelAtPeriodEnd      Boolean            @default(false)
   trialEndsAt            DateTime?
   trialStartedAt         DateTime?
+  // Cuándo venció el trial de verdad. Existe porque al vencer el scheduler pone
+  // `trialStartedAt` y `trialEndsAt` en NULL y el plan en FREE — pasado ese
+  // momento no quedaba ni rastro de que esta persona tuvo un trial, y hacían
+  // falta dos cosas que dependen de saberlo:
+  //   1. El aterrizaje suave: sin marca no se puede distinguir a un FREE de
+  //      siempre de uno que acaba de salir del trial.
+  //   2. La medición de D6: "actividad a 7 y a 30 días desde el vencimiento",
+  //      contra gente de la misma edad de cuenta en la misma ventana relativa.
+  // A diferencia de los otros dos campos, este NUNCA se limpia.
+  trialEndedAt           DateTime?
+  // Cuántas transacciones le entraron solas por el correo durante el trial.
+  // Se fotografía al vencer porque justo después se borran las conexiones de
+  // correo, y `ImportedBankEmail` cuelga de ellas con onDelete: Cascade — o sea
+  // que el número se evapora en el mismo momento en que hace falta. Es el dato
+  // que decide el tono de la pantalla de vencimiento: "se acabó" contra "tus
+  // 340 transacciones se quedan; lo que se detiene es que entren solas".
+  trialImportedCount     Int                @default(0)
   trialNotificationsSent Json?              @default("[]") // Array of sent notification types: ["TRIAL_WELCOME", "TRIAL_DAY_3", etc.]
   // Avisos de cobro fallido ya enviados: ["FIRST", "FINAL"]. Mismo patrón que
   // trialNotificationsSent — Stripe reintenta hasta 8 veces y cada fallo dispara

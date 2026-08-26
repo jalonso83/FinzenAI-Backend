@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { PLANS, PlanType } from '../config/stripe';
+import { aterrizajeTrial } from '../config/trial';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
 
 import { logger } from '../utils/logger';
@@ -75,7 +76,28 @@ export class SubscriptionService {
         plan = subscription.grantedPlan as PlanType;
       }
 
-      const limits = PLANS[plan].limits;
+      // ─── Aterrizaje suave tras el trial ────────────────────────────────────
+      // Vencer el trial es hoy un apagón: se vuelve a los topes de FREE de golpe
+      // y de los 16 que llegaron a ese momento no sobrevivió ninguno. Esto deja
+      // montado el poder ablandarlo —conservar algo por encima de FREE— sin otro
+      // ciclo de tienda: se enciende con una variable de entorno.
+      //
+      // Va DESPUÉS de la concesión y solo toca a quien está en FREE, así que no
+      // puede rebajar a nadie: ni a quien paga, ni a quien tiene un regalo
+      // vigente. Solo sube los topes de quien ya salió del trial.
+      const aterrizaje = aterrizajeTrial();
+      const aterrizoDelTrial =
+        plan === 'FREE' && subscription.trialEndedAt != null && aterrizaje.activo;
+
+      const limits = aterrizoDelTrial
+        ? {
+            ...PLANS[plan].limits,
+            budgets: Math.max(PLANS.FREE.limits.budgets, aterrizaje.budgets),
+            goals: Math.max(PLANS.FREE.limits.goals, aterrizaje.goals),
+            zenioQueries: Math.max(PLANS.FREE.limits.zenioQueries, aterrizaje.zenioQueries),
+          }
+        : PLANS[plan].limits;
+
       const features = PLANS[plan].features;
 
       // Verificar si necesitamos resetear el contador de Zenio (nuevo mes)
@@ -98,6 +120,9 @@ export class SubscriptionService {
         plan,
         planReal,
         grantActive: concesionVigente && plan !== planReal,
+        // Lo lee la pantalla de vencimiento para saber si pintar "conservas X"
+        // o el apagón seco. La app no decide esto: pregunta.
+        softLandingActive: aterrizoDelTrial,
         limits,
         features,
         planDetails: PLANS[plan],
@@ -126,7 +151,14 @@ export class SubscriptionService {
       }
 
       const plan = subscription.plan as PlanType;
-      const zenioLimit = PLANS[plan]?.limits?.zenioQueries ?? 10;
+      // El tope de Zenio se calcula aquí aparte de `limits`, así que el
+      // aterrizaje suave hay que aplicarlo también en este punto: si no, la
+      // pantalla diría "25 consultas" y el contador seguiría cortando en 15.
+      const aterrizaje = aterrizajeTrial();
+      const zenioLimit =
+        plan === 'FREE' && subscription.trialEndedAt != null && aterrizaje.activo
+          ? Math.max(PLANS.FREE.limits.zenioQueries, aterrizaje.zenioQueries)
+          : (PLANS[plan]?.limits?.zenioQueries ?? 10);
 
       // Verificar si necesitamos resetear (nuevo mes)
       const now = new Date();

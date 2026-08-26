@@ -796,11 +796,19 @@ export class NotificationService {
    * Notifica recordatorio de trial (Día 5)
    */
   static async notifyTrialDay5(
-    userId: string
+    userId: string,
+    diasRestantes?: number
   ): Promise<SendNotificationResult> {
+    // El número de días viene de fuera y ya no está escrito aquí. Decía "te
+    // quedan 2 días" porque el trial duraba 7 y este aviso caía en el día 5;
+    // con 21 días caería en el día 5 de 21 diciéndole al usuario una mentira.
+    const cuantoFalta =
+      diasRestantes != null && diasRestantes > 0
+        ? `Te ${diasRestantes === 1 ? 'queda 1 día' : `quedan ${diasRestantes} días`}`
+        : 'Tu prueba sigue activa';
     const payload: NotificationPayload = {
-      title: '⏰ ¡Te quedan 2 días!',
-      body: 'Tu prueba premium termina pronto. Usa el detector de gastos hormiga para descubrir dónde se va tu dinero. ¡No pierdas estas funciones!',
+      title: `⏰ ¡${cuantoFalta}!`,
+      body: 'Aprovecha tu prueba premium. Usa el detector de gastos hormiga para descubrir dónde se va tu dinero. ¡No pierdas estas funciones!',
       data: {
         type: 'TRIAL_DAY_5',
         screen: 'AntExpenseDetective'
@@ -811,14 +819,23 @@ export class NotificationService {
   }
 
   /**
-   * Notifica que el trial está por terminar (Día 7)
+   * Notifica que el trial está por terminar.
+   * Ya no es "el día 7": se dispara por días restantes, así que el texto tiene
+   * que decir la verdad tanto si falta un día como si faltan dos.
    */
   static async notifyTrialEnding(
-    userId: string
+    userId: string,
+    diasRestantes?: number
   ): Promise<SendNotificationResult> {
+    const titulo =
+      diasRestantes == null || diasRestantes <= 0
+        ? '🔔 Tu prueba termina hoy'
+        : diasRestantes === 1
+          ? '🔔 Tu prueba termina mañana'
+          : `🔔 Tu prueba termina en ${diasRestantes} días`;
     const payload: NotificationPayload = {
-      title: '🔔 Tu prueba termina hoy',
-      body: '¡Último día de acceso premium! Suscríbete ahora para mantener todas las funciones: análisis ilimitado, alertas inteligentes, exportación y más desde $4.99/mes.',
+      title: titulo,
+      body: 'Suscríbete ahora para mantener todas las funciones: análisis ilimitado, alertas inteligentes, exportación y más desde $4.99/mes.',
       data: {
         type: 'TRIAL_ENDING',
         screen: 'Subscriptions'
