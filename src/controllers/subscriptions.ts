@@ -302,8 +302,24 @@ export const getPlans = async (req: Request, res: Response) => {
     //
     // Va aquí y no en la app a propósito: así empieza a medir con el deploy del
     // backend, sin esperar a que se propague un build.
+    //
+    // `origen` lo manda la app para separar POR QUÉ se llegó aquí. Sin él, el
+    // usuario FREE que toca "Gastos en automático" en el menú —y al que se le
+    // abre esta pantalla en vez de la función— queda indistinguible de los
+    // 1.189 que entraron por su cuenta a mirar precios. Y esos dos toques
+    // significan cosas muy distintas: uno es curiosidad, el otro es demanda
+    // concreta de la única función que justifica pagar.
     const viewerId = optionalUserId(req);
-    if (viewerId) recordFeatureUsage(viewerId, 'suscripciones', 'ver_planes');
+    if (viewerId) {
+      const origenCrudo = typeof req.query.origen === 'string' ? req.query.origen : null;
+      // Lista cerrada: es una etiqueta que entra en la analítica, y aceptar
+      // texto libre del cliente la llenaría de variantes que no se pueden
+      // agrupar (o de basura).
+      const origen = origenCrudo && ['gastos_automatico', 'menu', 'limite', 'vencimiento'].includes(origenCrudo)
+        ? origenCrudo
+        : null;
+      recordFeatureUsage(viewerId, 'suscripciones', 'ver_planes', origen ? { origen } : undefined);
+    }
 
     // Retornar todos los planes: FREE, PREMIUM (Plus), PRO
     const plans = Object.entries(PLANS).map(([key, value]) => ({
@@ -315,7 +331,20 @@ export const getPlans = async (req: Request, res: Response) => {
       features: value.features,
     }));
 
-    res.json({ plans });
+    // Cómo es el trial, para que la app no lo traiga cocido. Sin esto, la
+    // pantalla seguiría diciendo "7 días" y "elige Plus o Pro" el día que el
+    // servidor conceda Pro por 21, y estaría mintiéndole al usuario sobre lo
+    // que acaba de recibir.
+    const planDelTrial = planQueConcedeElTrial();
+    res.json({
+      plans,
+      trial: {
+        durationDays: duracionTrialDias(),
+        // null = el usuario elige (comportamiento viejo). Un valor = el servidor
+        // concede ese plan y la pantalla no debe ofrecer elegir.
+        grantedPlan: planDelTrial,
+      },
+    });
   } catch (error: any) {
     logger.error('Error obteniendo planes:', error);
     res.status(500).json({
@@ -342,6 +371,13 @@ export const cancelSubscription = async (req: Request, res: Response) => {
 
     // Si está en TRIALING, volver a FREE inmediatamente (no hay Stripe)
     if (subscription.status === 'TRIALING') {
+      // Foto del valor entregado ANTES de borrar las conexiones: los
+      // `ImportedBankEmail` cuelgan de ellas en cascada, así que pasado el
+      // borrado el número no se puede recuperar de ninguna forma.
+      const importadasEnElTrial = await prisma.importedBankEmail
+        .count({ where: { emailConnection: { userId } } })
+        .catch(() => 0);
+
       // Eliminar conexiones de email (email sync es exclusivo PRO)
       try {
         await EmailSyncService.deleteAllUserEmailConnections(userId);
@@ -356,7 +392,26 @@ export const cancelSubscription = async (req: Request, res: Response) => {
           status: 'ACTIVE',
           trialEndsAt: null,
           trialStartedAt: null,
+          // Cancelar a mano es la TERCERA salida del trial, además de que venza
+          // y de que se pague. Sin estas dos marcas esta persona quedaba
+          // invisible: sin aterrizaje suave, sin pantalla de vencimiento y fuera
+          // de la medición de D6 — y encima decidir irse por su cuenta es
+          // justo la señal más fuerte que puede dar un usuario.
+          trialEndedAt: new Date(),
+          trialImportedCount: importadasEnElTrial,
         }
+      });
+
+      const usuarioCancelo = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdAt: true },
+      });
+      recordFeatureUsage(userId, 'suscripciones', 'trial_cancelado', {
+        plan: subscription.plan,
+        importadas: importadasEnElTrial,
+        edadCuentaDias: usuarioCancelo
+          ? Math.round((Date.now() - usuarioCancelo.createdAt.getTime()) / 86400000)
+          : null,
       });
 
       logger.log(`✅ Trial cancelado, usuario ${userId} volvió a FREE`);
@@ -669,8 +724,15 @@ export const getTrialExpiryState = async (req: Request, res: Response) => {
       select: { plan: true, trialEndedAt: true, trialImportedCount: true },
     });
 
+    // El plan EFECTIVO, no el de la fila. Un usuario con una concesión vigente
+    // tiene `plan: 'FREE'` en la base —las concesiones viven en campos aparte
+    // para que Stripe y RevenueCat no las pisen— así que mirar la columna en
+    // crudo le diría "tu prueba terminó, conservas 6 presupuestos" a alguien
+    // que ahora mismo tiene Pro regalado y presupuestos ilimitados.
+    const efectiva = await subscriptionService.getUserSubscription(userId);
+
     const aterrizaje = aterrizajeTrial();
-    const vencioElTrial = subscription?.plan === 'FREE' && subscription?.trialEndedAt != null;
+    const vencioElTrial = efectiva.plan === 'FREE' && subscription?.trialEndedAt != null;
     const suave = vencioElTrial && aterrizaje.activo;
 
     // Sale de la foto que tomó el scheduler al vencer, NO de contar

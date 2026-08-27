@@ -9,6 +9,7 @@ import { GamificationService } from './gamificationService';
 import { encrypt, decrypt } from '../utils/encryption';
 import { recordFeatureUsage } from '../lib/featureUsage';
 import { historialPrimeraSyncDias } from '../config/trial';
+import { subscriptionService } from './subscriptionService';
 
 import { logger } from '../utils/logger';
 export interface SyncResult {
@@ -190,6 +191,11 @@ export class EmailSyncService {
     correosProcesados: number;
     transaccionesCreadas: number;
     terminado: boolean;
+    /** Días hacia atrás que miró la primera revisión. La pantalla de éxito lo
+     *  necesita para decir "en tus últimos N días" sin inventarse el número: si
+     *  la app lo trajera cocido, cambiar el historial desde el servidor la
+     *  dejaría mintiendo. */
+    historialDias: number;
   }> {
     const ultima = await prisma.emailSyncLog.findFirst({
       where: { emailConnection: { userId } },
@@ -203,8 +209,17 @@ export class EmailSyncService {
       },
     });
 
+    const historialDias = historialPrimeraSyncDias();
+
     if (!ultima) {
-      return { estado: null, correosEncontrados: 0, correosProcesados: 0, transaccionesCreadas: 0, terminado: false };
+      return {
+        estado: null,
+        correosEncontrados: 0,
+        correosProcesados: 0,
+        transaccionesCreadas: 0,
+        terminado: false,
+        historialDias,
+      };
     }
 
     return {
@@ -213,6 +228,7 @@ export class EmailSyncService {
       correosProcesados: ultima.emailsProcessed,
       transaccionesCreadas: ultima.transactionsCreated,
       terminado: ultima.status !== 'IN_PROGRESS',
+      historialDias,
     };
   }
 
@@ -333,6 +349,23 @@ export class EmailSyncService {
   /**
    * Sincroniza emails bancarios de un usuario
    */
+  /**
+   * Conexiones que se están sincronizando ahora mismo en este proceso.
+   *
+   * Sin esto, la primera sincronización (que arranca sola al conectar y puede
+   * durar minutos con 90 días de historial) se solapa con el cron horario: la
+   * conexión entra en la cola porque `lastSyncAt` solo se escribe AL TERMINAR.
+   * No llega a duplicar transacciones —lo impide el `@@unique` de
+   * ImportedBankEmail— pero gasta cuota de Gmail y de OpenAI dos veces y, sobre
+   * todo, abre un segundo EmailSyncLog: como el progreso lee el más reciente, la
+   * barra del usuario retrocede a 0 a mitad de camino.
+   *
+   * En memoria y no en base a propósito: es una guarda de proceso, barata y sin
+   * estado que limpiar. Si el proceso muere, se va con él en vez de dejar una
+   * fila bloqueada para siempre.
+   */
+  private static sincronizacionesEnCurso = new Set<string>();
+
   static async syncUserEmails(connectionId: string): Promise<SyncResult> {
     const result: SyncResult = {
       success: false,
@@ -342,6 +375,15 @@ export class EmailSyncService {
       transactionsCreated: 0,
       errors: []
     };
+
+    // La guarda va ANTES de crear el log: si se creara primero, la corrida
+    // rechazada dejaría igualmente una fila nueva y el progreso saltaría a ella.
+    if (this.sincronizacionesEnCurso.has(connectionId)) {
+      logger.log(`[EmailSync] Conexión ${connectionId} ya se está sincronizando, se ignora la petición duplicada`);
+      result.success = true;
+      return result;
+    }
+    this.sincronizacionesEnCurso.add(connectionId);
 
     // Crear log de sincronizacion
     const syncLog = await prisma.emailSyncLog.create({
@@ -369,10 +411,31 @@ export class EmailSyncService {
         throw new Error('Email connection not found or inactive');
       }
 
-      // Verificar que el usuario tenga plan PRO (email sync es exclusivo PRO)
+      // Verificar que el usuario tenga plan PRO (email sync es exclusivo PRO).
+      //
+      // Se comprueba el plan EFECTIVO y no `connection.user.subscription.plan`
+      // en crudo. Las concesiones manuales viven en campos aparte (`grantedPlan`)
+      // y dejan la columna `plan` en FREE, así que la lectura cruda decía que no
+      // a gente que sí tiene Pro. Y con el arranque automático eso dejó de ser
+      // teórico: esa persona conectaba su correo, la ruta la dejaba pasar
+      // —`requirePlan` sí resuelve la concesión— y un segundo después la primera
+      // sincronización moría con "requires PRO". Justo el camino por el que hay
+      // que devolverles Gastos en automático a los que lo perdieron.
       const subscription = connection.user?.subscription;
-      const isPro = subscription?.plan === 'PRO' &&
-                    (subscription?.status === 'ACTIVE' || subscription?.status === 'TRIALING');
+      let planEfectivo = subscription?.plan;
+      let estadoEfectivo = subscription?.status;
+      try {
+        const resuelta = await subscriptionService.getUserSubscription(connection.userId);
+        planEfectivo = resuelta.plan as any;
+        estadoEfectivo = resuelta.status as any;
+      } catch (e) {
+        // Si no se puede resolver, se cae al valor crudo: es más restrictivo,
+        // nunca al revés.
+        logger.warn(`[EmailSync] No se pudo resolver el plan efectivo de ${connection.userId}, usando el de la fila:`, e);
+      }
+
+      const isPro = planEfectivo === 'PRO' &&
+                    (estadoEfectivo === 'ACTIVE' || estadoEfectivo === 'TRIALING');
 
       if (!isPro) {
         logger.log(`[EmailSync] Usuario ${connection.userId} no tiene PRO, saltando sincronización`);
@@ -458,7 +521,21 @@ export class EmailSyncService {
       }
 
       // Procesar cada email
+      // Cuántos correos LLEVAMOS MIRADOS, que no es lo mismo que
+      // `result.emailsProcessed`. Ese último se incrementa al final del cuerpo
+      // del bucle, así que se salta todo lo que sale por un `continue`: los ya
+      // importados, los que no parsean, los omitidos (pago de tarjeta,
+      // declinada, retiro) y los duplicados. En una primera revisión de 90 días
+      // eso es la mayoría, y usarlo para la barra la dejaba clavada en "3 de
+      // 200" o directamente en 0 todo el rato.
+      //
+      // Se mantienen separados a propósito: `result.emailsProcessed` alimenta el
+      // mensaje del sync manual, que ya suma `emailsSkipped` aparte y contaría
+      // doble si aquí le metiéramos los omitidos.
+      let revisados = 0;
+
       for (const message of messages) {
+        revisados++;
         try {
           // Verificar si ya fue procesado (usamos gmailMessageId para ambos proveedores por compatibilidad)
           const existing = await prisma.importedBankEmail.findFirst({
@@ -591,27 +668,33 @@ export class EmailSyncService {
 
           result.emailsProcessed++;
 
-          // Progreso cada 5 correos, no en cada uno: con buzones grandes serían
-          // cientos de escrituras por sincronización y el avance no se nota más
-          // por ir de uno en uno.
-          if (result.emailsProcessed % 5 === 0) {
+        } catch (error: any) {
+          logger.error(`[EmailSync] Error processing message ${message.id}:`, error);
+          result.errors.push(`Error processing ${message.id}: ${error.message}`);
+        } finally {
+          // El avance se escribe en el `finally` y no dentro del `try`: ahí
+          // arriba quedaba detrás de todos los `continue`, así que los correos
+          // omitidos no movían la barra. Aquí pasa por él TODO correo mirado,
+          // salga como salga.
+          //
+          // Cada 5 y no en cada uno: con buzones grandes serían cientos de
+          // escrituras por sincronización, y el avance no se nota más por ir de
+          // uno en uno.
+          if (revisados % 5 === 0) {
             await prisma.emailSyncLog.update({
               where: { id: syncLog.id },
               data: {
-                emailsProcessed: result.emailsProcessed,
+                emailsProcessed: revisados,
                 transactionsCreated: result.transactionsCreated,
               },
             }).catch(() => { /* nunca romper la sincronización por el progreso */ });
           }
-
-        } catch (error: any) {
-          logger.error(`[EmailSync] Error processing message ${message.id}:`, error);
-          result.errors.push(`Error processing ${message.id}: ${error.message}`);
         }
       }
 
+
       result.success = true;
-      await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS');
+      await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS', undefined, revisados);
       await this.updateConnectionStatus(connectionId, 'SUCCESS');
 
       // ========== GAMIFICACIÓN: Bonus diario por sync activo ==========
@@ -665,6 +748,11 @@ export class EmailSyncService {
         await this.finalizeSyncLog(syncLog.id, result, 'FAILED', error.message);
         await this.updateConnectionStatus(connectionId, 'FAILED', error.message);
       }
+    } finally {
+      // En `finally` y no al final del try: si la sincronización falla, la
+      // conexión tiene que quedar libre igual. Si no, un solo fallo la dejaría
+      // bloqueada hasta el próximo reinicio del proceso.
+      this.sincronizacionesEnCurso.delete(connectionId);
     }
 
     return result;
@@ -861,7 +949,14 @@ export class EmailSyncService {
     logId: string,
     result: SyncResult,
     status: EmailSyncStatus,
-    errorMessage?: string
+    errorMessage?: string,
+    // Correos MIRADOS. La columna del log guarda esto —no
+    // `result.emailsProcessed`— porque es lo que alimenta el "revisando X de N"
+    // de la app, y si al cerrar se pisara con el número menor la barra daría un
+    // salto hacia atrás justo al terminar. `result` conserva su significado
+    // porque de ahí sale el mensaje del sync manual, que suma `emailsSkipped`
+    // aparte y contaría doble.
+    revisados?: number
   ): Promise<void> {
     await prisma.emailSyncLog.update({
       where: { id: logId },
@@ -869,7 +964,7 @@ export class EmailSyncService {
         completedAt: new Date(),
         status,
         emailsFound: result.emailsFound,
-        emailsProcessed: result.emailsProcessed,
+        emailsProcessed: revisados ?? result.emailsProcessed,
         emailsSkipped: result.emailsSkipped,
         transactionsCreated: result.transactionsCreated,
         errorMessage

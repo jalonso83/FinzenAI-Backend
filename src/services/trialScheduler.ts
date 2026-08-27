@@ -21,8 +21,20 @@ const TRIAL_NOTIFICATIONS: { day: number; type: NotificationType }[] = [
   { day: 5, type: 'TRIAL_DAY_5' },
 ];
 
-/** Cuántos días antes del vencimiento se manda el aviso final. */
-const DIAS_ANTES_DEL_AVISO_FINAL = 2;
+/**
+ * Cuántos días antes del vencimiento se manda el aviso final.
+ *
+ * Va en 1, o sea el último día. Estuvo en 2 y era un error: como el cron corre a
+ * diario y solo se manda un TRIAL_ENDING por trial (lo impide `trialNotificationsSent`),
+ * disparar a los 2 días se comía el aviso del último día — justo el de más
+ * empuje a pagar. Con un trial de 7 el usuario recibía "termina en 2 días" el
+ * día 6 y después nada.
+ *
+ * Si algún día se quiere avisar dos veces (a 2 días y el último), no basta con
+ * subir este número: hace falta un NotificationType nuevo, porque el dedup va
+ * por tipo.
+ */
+const DIAS_ANTES_DEL_AVISO_FINAL = 1;
 
 export class TrialScheduler {
   private static isRunning: boolean = false;
