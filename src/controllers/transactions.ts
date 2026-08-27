@@ -5,6 +5,7 @@ import { GamificationService } from '../services/gamificationService';
 import { NotificationService } from '../services/notificationService';
 import { merchantMappingService } from '../services/merchantMappingService';
 import { recalculateBudgets } from '../services/budgetService';
+import { recordFeatureUsage } from '../lib/featureUsage';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 import { onValidTransaction as onValidTransactionH13 } from '../services/h13/h13Service';
 import { VALID_FREQUENCIES, isValidFrequency } from '../config/recurringConfig';
@@ -773,9 +774,36 @@ export const updateTransaction = async (req: Request, res: Response) => {
       }
     }
 
+    // ¿Hay más transacciones del MISMO comercio con la categoría vieja?
+    //
+    // El aprendizaje de arriba solo arregla el futuro. Con la primera revisión
+    // del correo trayendo 90 días de golpe, una categoría mal puesta significa
+    // que el usuario ve el mismo error repetido 8 veces y tiene que corregirlo
+    // 8 veces. Ese es el momento en que la función deja de parecer mágica.
+    //
+    // Aquí solo se CUENTAN y se le devuelven a la app para que pregunte. No se
+    // tocan solas: cambiarle 8 transacciones sin avisar es peor que dejarlas.
+    let similares: { cantidad: number; comercio: string } | null = null;
+    if (updateData.category_id && existingTransaction.category_id !== updateData.category_id) {
+      const comercio = (existingTransaction.description || '').trim();
+      if (comercio.length > 2) {
+        const cantidad = await prisma.transaction.count({
+          where: {
+            userId,
+            id: { not: transaction.id },
+            description: comercio,          // mismo texto exacto: los correos del
+            category_id: existingTransaction.category_id, // mismo banco lo repiten igual
+          },
+        }).catch(() => 0);
+
+        if (cantidad > 0) similares = { cantidad, comercio };
+      }
+    }
+
     return res.json({
       message: 'Transaction updated successfully',
-      transaction
+      transaction,
+      similares,
     });
   } catch (error) {
     logger.error('Update transaction error:', error);
@@ -849,3 +877,103 @@ export const deleteTransaction = async (req: Request, res: Response) => {
     });
   }
 }; 
+/**
+ * POST /api/transactions/aplicar-categoria-comercio
+ *
+ * Aplica una categoría a TODAS las transacciones ya registradas de un comercio.
+ *
+ * Existe por lo que pasa la primera vez que alguien conecta su correo: entran
+ * 90 días de golpe y, si un comercio quedó mal categorizado, el error aparece
+ * repetido ocho veces. Sin esto el usuario tiene que corregir ocho veces lo
+ * mismo — y ese es justo el momento en que la función deja de parecer mágica y
+ * empieza a parecer trabajo.
+ *
+ * Se dispara solo cuando el usuario dice que sí; el update normal se limita a
+ * contarlas y ofrecerlo.
+ */
+export const aplicarCategoriaAComercio = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { comercio, categoriaAnterior, categoriaNueva } = req.body as {
+      comercio?: string;
+      categoriaAnterior?: string;
+      categoriaNueva?: string;
+    };
+
+    if (!comercio || !categoriaNueva) {
+      return res.status(400).json({ message: 'Falta comercio o categoriaNueva' });
+    }
+
+    const nombre = comercio.trim();
+    if (nombre.length < 3) {
+      return res.status(400).json({ message: 'Nombre de comercio demasiado corto' });
+    }
+
+    // La categoría destino tiene que existir y ser real. El `isDefault: true`
+    // no es decorativo: la categoría "cancelada" está marcada con `false` y
+    // mandar transacciones ahí las sacaría de todos los cálculos.
+    const categoria = await prisma.category.findFirst({
+      where: { id: categoriaNueva, isDefault: true },
+    });
+    if (!categoria) {
+      return res.status(400).json({ message: 'Categoría inválida' });
+    }
+
+    // Solo las de ESTE usuario, con ESE texto y —si viene— la categoría vieja.
+    // El filtro por categoría anterior evita pisar transacciones que el usuario
+    // ya había clasificado a mano de otra forma.
+    const objetivo = await prisma.transaction.findMany({
+      where: {
+        userId,
+        description: nombre,
+        ...(categoriaAnterior ? { category_id: categoriaAnterior } : {}),
+        category_id: { not: categoriaNueva },
+      },
+      select: { id: true, category_id: true, date: true },
+    });
+
+    if (objetivo.length === 0) {
+      return res.json({ actualizadas: 0 });
+    }
+
+    await prisma.transaction.updateMany({
+      where: { id: { in: objetivo.map((t) => t.id) } },
+      data: { category_id: categoriaNueva },
+    });
+
+    // Recalcular presupuestos de AMBOS lados y de cada período tocado: las
+    // transacciones pueden abarcar meses distintos, así que no basta con
+    // recalcular una vez. Se deduplica por categoría+mes para no repetir.
+    const vistos = new Set<string>();
+    for (const t of objetivo) {
+      for (const cat of [t.category_id, categoriaNueva]) {
+        const clave = `${cat}|${t.date.getUTCFullYear()}-${t.date.getUTCMonth()}`;
+        if (vistos.has(clave)) continue;
+        vistos.add(clave);
+        await recalculateBudgetSpent(userId, cat, t.date).catch(() => {});
+      }
+    }
+
+    // El mapeo ya se guardó en el update que disparó esto, pero se refuerza:
+    // que el usuario acepte arreglar 8 es una señal más fuerte que corregir 1.
+    try {
+      await merchantMappingService.saveMapping({
+        userId,
+        merchantName: nombre,
+        categoryId: categoriaNueva,
+        source: MappingSource.USER_CORRECTION,
+      });
+    } catch { /* el mapeo es best-effort, la corrección ya se aplicó */ }
+
+    recordFeatureUsage(userId, 'email_sync', 'corrigio_comercio', {
+      transacciones: objetivo.length,
+    });
+
+    logger.log(`[Transactions] "${nombre}" recategorizado en ${objetivo.length} transacciones de ${userId}`);
+
+    return res.json({ actualizadas: objetivo.length });
+  } catch (error) {
+    logger.error('Error aplicando categoría a comercio:', error);
+    return res.status(500).json({ message: 'No se pudo aplicar la categoría' });
+  }
+};
