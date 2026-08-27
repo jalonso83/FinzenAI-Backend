@@ -886,14 +886,26 @@ export class EmailSyncService {
         conversionInfo = ` [${txCurrency} ${parsed.amount} → ${userCurrency} ${finalAmount} @${conversion.rate}]`;
       }
 
-      // Crear descripcion
-      const description = [
-        parsed.merchant,
-        parsed.cardLast4 ? `(****${parsed.cardLast4})` : null,
-        parsed.authorizationCode ? `Auth: ${parsed.authorizationCode}` : null,
-        '[Importado de Email]',
-        conversionInfo || null
-      ].filter(Boolean).join(' - ');
+      // La descripción es SOLO el comercio. Antes se le pegaba la tarjeta, el
+      // código de autorización y la etiqueta "[Importado de Email]", y eso
+      // rompía dos cosas a la vez:
+      //
+      //   1. En la lista no cabía nada. El usuario leía "TOTAL MON..." y
+      //      "PRICESMAR...", que no le dicen dónde compró — justo el dato por
+      //      el que existe la función.
+      //   2. El `Auth:` es distinto en CADA compra, así que dos visitas al
+      //      mismo comercio quedaban con descripciones diferentes y no se
+      //      podían agrupar para corregir la categoría de una vez.
+      //
+      // Lo que se quitó no se perdió: la tarjeta y el código de autorización
+      // siguen en `ImportedBankEmail.parsedData`, que es donde se consultan si
+      // hace falta rastrear un cargo. La conversión de moneda SÍ se mantiene
+      // porque explica un monto que si no, no cuadra con lo que el usuario
+      // recuerda haber gastado.
+      const description = [parsed.merchant, conversionInfo || null]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
 
       // Crear transaccion (siempre en RD$)
       // Extraer solo la fecha (YYYY-MM-DD) y usar mediodía UTC para evitar

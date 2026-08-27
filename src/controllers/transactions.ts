@@ -664,6 +664,49 @@ export const createTransaction = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * Nombre del comercio, limpio, sacado de la descripción de una importación.
+ *
+ * El banco arma la descripción así:
+ *   "TOTAL MONUMENTAL SANTIAGO DOM - (****5107) - Auth: 427950 - [Importado de Email]"
+ *
+ * Todo lo que va después de " - (" cambia en cada compra: la tarjeta usada y,
+ * sobre todo, el `Auth:`, que es distinto SIEMPRE. Por eso comparar la
+ * descripción entera no sirve para agrupar por comercio.
+ */
+function nombreDeComercio(descripcion: string): string {
+  return (descripcion.split(' - (')[0] || descripcion).trim();
+}
+
+/**
+ * Prefijo con el que se buscan las demás compras del mismo comercio.
+ *
+ * No basta con el nombre completo: el banco lo trunca distinto según el canal
+ * ("SANTIAGO DOM" en una, "SANTIAGO DO" en otra), así que dos compras del mismo
+ * sitio no coinciden letra por letra. Se usan las primeras palabras, que es la
+ * parte que sí se mantiene estable.
+ *
+ * Devuelve null si lo que queda es demasiado corto o genérico para arriesgarse
+ * a agrupar — vale más no ofrecer la corrección que mezclar dos comercios.
+ */
+function prefijoDeComercio(descripcion: string): string | null {
+  const comercio = nombreDeComercio(descripcion);
+  if (comercio.length < 4) return null;
+
+  const palabras = comercio.split(/\s+/).filter(Boolean);
+  let prefijo = palabras.slice(0, 2).join(' ');
+
+  // "1 2 TIEMPO BAR" empieza con dos palabras de una letra: con dos no alcanza
+  // para identificar nada, así que se estira hasta tener algo con cuerpo.
+  let n = 3;
+  while (prefijo.length < 8 && n <= palabras.length) {
+    prefijo = palabras.slice(0, n).join(' ');
+    n++;
+  }
+
+  return prefijo.length >= 4 ? prefijo : null;
+}
+
 export const updateTransaction = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
@@ -783,20 +826,23 @@ export const updateTransaction = async (req: Request, res: Response) => {
     //
     // Aquí solo se CUENTAN y se le devuelven a la app para que pregunte. No se
     // tocan solas: cambiarle 8 transacciones sin avisar es peor que dejarlas.
-    let similares: { cantidad: number; comercio: string } | null = null;
+    let similares: { cantidad: number; comercio: string; prefijo: string } | null = null;
     if (updateData.category_id && existingTransaction.category_id !== updateData.category_id) {
-      const comercio = (existingTransaction.description || '').trim();
-      if (comercio.length > 2) {
+      const prefijo = prefijoDeComercio(existingTransaction.description || '');
+
+      if (prefijo) {
         const cantidad = await prisma.transaction.count({
           where: {
             userId,
             id: { not: transaction.id },
-            description: comercio,          // mismo texto exacto: los correos del
-            category_id: existingTransaction.category_id, // mismo banco lo repiten igual
+            description: { startsWith: prefijo },
+            category_id: existingTransaction.category_id,
           },
         }).catch(() => 0);
 
-        if (cantidad > 0) similares = { cantidad, comercio };
+        if (cantidad > 0) {
+          similares = { cantidad, comercio: nombreDeComercio(existingTransaction.description || ''), prefijo };
+        }
       }
     }
 
@@ -894,8 +940,9 @@ export const deleteTransaction = async (req: Request, res: Response) => {
 export const aplicarCategoriaAComercio = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { comercio, categoriaAnterior, categoriaNueva } = req.body as {
+    const { comercio, prefijo, categoriaAnterior, categoriaNueva } = req.body as {
       comercio?: string;
+      prefijo?: string;
       categoriaAnterior?: string;
       categoriaNueva?: string;
     };
@@ -908,6 +955,17 @@ export const aplicarCategoriaAComercio = async (req: Request, res: Response) => 
     if (nombre.length < 3) {
       return res.status(400).json({ message: 'Nombre de comercio demasiado corto' });
     }
+
+    // Se busca por el MISMO prefijo con el que se contaron, no por el nombre
+    // completo: si aquí se usara otro criterio, el número que vio el usuario y
+    // el que se actualiza no coincidirían. El del cliente se ignora si no
+    // cuadra con lo que sale del nombre — no se deja elegir el filtro desde
+    // fuera, que sería una forma de recategorizar transacciones ajenas al
+    // comercio que se está corrigiendo.
+    const prefijoCalculado = prefijoDeComercio(nombre) || nombre;
+    const filtro = prefijo && prefijoCalculado.startsWith(prefijo.trim())
+      ? prefijo.trim()
+      : prefijoCalculado;
 
     // La categoría destino tiene que existir y ser real. El `isDefault: true`
     // no es decorativo: la categoría "cancelada" está marcada con `false` y
@@ -925,7 +983,7 @@ export const aplicarCategoriaAComercio = async (req: Request, res: Response) => 
     const objetivo = await prisma.transaction.findMany({
       where: {
         userId,
-        description: nombre,
+        description: { startsWith: filtro },
         ...(categoriaAnterior ? { category_id: categoriaAnterior } : {}),
         category_id: { not: categoriaNueva },
       },
