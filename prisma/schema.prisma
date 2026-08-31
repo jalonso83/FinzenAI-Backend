@@ -930,6 +930,13 @@ enum NotificationType {
   TRIAL_WELCOME
   TRIAL_DAY_3
   TRIAL_DAY_5
+  // Los dos de en medio nacen con el trial de 21 días. Los de arriba se
+  // diseñaron para uno de 7 y quedaban todos en la primera semana: del día 5 al
+  // 21 el usuario no volvía a oír hablar de su prueba. Se llaman MEDIO y RECTA
+  // FINAL y no "día 10" y "día 16" porque el día exacto se calcula según la
+  // duración; si algún día vuelve a ser de 7, ni se disparan.
+  TRIAL_MEDIO
+  TRIAL_RECTA_FINAL
   TRIAL_ENDING
   TRIAL_ENDED
   SUBSCRIPTION_PAST_DUE  // cobro rechazado / plan degradado: transaccional, no opt-out

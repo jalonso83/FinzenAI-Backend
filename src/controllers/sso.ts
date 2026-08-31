@@ -6,6 +6,8 @@ import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
 import { verifyAppleIdentityToken } from '../lib/appleAuth';
+import { elTrialArrancaSolo } from '../config/trial';
+import { TrialScheduler } from '../services/trialScheduler';
 import { verifyGoogleIdToken } from '../lib/googleAuth';
 import { resolveSSOLocale } from '../lib/locale';
 import { ingestAttributionEvent } from '../services/attributionEventService';
@@ -177,10 +179,45 @@ async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult>
     } as any,
   });
 
-  // Suscripción FREE por defecto — mismo patrón que register.
-  await prisma.subscription.create({
-    data: { userId: created.id, status: 'ACTIVE', plan: 'FREE' },
-  });
+  // Suscripción inicial — mismo patrón que register.
+  //
+  // Este camino NO es el minoritario: por Google y Apple entran más usuarios
+  // que por formulario (1.796 + 1.054 contra 1.329). Si el arranque automático
+  // del trial se hubiera puesto solo en `register`, dos de cada tres personas
+  // se habrían quedado fuera del tratamiento sin que nadie lo notara.
+  //
+  // Sin deviceId: el SSO no lo recibe, así que estos usuarios no quedan
+  // anotados en el registro anti-abuso por dispositivo. El candado por correo
+  // (`hasUsedTrial`) sí aplica, que es el que de verdad importa.
+  if (elTrialArrancaSolo()) {
+    try {
+      await TrialScheduler.startTrialForUser(created.id);
+    } catch (e) {
+      // `startTrialForUser` SÍ lanza, y puede hacerlo DESPUÉS de haber dejado
+      // la suscripción en TRIALING (por ejemplo si falla el update de
+      // `hasUsedTrial`). Un `update: {}` aquí no tocaría nada y la persona
+      // quedaría en Pro con la bandera sin marcar: podría reactivar el trial
+      // más tarde y reiniciar el reloj.
+      //
+      // Por eso se fuerza el estado completo a FREE, que es lo que el log dice
+      // que pasa. Vale más quedarse corto que dejar un Pro fantasma.
+      logger.error('[SSO] No se pudo iniciar el trial automático; se deja en FREE:', e);
+      await prisma.subscription.upsert({
+        where: { userId: created.id },
+        update: {
+          status: 'ACTIVE',
+          plan: 'FREE',
+          trialStartedAt: null,
+          trialEndsAt: null,
+        },
+        create: { userId: created.id, status: 'ACTIVE', plan: 'FREE' },
+      }).catch((e2) => logger.error('[SSO] Tampoco se pudo dejar en FREE:', e2));
+    }
+  } else {
+    await prisma.subscription.create({
+      data: { userId: created.id, status: 'ACTIVE', plan: 'FREE' },
+    });
+  }
 
   logger.log(`[SSO] Usuario nuevo creado vía ${provider}: ${created.id} (${normalizedEmail})`);
   return { user: created, isNewUser: true, linked: false };

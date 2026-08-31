@@ -4,6 +4,7 @@ import { isInQuietHours as isInQuietHoursLocal } from '../utils/timezone';
 import { subscriptionService } from './subscriptionService';
 import { PLANS } from '../config/stripe';
 
+import { duracionTrialDias } from '../config/trial';
 import { logger } from '../utils/logger';
 
 // Expo Push API configuration
@@ -762,12 +763,20 @@ export class NotificationService {
     userId: string,
     userName: string
   ): Promise<SendNotificationResult> {
+    // Los días salen de la configuración, no escritos a mano: con el trial en
+    // 21 este texto decía "7" y le mentía al usuario sobre lo que acaba de
+    // recibir. Es la primera notificación que ve; empezar con un número falso
+    // es la peor forma de arrancar.
+    //
+    // Y apunta a Gastos en automático, no al dashboard: es lo único que
+    // justifica el plan y la razón por la que se le concedió la prueba.
+    // Mandarlo al dashboard es dejarlo donde ya estaba.
     const payload: NotificationPayload = {
-      title: '🎉 ¡Bienvenido a FinZen PRO!',
-      body: `¡Hola ${userName}! Tu prueba gratuita de 7 días ha comenzado. Explora todas las funciones premium: análisis de gastos hormiga, alertas inteligentes, exportación de datos y más.`,
+      title: '🎉 ¡Bienvenido a FinZen Pro!',
+      body: `¡Hola ${userName}! Tienes ${duracionTrialDias()} días de prueba. Empieza por lo mejor: conecta tu correo y tus gastos se anotan solos.`,
       data: {
         type: 'TRIAL_WELCOME',
-        screen: 'Dashboard'
+        screen: 'EmailSync'
       }
     };
 
@@ -778,11 +787,19 @@ export class NotificationService {
    * Notifica recordatorio de trial (Día 3)
    */
   static async notifyTrialDay3(
-    userId: string
+    userId: string,
+    diasRestantes?: number
   ): Promise<SendNotificationResult> {
+    // Decía "Te quedan 4 días" escrito a mano — cierto con un trial de 7, falso
+    // con uno de 21. Los días vienen de fuera; si no llegan, no se menciona
+    // ningún número en vez de inventarlo.
+    const cuantoFalta =
+      diasRestantes != null && diasRestantes > 0
+        ? ` Te ${diasRestantes === 1 ? 'queda 1 día' : `quedan ${diasRestantes} días`} de acceso premium.`
+        : '';
     const payload: NotificationPayload = {
       title: '📊 ¿Ya exploraste tus finanzas?',
-      body: '¡Llevas 3 días de prueba! ¿Ya creaste tu primer presupuesto? Configura alertas para no exceder tus límites. Te quedan 4 días de acceso premium.',
+      body: `¡Llevas 3 días de prueba! ¿Ya creaste tu primer presupuesto? Configura alertas para no exceder tus límites.${cuantoFalta}`,
       data: {
         type: 'TRIAL_DAY_3',
         screen: 'Budgets'
@@ -823,14 +840,79 @@ export class NotificationService {
    * Ya no es "el día 7": se dispara por días restantes, así que el texto tiene
    * que decir la verdad tanto si falta un día como si faltan dos.
    */
+  /**
+   * Aviso de la mitad del trial.
+   *
+   * Cambia entero según la persona haya conectado el correo o no, porque son
+   * dos conversaciones distintas: al que no conectó hay que empujarlo a la
+   * única función que justifica el plan; al que sí, hay que ENSEÑARLE lo que
+   * lleva ganado, que es lo que lo convierte en cliente. Mandarle a este último
+   * "conecta tu correo" sería no haberlo mirado.
+   */
+  static async notifyTrialMedio(
+    userId: string,
+    userName: string,
+    conectoElCorreo: boolean,
+    transaccionesImportadas: number,
+    diasRestantes?: number
+  ): Promise<SendNotificationResult> {
+    const restan = diasRestantes && diasRestantes > 0 ? ` Te quedan ${diasRestantes} días.` : '';
+
+    const payload: NotificationPayload = conectoElCorreo && transaccionesImportadas > 0
+      ? {
+          title: `📥 ${transaccionesImportadas} compras anotadas solas`,
+          body: `${userName}, no escribiste ninguna: entraron de tu correo.${restan}`,
+          data: { type: 'TRIAL_MEDIO', screen: 'Transactions' },
+        }
+      : {
+          title: '✍️ ¿Sigues anotando a mano?',
+          body: `${userName}, conecta tu correo y cada compra que tu banco te notifica entra sola.${restan}`,
+          data: { type: 'TRIAL_MEDIO', screen: 'EmailSync' },
+        };
+
+    return this.sendToUser(userId, 'TRIAL_MEDIO', payload);
+  }
+
+  /**
+   * Aviso de la recta final: ya se ve el vencimiento pero todavía da tiempo a
+   * probar. No es el aviso de "se acaba" —ese llega el último día— sino el
+   * último empujón útil.
+   */
+  static async notifyTrialRectaFinal(
+    userId: string,
+    conectoElCorreo: boolean,
+    transaccionesImportadas: number,
+    diasRestantes?: number
+  ): Promise<SendNotificationResult> {
+    const restan = diasRestantes && diasRestantes > 0 ? `Te quedan ${diasRestantes} días` : 'Tu prueba está por terminar';
+
+    const payload: NotificationPayload = conectoElCorreo && transaccionesImportadas > 0
+      ? {
+          title: `⏳ ${restan} de Pro`,
+          body: `Llevas ${transaccionesImportadas} compras registradas sin escribir nada. Si te suscribes, sigue igual.`,
+          data: { type: 'TRIAL_RECTA_FINAL', screen: 'Subscriptions' },
+        }
+      : {
+          title: `⏳ ${restan} de Pro`,
+          body: 'Todavía no has probado lo mejor: conecta tu correo y deja de anotar tus gastos a mano.',
+          data: { type: 'TRIAL_RECTA_FINAL', screen: 'EmailSync' },
+        };
+
+    return this.sendToUser(userId, 'TRIAL_RECTA_FINAL', payload);
+  }
+
   static async notifyTrialEnding(
     userId: string,
     diasRestantes?: number
   ): Promise<SendNotificationResult> {
+    // `diasRestantes` viene de un `Math.ceil`, así que un 1 significa "queda
+    // menos de un día", no "queda un día entero". Decir "mañana" ahí sería
+    // falso: puede faltar hora y media. El corrimiento va uno abajo respecto a
+    // lo que parece.
     const titulo =
-      diasRestantes == null || diasRestantes <= 0
+      diasRestantes == null || diasRestantes <= 1
         ? '🔔 Tu prueba termina hoy'
-        : diasRestantes === 1
+        : diasRestantes === 2
           ? '🔔 Tu prueba termina mañana'
           : `🔔 Tu prueba termina en ${diasRestantes} días`;
     const payload: NotificationPayload = {

@@ -10,7 +10,8 @@ import { TrialScheduler } from '../services/trialScheduler';
 import { ReferralService } from '../services/referralService';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
-import { planQueConcedeElTrial, duracionTrialDias } from '../config/trial';
+import { recordFeatureUsage } from '../lib/featureUsage';
+import { planQueConcedeElTrial, duracionTrialDias, elTrialArrancaSolo } from '../config/trial';
 
 import { logger } from '../utils/logger';
 
@@ -199,6 +200,17 @@ async function startUserTrial(
         data: { hasUsedTrial: true }
       });
 
+      // El evento va también aquí: sin él, cada fallo del scheduler produce un
+      // trial invisible para el embudo que este experimento existe para medir.
+      // `fallback: true` permite separarlos si alguna vez son muchos.
+      recordFeatureUsage(userId, 'suscripciones', 'inicio_trial', {
+        plan: planQueConcedeElTrial() ?? 'PREMIUM',
+        planPedido: null,
+        dias: duracionTrialDias(),
+        automatico: true,
+        fallback: true,
+      });
+
       logger.log(`[Auth] ✅ Trial creado manualmente como fallback para ${userId}`);
       return { success: true, trialStarted: true, reason: 'FALLBACK_TRIAL_CREATED' };
     } catch (fallbackError) {
@@ -341,14 +353,32 @@ export const register = async (req: Request, res: Response) => {
     // 4. Procesos secundarios (no bloquean el registro)
     await sendVerificationEmailSafe(user.email, user.id, name);
 
-    // Crear suscripción FREE por defecto (el trial se inicia cuando selecciona un plan)
-    await prisma.subscription.create({
-      data: {
-        userId: user.id,
-        status: 'ACTIVE',
-        plan: 'FREE'
-      }
-    });
+    // Suscripción inicial.
+    //
+    // Con el trial nuevo encendido (`TRIAL_GRANTED_PLAN` puesta), la persona
+    // entra ya con Pro y los días corriendo, sin cruzar la pantalla de precios:
+    // el slot del dashboard la lleva directo a conectar el correo. Sin la
+    // variable, sigue cayendo en FREE y el trial se activa a mano, como
+    // siempre.
+    //
+    // `startTrialForUser` valida elegibilidad por sí sola (correo ya usado,
+    // dispositivo repetido) y si no es elegible crea la FREE igual, así que
+    // cubre los dos caminos. Nunca lanza: devuelve el motivo.
+    if (elTrialArrancaSolo()) {
+      await startUserTrial(user.id, {
+        deviceId,
+        platform: devicePlatform,
+        deviceName,
+      });
+    } else {
+      await prisma.subscription.create({
+        data: {
+          userId: user.id,
+          status: 'ACTIVE',
+          plan: 'FREE'
+        }
+      });
+    }
 
     const referralResult = (referralCode && REFERRAL_CONFIG.ENABLED)
       ? await processReferralCode(user.id, email, referralCode)

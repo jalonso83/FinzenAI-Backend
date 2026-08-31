@@ -108,6 +108,29 @@ export function aterrizajeTrial(): AterrizajeTrial {
 }
 
 /**
+ * ¿El trial arranca solo al registrarse?
+ *
+ * Hasta ahora no: el usuario nuevo caía en FREE y tenía que ir a buscar el
+ * trial en el menú, pasando por la pantalla de planes. Ese rodeo es donde se
+ * cae el 95% — de 666 que vieron precios, solo 32 activaron.
+ *
+ * Con esto, quien se registra ya entra con Pro y los 21 días corriendo, y el
+ * slot del dashboard lo lleva directo a conectar el correo sin ver un precio.
+ *
+ * Va atado a `TRIAL_GRANTED_PLAN` a propósito, sin variable propia: conceder
+ * Pro, durar 21 días y arrancar solo son tres piezas del MISMO tratamiento.
+ * Separarlas en tres flags permitiría encender media cosa y dejar una cohorte
+ * a medio camino, que es justo lo que estamos evitando.
+ *
+ * Contrapartida asumida: el reloj corre desde el día 1 se use la app o no, y
+ * se gasta el trial de quien nunca lo pidió (es uno por persona). A cambio,
+ * nadie tiene que cruzar una pantalla de precios para probar el producto.
+ */
+export function elTrialArrancaSolo(): boolean {
+  return planQueConcedeElTrial() != null;
+}
+
+/**
  * Cuántos días hacia atrás mira la PRIMERA sincronización del correo.
  *
  * Es el momento "wow" del producto: conectas y aparece tu historial ya anotado.
@@ -139,6 +162,7 @@ export function describirConfigTrial(): string {
   return [
     `duración=${duracionTrialDias()}d`,
     `plan=${plan ?? 'el que pida el cliente'}`,
+    `arranqueAutomático=${elTrialArrancaSolo() ? 'SÍ (al registrarse)' : 'no (lo activa el usuario)'}`,
     `aterrizajeSuave=${a.activo ? `ON (${a.budgets}p/${a.goals}m/${a.zenioQueries}z)` : 'OFF'}`,
     `historialPrimeraSync=${historialPrimeraSyncDias()}d`,
   ].join(' · ');

@@ -36,6 +36,37 @@ const TRIAL_NOTIFICATIONS: { day: number; type: NotificationType }[] = [
  */
 const DIAS_ANTES_DEL_AVISO_FINAL = 1;
 
+/**
+ * Avisos de en medio, calculados según lo que dure el trial.
+ *
+ * Los tres de arriba (1, 3, 5) se pensaron para 7 días. Con 21 quedan apiñados
+ * en la primera semana y del día 5 al 21 el usuario no vuelve a oír hablar de
+ * su prueba — dos semanas de silencio justo con quien todavía no ha conectado
+ * el correo, que es lo único que queremos que haga.
+ *
+ * Se calculan a la mitad y a las tres cuartas partes en vez de fijarlos en un
+ * día concreto, para que sigan teniendo sentido si la duración cambia. Y se
+ * descartan si caen en el día 5 o antes —chocarían con los anclados— o si el
+ * trial es tan corto que no llegan: con 7 días no se dispara ninguno de los
+ * dos, que es justo lo que se quiere.
+ */
+function avisosIntermedios(duracion: number): { day: number; type: NotificationType }[] {
+  const medio = Math.round(duracion / 2);
+  const rectaFinal = Math.round(duracion * 0.75);
+
+  const candidatos: { day: number; type: NotificationType }[] = [
+    { day: medio, type: 'TRIAL_MEDIO' },
+    { day: rectaFinal, type: 'TRIAL_RECTA_FINAL' },
+  ];
+
+  return candidatos.filter(
+    (c, i, arr) =>
+      c.day > 5 &&                                    // no pisar los anclados
+      c.day < duracion &&                             // que dé tiempo a enviarlo
+      arr.findIndex((o) => o.day === c.day) === i     // si coinciden, uno solo
+  );
+}
+
 export class TrialScheduler {
   private static isRunning: boolean = false;
   private static cronTask: cron.ScheduledTask | null = null;
@@ -202,10 +233,16 @@ export class TrialScheduler {
           // El aviso final gana sobre los de arranque si ambos cayeran el mismo
           // día (pasa con trials cortos, donde el día 5 y "faltan 2" coinciden):
           // avisar de que se acaba pesa más que un recordatorio de mitad.
+          const duracionDeEsteTrial = Math.max(
+            1,
+            Math.round((trialEndsAt.getTime() - trialStartedAt.getTime()) / 86400000)
+          );
+          const agenda = [...TRIAL_NOTIFICATIONS, ...avisosIntermedios(duracionDeEsteTrial)];
+
           const notificationToSend =
             diasRestantes <= DIAS_ANTES_DEL_AVISO_FINAL
               ? ({ day: dayOfTrial, type: 'TRIAL_ENDING' as NotificationType })
-              : TRIAL_NOTIFICATIONS.find(n => n.day === dayOfTrial);
+              : agenda.find(n => n.day === dayOfTrial);
 
           if (notificationToSend && !sentNotifications.includes(notificationToSend.type)) {
             const sent = await this.sendTrialNotification(
@@ -268,11 +305,28 @@ export class TrialScheduler {
           result = await NotificationService.notifyTrialWelcome(userId, userName);
           break;
         case 'TRIAL_DAY_3':
-          result = await NotificationService.notifyTrialDay3(userId);
+          result = await NotificationService.notifyTrialDay3(userId, diasRestantes);
           break;
         case 'TRIAL_DAY_5':
           result = await NotificationService.notifyTrialDay5(userId, diasRestantes);
           break;
+        case 'TRIAL_MEDIO':
+        case 'TRIAL_RECTA_FINAL': {
+          // Estos dos cambian según haya conectado el correo, así que hace
+          // falta mirarlo. Solo se consulta para ESTOS avisos: los demás no lo
+          // necesitan y no vale la pena pagar la consulta en cada uno.
+          const importadas = await prisma.importedBankEmail
+            .count({ where: { emailConnection: { userId } } })
+            .catch(() => 0);
+          const conectoElCorreo = importadas > 0 || (await prisma.emailConnection
+            .count({ where: { userId, isActive: true } })
+            .catch(() => 0)) > 0;
+
+          result = notificationType === 'TRIAL_MEDIO'
+            ? await NotificationService.notifyTrialMedio(userId, userName, conectoElCorreo, importadas, diasRestantes)
+            : await NotificationService.notifyTrialRectaFinal(userId, conectoElCorreo, importadas, diasRestantes);
+          break;
+        }
         case 'TRIAL_ENDING':
           result = await NotificationService.notifyTrialEnding(userId, diasRestantes);
           break;
@@ -631,6 +685,18 @@ export class TrialScheduler {
           deviceInfo.deviceName
         );
       }
+
+      // Mismo evento que el trial manual, para que las dos formas de activarlo
+      // se cuenten juntas. `automatico: true` las separa cuando haga falta.
+      //
+      // `planPedido` va en null a propósito: aquí el usuario no eligió nada, y
+      // ponerle el plan concedido fingiría una preferencia que no existió.
+      recordFeatureUsage(userId, 'suscripciones', 'inicio_trial', {
+        plan: planQueConcedeElTrial() ?? 'PREMIUM',
+        planPedido: null,
+        dias: duracionTrialDias(),
+        automatico: true,
+      });
 
       logger.log(`[TrialScheduler] 🎯 Trial iniciado para usuario ${userId} - Termina: ${trialEndsAt.toISOString()}`);
 
