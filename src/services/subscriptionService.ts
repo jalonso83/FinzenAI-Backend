@@ -424,9 +424,42 @@ export class SubscriptionService {
     description?: string;
   }) {
     try {
-      const payment = await prisma.payment.create({
-        data,
-      });
+      // Una factura de Stripe = UNA fila, no una por intento.
+      //
+      // Esto era un `create` y reventaba con P2002: Stripe reintenta un cobro
+      // fallido hasta 8 veces y cada intento dispara el webhook con la MISMA
+      // factura. El primero creaba la fila y los siguientes fallaban, el
+      // webhook devolvía error —con lo que Stripe reintentaba todavía más— y
+      // todo lo que iba después de registrar el pago (degradar el plan, avisar
+      // al usuario) se quedaba sin ejecutar.
+      //
+      // Con `upsert` el reintento actualiza en vez de romper. Y de paso queda
+      // bien el caso de recuperación: si la factura falla y luego se cobra,
+      // Stripe manda los dos eventos y la fila termina en SUCCEEDED en vez de
+      // dejar un FAILED huérfano al lado.
+      const clave = data.stripeInvoiceId
+        ? { stripeInvoiceId: data.stripeInvoiceId }
+        : data.stripePaymentIntentId
+          ? { stripePaymentIntentId: data.stripePaymentIntentId }
+          : null;
+
+      // Sin identificador de Stripe no hay con qué deduplicar (pagos manuales,
+      // otros proveedores): se crea y ya.
+      const payment = clave
+        ? await prisma.payment.upsert({
+            where: clave as any,
+            update: {
+              status: data.status,
+              amount: data.amount,
+              currency: data.currency,
+              description: data.description,
+              // El intento de pago SÍ puede cambiar entre reintentos de la
+              // misma factura; el resto de campos no se tocan.
+              stripePaymentIntentId: data.stripePaymentIntentId,
+            },
+            create: data,
+          })
+        : await prisma.payment.create({ data });
 
       logger.log(`✅ Pago registrado: ${payment.id} - ${data.status}`);
       return payment;
