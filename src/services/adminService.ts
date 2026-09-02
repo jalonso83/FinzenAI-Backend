@@ -2509,4 +2509,188 @@ export class AdminService {
       update: { hidden: input.hidden },
     });
   }
+
+  // ─── EVAL DEL TRIAL PRO DE 21 DÍAS ───────────────────────
+  //
+  // Cubre lo que pide la eval firmada el 1-sep-2026 (§7): activación de Email
+  // Sync (A2), desenlace de cada trial (A3), retención día a día (A4) y el
+  // contraste entre quienes activaron el correo y quienes no (A5).
+  //
+  // Los datos ya se venían registrando desde el 27 de agosto. Esto solo los
+  // reúne y los expone: no hizo falta instrumentación nueva.
+
+  /**
+   * Inicio de la cohorte limpia del trial nuevo.
+   *
+   * El 31 de agosto NO sirve como frontera: las variables se encendieron a
+   * media tarde, así que ese día quedaron mezclados los dos regímenes (8
+   * registros, solo 3 con trial automático). La cohorte sin contaminar empieza
+   * el 1 de septiembre.
+   */
+  private static readonly INICIO_COHORTE_TRIAL_NUEVO = new Date('2026-09-01T00:00:00Z');
+
+  /** Eventos que NO cuentan como "el usuario volvió": los genera el propio
+   *  sistema. Sin excluirlos, quien conectó el correo parecería retenido solo
+   *  porque le entraron transacciones mientras no abría la app. */
+  private static readonly EVENTOS_NO_HUMANOS =
+    `'email_sync_daily','email_tx_imported','points_awarded','streak_break'`;
+
+  static async getTrialEval(query: { from?: string; to?: string }) {
+    const { from, to } = parseDateRange(query);
+    const NO_HUMANOS = AdminService.EVENTOS_NO_HUMANOS;
+
+    const [
+      nuevosDelPeriodo,
+      activadores,
+      desenlaces,
+      retencionPorDia,
+      contrasteD7,
+      contrasteD30,
+    ] = await Promise.all([
+      prisma.user.count({ where: { createdAt: { gte: from, lte: to } } }),
+
+      // A2 — Se cuenta por el EVENTO, no por la fila de EmailConnection: esa se
+      // borra en cascada al bajar de plan, así que usarla borraría del
+      // histórico justo a quien más interesa seguir.
+      prisma.$queryRawUnsafe<{ n: bigint; primera: Date | null }[]>(`
+        SELECT COUNT(DISTINCT fu."userId")::bigint AS n, MIN(fu."createdAt") AS primera
+        FROM feature_usage fu
+        JOIN users u ON u.id = fu."userId"
+        WHERE fu.feature = 'email_sync' AND fu.action = 'conecto'
+          AND u."createdAt" >= $1 AND u."createdAt" <= $2
+      `, from, to),
+
+      // A3 — Desenlace de cada trial.
+      //
+      // "convirtió" = tiene un pago exitoso posterior al inicio del trial, SIN
+      // ventana de corte. Con 21 días mucha gente decide tarde, y exigir que
+      // pague antes del día 21 subestimaría justo el régimen que se evalúa.
+      // Definición pendiente de que Junior la confirme.
+      prisma.$queryRawUnsafe<any[]>(`
+        WITH trials AS (
+          SELECT s."userId", s.status::text AS estado
+          FROM subscriptions s
+          JOIN users u ON u.id = s."userId"
+          WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
+            AND (s."trialStartedAt" IS NOT NULL OR s."trialEndedAt" IS NOT NULL)
+        )
+        SELECT
+          COUNT(*)::bigint AS total,
+          COUNT(*) FILTER (WHERE estado = 'TRIALING')::bigint AS activos,
+          COUNT(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM payments p WHERE p."userId" = trials."userId" AND p.status = 'SUCCEEDED'
+          ))::bigint AS convirtio,
+          COUNT(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM feature_usage f WHERE f."userId" = trials."userId"
+              AND f.feature = 'suscripciones' AND f.action = 'trial_cancelado'
+          ))::bigint AS cancelo,
+          COUNT(*) FILTER (WHERE estado <> 'TRIALING'
+            AND NOT EXISTS (SELECT 1 FROM payments p WHERE p."userId" = trials."userId" AND p.status = 'SUCCEEDED')
+            AND NOT EXISTS (SELECT 1 FROM feature_usage f WHERE f."userId" = trials."userId"
+              AND f.feature = 'suscripciones' AND f.action = 'trial_cancelado')
+          )::bigint AS vencio
+        FROM trials
+      `, from, to),
+
+      // A4 — La curva completa, día 1 a 30. Es el guardrail que manda: con solo
+      // D7 y D30 el acantilado del día 21 queda escondido dentro de una media.
+      prisma.$queryRawUnsafe<any[]>(`
+        SELECT d.dia::int AS dia,
+               COUNT(DISTINCT u.id)::bigint AS cohorte,
+               COUNT(DISTINCT u.id) FILTER (WHERE EXISTS (
+                 SELECT 1 FROM gamification_events ge
+                 WHERE ge."userId" = u.id
+                   AND ge."createdAt" >= u."createdAt" + (d.dia || ' days')::interval
+                   AND ge."createdAt" <  u."createdAt" + ((d.dia + 1) || ' days')::interval
+                   AND ge."eventType" NOT IN (${NO_HUMANOS})
+               ))::bigint AS activos
+        FROM generate_series(1, 30) AS d(dia)
+        CROSS JOIN users u
+        WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
+          AND u."createdAt" + ((d.dia + 1) || ' days')::interval <= NOW()
+        GROUP BY d.dia ORDER BY d.dia
+      `, from, to),
+
+      // A5 — El §4B: D7 partido por si activó Email Sync. No es aleatorizado
+      // (hay autoselección), pero es el único contraste posible con un
+      // despliegue al 100%.
+      prisma.$queryRawUnsafe<any[]>(`
+        SELECT activo_sync, COUNT(*)::bigint AS cohorte, COUNT(*) FILTER (WHERE retenido)::bigint AS retenidos
+        FROM (
+          SELECT u.id,
+                 EXISTS (SELECT 1 FROM feature_usage f WHERE f."userId" = u.id
+                         AND f.feature='email_sync' AND f.action='conecto') AS activo_sync,
+                 EXISTS (SELECT 1 FROM gamification_events ge WHERE ge."userId" = u.id
+                         AND ge."createdAt" >= u."createdAt" + interval '7 days'
+                         AND ge."eventType" NOT IN (${NO_HUMANOS})) AS retenido
+          FROM users u
+          WHERE u."createdAt" >= $1 AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '7 days')
+        ) x GROUP BY activo_sync
+      `, from, to),
+
+      prisma.$queryRawUnsafe<any[]>(`
+        SELECT activo_sync, COUNT(*)::bigint AS cohorte, COUNT(*) FILTER (WHERE retenido)::bigint AS retenidos
+        FROM (
+          SELECT u.id,
+                 EXISTS (SELECT 1 FROM feature_usage f WHERE f."userId" = u.id
+                         AND f.feature='email_sync' AND f.action='conecto') AS activo_sync,
+                 EXISTS (SELECT 1 FROM gamification_events ge WHERE ge."userId" = u.id
+                         AND ge."createdAt" >= u."createdAt" + interval '30 days'
+                         AND ge."eventType" NOT IN (${NO_HUMANOS})) AS retenido
+          FROM users u
+          WHERE u."createdAt" >= $1 AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '30 days')
+        ) x GROUP BY activo_sync
+      `, from, to),
+    ]);
+
+    const n = (v: any) => Number(v ?? 0);
+    const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 10000) / 100 : 0);
+
+    const conectaron = n(activadores[0]?.n);
+    const d = desenlaces[0] ?? {};
+
+    // El contraste se devuelve ya restado: es el número que la eval compara
+    // contra sus umbrales (8 puntos en D7, 5 en D30).
+    const partir = (filas: any[]) => {
+      const con = filas.find((f) => f.activo_sync === true);
+      const sin = filas.find((f) => f.activo_sync === false);
+      const pCon = pct(n(con?.retenidos), n(con?.cohorte));
+      const pSin = pct(n(sin?.retenidos), n(sin?.cohorte));
+      return {
+        conEmailSync: { cohorte: n(con?.cohorte), retenidos: n(con?.retenidos), pct: pCon },
+        sinEmailSync: { cohorte: n(sin?.cohorte), retenidos: n(sin?.retenidos), pct: pSin },
+        diferenciaPuntos: Math.round((pCon - pSin) * 100) / 100,
+      };
+    };
+
+    return {
+      emailSync: {
+        activadores: conectaron,
+        nuevosDelPeriodo,
+        pctActivacion: pct(conectaron, nuevosDelPeriodo),
+        primeraActivacion: activadores[0]?.primera ?? null,
+      },
+      desenlaceTrial: {
+        total: n(d.total),
+        activos: n(d.activos),
+        convirtio: n(d.convirtio),
+        vencio: n(d.vencio),
+        cancelo: n(d.cancelo),
+        // La conversión va sobre trials RESUELTOS, nunca sobre los activos:
+        // meterlos en el denominador la hunde artificialmente al principio,
+        // cuando casi todos siguen corriendo.
+        pctConversion: pct(n(d.convirtio), n(d.convirtio) + n(d.vencio) + n(d.cancelo)),
+        pctCancelacionTemprana: pct(n(d.cancelo), n(d.total)),
+      },
+      retencionPorDia: retencionPorDia.map((r: any) => ({
+        dia: n(r.dia),
+        cohorte: n(r.cohorte),
+        activos: n(r.activos),
+        pct: pct(n(r.activos), n(r.cohorte)),
+      })),
+      contraste: { d7: partir(contrasteD7), d30: partir(contrasteD30) },
+      cohorteLimpiaDesde: AdminService.INICIO_COHORTE_TRIAL_NUEVO,
+      period: { from, to },
+    };
+  }
 }

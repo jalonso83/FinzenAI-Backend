@@ -333,3 +333,19 @@ export const setCampaignHidden = async (req: Request, res: Response) => {
     return handleError(res, 'set campaign hidden', error);
   }
 };
+
+/**
+ * GET /api/admin/trial-eval
+ *
+ * Todo lo que pide la eval del trial de 21 días firmada el 1-sep-2026 (§7):
+ * activación de Email Sync, desenlace de cada trial, retención día a día y el
+ * contraste entre quienes conectaron el correo y quienes no.
+ */
+export const getTrialEval = async (req: Request, res: Response) => {
+  try {
+    const data = await AdminService.getTrialEval(req.query as any);
+    return res.json({ message: 'Trial eval data retrieved', data });
+  } catch (error) {
+    return handleError(res, 'trial-eval', error);
+  }
+};

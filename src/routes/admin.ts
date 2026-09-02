@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
 import { authenticateAdminOrPdfToken } from '../middlewares/adminAuth';
 import { strictApiLimiter } from '../config/rateLimiter';
-import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf, getCampaignCosts, upsertCampaignCost, deleteCampaignCost, setCampaignHidden } from '../controllers/admin';
+import { getPulse, getUsersAnalytics, getRevenueAnalytics, getEngagement, getTrialEval, getUnitEconomics, getFinancialHealth, getUsersList, getDistinctCountries, bulkResendVerification, getAcquisition, generateDashboardPdf, getCampaignCosts, upsertCampaignCost, deleteCampaignCost, setCampaignHidden } from '../controllers/admin';
 import { getFeedbackList, updateFeedback } from '../controllers/feedback';
 import { createBroadcast, listBroadcasts, previewBroadcast, sendBroadcast, getBroadcastStats, approveBroadcast, rejectBroadcast, deleteBroadcast, activateBroadcast, deactivateBroadcast } from '../controllers/broadcasts';
 import { getH10Stats, getH13Stats } from '../controllers/experiments';
@@ -21,6 +21,9 @@ router.get('/users/countries', getDistinctCountries);
 router.get('/users', getUsersAnalytics);
 router.get('/revenue', getRevenueAnalytics);
 router.get('/engagement', getEngagement);
+
+// Eval del trial PRO de 21 días — A2..A5 de la eval del 1-sep-2026
+router.get('/trial-eval', getTrialEval);
 router.get('/acquisition', getAcquisition);
 router.get('/unit-economics', getUnitEconomics);
 router.get('/financial-health', getFinancialHealth);

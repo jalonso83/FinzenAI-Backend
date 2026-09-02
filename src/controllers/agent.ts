@@ -34,9 +34,13 @@ export const getAgentKpis = async (req: Request, res: Response) => {
   try {
     const query = { from: req.query.from as string | undefined, to: req.query.to as string | undefined };
 
-    const [pulse, acquisition] = await Promise.all([
+    const [pulse, acquisition, trialEval] = await Promise.all([
       AdminService.getPulse(query),
       AdminService.getAcquisition(query),
+      // Eval del trial PRO de 21 días. Va aquí y no en un endpoint aparte
+      // porque el export mensual sale de esta llamada: si estuviera suelto,
+      // habría que acordarse de pedirlo, y lo que hay que acordarse se olvida.
+      AdminService.getTrialEval(query),
     ]);
 
     // Campañas enviadas dentro del período (últimas 20) con su medición causal.
@@ -115,6 +119,39 @@ export const getAgentKpis = async (req: Request, res: Response) => {
         })),
       },
       campaigns,
+
+      // ─── Eval del trial PRO de 21 días (firmada 1-sep-2026) ───────────────
+      // Nombres en snake_case como el resto de esta API, que la consume Kaizen.
+      trial_eval: {
+        // A2 · indicador adelantado: si esto no sube, nada de lo demás importa
+        email_sync: {
+          activadores: trialEval.emailSync.activadores,
+          nuevos_periodo: trialEval.emailSync.nuevosDelPeriodo,
+          activacion_pct: trialEval.emailSync.pctActivacion,
+          umbral_pct: 30, // §4: ≥30% = el display funciona
+        },
+        // A3 · los cuatro estados suman el total
+        desenlace_trial: {
+          total: trialEval.desenlaceTrial.total,
+          activos: trialEval.desenlaceTrial.activos,
+          convirtio: trialEval.desenlaceTrial.convirtio,
+          vencio: trialEval.desenlaceTrial.vencio,
+          cancelo: trialEval.desenlaceTrial.cancelo,
+          conversion_pct: trialEval.desenlaceTrial.pctConversion,
+          cancelacion_temprana_pct: trialEval.desenlaceTrial.pctCancelacionTemprana,
+          umbral_cancelacion_alarma_pct: 20, // §5: >20% = el trial se percibe como imposición
+        },
+        // A4 · la curva del acantilado del día 21
+        retencion_por_dia: trialEval.retencionPorDia,
+        // A5 · §4B, la prueba de la hipótesis central
+        contraste_email_sync: {
+          d7: trialEval.contraste.d7,
+          d30: trialEval.contraste.d30,
+          umbral_d7_puntos: 8,
+          umbral_d30_puntos: 5,
+        },
+        cohorte_limpia_desde: trialEval.cohorteLimpiaDesde,
+      },
     });
   } catch (error) {
     logger.error('[AgentAPI] Error en getAgentKpis:', error);
