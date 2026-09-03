@@ -826,6 +826,7 @@ export class AdminService {
       streakActiveUsersData,
       timeToFirstTxData,
       zenioMessagesAgg,
+      zenioPeriodoData,
     ] = await Promise.all([
       // Total transactions in period
       prisma.transaction.count({
@@ -931,16 +932,37 @@ export class AdminService {
         WHERE ft.first_tx_at IS NOT NULL
       `, from, to),
 
-      // Mensajes a Zenio sumados sobre TODAS las suscripciones.
-      // Estos son contadores corridos en la fila de suscripción (se incrementan
-      // +1 por cada mensaje real en zenioV2), por lo que NO respetan el filtro
-      // de período (from/to):
-      //   - zenioMessagesTotal = acumulado de por vida (misma fuente que la
-      //     columna "Zenio" de la tabla de Usuarios).
-      //   - zenioQueriesUsed   = cuota del mes en curso (se resetea cada mes).
+      // Acumulado de por vida. Este sí es un contador corrido honesto: nunca se
+      // resetea, así que sumarlo da el total real. Misma fuente que la columna
+      // "Zenio" de la tabla de Usuarios.
       prisma.subscription.aggregate({
-        _sum: { zenioMessagesTotal: true, zenioQueriesUsed: true },
+        _sum: { zenioMessagesTotal: true },
       }),
+
+      // Mensajes DEL PERÍODO.
+      //
+      // Antes esto sumaba `zenioQueriesUsed` de todas las suscripciones y se
+      // etiquetaba como "mes en curso". Estaba mal por dos motivos:
+      //
+      //   1. Ese contador se resetea de forma PEREZOSA — solo cuando el propio
+      //      usuario vuelve a usar Zenio y el sistema nota que cambió el mes.
+      //      Quien lo usó en agosto y no volvió sigue arrastrando su número de
+      //      agosto. El 3 de septiembre la suma daba 1.073 cuando septiembre
+      //      llevaba 40: había contadores sin resetear desde marzo.
+      //   2. No respetaba el filtro de fechas del panel: decía "mes en curso"
+      //      aunque estuvieras mirando julio.
+      //
+      // `openai_daily_usage` tiene fecha real por día y usuario, así que el
+      // número sale exacto y se puede filtrar. Se cuentan solo las llamadas de
+      // Zenio, no las del lector de correos ni el resto de funciones de IA.
+      prisma.$queryRawUnsafe<{ mensajes: bigint; usuarios: bigint }[]>(`
+        SELECT COALESCE(SUM(o."totalCallCount"), 0)::bigint AS mensajes,
+               COUNT(DISTINCT o."userId")::bigint AS usuarios
+        FROM openai_daily_usage o
+        WHERE o."date" >= $1 AND o."date" <= $2
+          AND o."costByFeature" IS NOT NULL
+          AND (o."costByFeature" ? 'zenio_agents' OR o."costByFeature" ? 'zenio_v2')
+      `, from, to),
     ]);
 
     const activeUsers = Number(activeUsersWithTx[0]?.cnt ?? 0);
@@ -1181,7 +1203,10 @@ export class AdminService {
       // filtrados por período). zenioMessagesTotal coincide con el total de la
       // columna "Zenio" en la tabla de Usuarios.
       zenioMessagesTotal: zenioMessagesAgg._sum.zenioMessagesTotal ?? 0,
-      zenioMessagesThisMonth: zenioMessagesAgg._sum.zenioQueriesUsed ?? 0,
+      // Del PERÍODO seleccionado, no "del mes en curso": ahora sale de
+      // openai_daily_usage y sí respeta el filtro de fechas de arriba.
+      zenioMessagesThisMonth: Number(zenioPeriodoData[0]?.mensajes ?? 0),
+      zenioUsuariosPeriodo: Number(zenioPeriodoData[0]?.usuarios ?? 0),
       referrals: {
         total: referralsMade,
         converted: referralsConvertedFromCohort,
