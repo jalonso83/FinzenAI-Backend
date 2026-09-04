@@ -955,8 +955,23 @@ export class AdminService {
       // `openai_daily_usage` tiene fecha real por día y usuario, así que el
       // número sale exacto y se puede filtrar. Se cuentan solo las llamadas de
       // Zenio, no las del lector de correos ni el resto de funciones de IA.
-      prisma.$queryRawUnsafe<{ mensajes: bigint; usuarios: bigint }[]>(`
-        SELECT COALESCE(SUM(o."totalCallCount"), 0)::bigint AS mensajes,
+      // OJO con el prorrateo: `totalCallCount` es el total del día para ese
+      // usuario e incluye TODA la IA (lector de correos, voz, transcripción),
+      // no solo Zenio. Sumarlo tal cual sobrecontaba mucho — en junio el 60% de
+      // esas llamadas no eran Zenio y el total de 90 días salía casi al doble.
+      //
+      // No hay tabla de mensajes con fecha, así que se reparte por la parte del
+      // costo que sí es de Zenio. Es una ESTIMACIÓN, no un conteo: la etiqueta
+      // del panel lo dice. Para tener el número exacto de aquí en adelante,
+      // Zenio ya registra su propio evento en `feature_usage`.
+      prisma.$queryRawUnsafe<{ mensajes: number; usuarios: bigint }[]>(`
+        SELECT COALESCE(SUM(
+                 o."totalCallCount" * (
+                   (COALESCE((o."costByFeature"->>'zenio_agents')::numeric, 0)
+                    + COALESCE((o."costByFeature"->>'zenio_v2')::numeric, 0))
+                   / NULLIF(o."totalCost", 0)
+                 )
+               ), 0)::float AS mensajes,
                COUNT(DISTINCT o."userId")::bigint AS usuarios
         FROM openai_daily_usage o
         WHERE o."date" >= $1 AND o."date" <= $2
@@ -1203,9 +1218,9 @@ export class AdminService {
       // filtrados por período). zenioMessagesTotal coincide con el total de la
       // columna "Zenio" en la tabla de Usuarios.
       zenioMessagesTotal: zenioMessagesAgg._sum.zenioMessagesTotal ?? 0,
-      // Del PERÍODO seleccionado, no "del mes en curso": ahora sale de
-      // openai_daily_usage y sí respeta el filtro de fechas de arriba.
-      zenioMessagesThisMonth: Number(zenioPeriodoData[0]?.mensajes ?? 0),
+      // Del PERÍODO seleccionado, no "del mes en curso". Es una estimación
+      // prorrateada por costo mientras no haya histórico del evento nuevo.
+      zenioMessagesThisMonth: Math.round(Number(zenioPeriodoData[0]?.mensajes ?? 0)),
       zenioUsuariosPeriodo: Number(zenioPeriodoData[0]?.usuarios ?? 0),
       referrals: {
         total: referralsMade,
