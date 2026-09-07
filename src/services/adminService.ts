@@ -130,6 +130,7 @@ export class AdminService {
       activeStartOfPeriod,
       enRecuperacionCount,
       marcadosParaCancelarCount,
+      rebotesDelPeriodoCount,
       dauRaw,
       mauRaw,
       freeToPaidCount,
@@ -213,6 +214,18 @@ export class AdminService {
       // no semanas después cuando vence. Lo llenan los dos proveedores.
       prisma.subscription.count({
         where: { plan: { in: ['PREMIUM', 'PRO'] }, cancelAtPeriodEnd: true },
+      }),
+
+      // Cuántos ENTRARON en past_due dentro del período, hayan salido o no.
+      //
+      // Va aparte del conteo de arriba porque responden preguntas distintas y se
+      // estaban confundiendo: aquel dice "¿a quién hay que llamar hoy?" (foto del
+      // momento, sin fechas), este dice "¿a cuántos les rebotó el cobro en este
+      // rango?". El de la foto se pone en 0 en cuanto la persona paga, y eso se
+      // leía como "nunca ha pasado nada" — que es justo lo que llevó a deducir
+      // salidas inexistentes en agosto de 2026.
+      prisma.subscription.count({
+        where: { pastDueAt: { gte: from, lte: to } },
       }),
 
       // DAU: distinct users with HUMAN gamification events in the last 7 days.
@@ -426,6 +439,7 @@ export class AdminService {
       // conteos sí — son personas concretas.
       enRecuperacion: enRecuperacionCount,
       marcadosParaCancelar: marcadosParaCancelarCount,
+      rebotesDelPeriodo: rebotesDelPeriodoCount,
       trialsActive,
       trialsStarted,
       trialConversionRate,
@@ -927,14 +941,20 @@ export class AdminService {
       //
       // `countrySource` en NULL son los registros por formulario, donde el país
       // lo escribió la persona — no se infirió nada y por eso se muestran aparte.
-      prisma.$queryRawUnsafe<{ fuente: string; pais: string; n: bigint }[]>(`
+      // Ordenado para que las señales de un mismo país queden JUNTAS: primero los
+      // países por su total (el más grande arriba) y dentro de cada uno las
+      // señales por peso. Ordenar solo por cantidad mezclaba los países y no
+      // dejaba ver lo único que importa aquí — de un país dado, qué parte se
+      // detectó de verdad y qué parte se asumió.
+      prisma.$queryRawUnsafe<{ fuente: string; pais: string; n: bigint; total_pais: bigint }[]>(`
         SELECT COALESCE("countrySource", 'formulario') AS fuente,
                country AS pais,
-               COUNT(*)::bigint AS n
+               COUNT(*)::bigint AS n,
+               SUM(COUNT(*)) OVER (PARTITION BY country)::bigint AS total_pais
         FROM users
         WHERE "createdAt" >= $1 AND "createdAt" <= $2
-        GROUP BY 1, 2
-        ORDER BY 3 DESC
+        GROUP BY country, 1
+        ORDER BY total_pais DESC, pais ASC, n DESC
       `, from, to),
 
       // Users con racha de HÁBITO real en el período.
@@ -1292,6 +1312,7 @@ export class AdminService {
         fuente: r.fuente,
         country: r.pais || '(vacío)',
         count: Number(r.n),
+        totalPais: Number(r.total_pais),
       })),
       featureUsage,
       period: { from, to },
