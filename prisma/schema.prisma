@@ -16,6 +16,21 @@ model User {
   phone               String?
   birthDate           DateTime?
   country             String    @default("")
+  // Qué señal decidió el país en un registro por Google/Apple:
+  //   'device'  → regionCode del teléfono (la más confiable)
+  //   'locale'  → región sacada del idioma ("es-DO" → DO)
+  //   'geoip'   → la IP contra ipwho.is
+  //   'default' → NINGUNA funcionó y se cayó al valor por defecto
+  //   null      → registro por formulario: el país lo escribió la persona
+  //
+  // Existe porque el valor por defecto es la cadena "Estados Unidos", o sea
+  // EXACTAMENTE la misma que se guarda cuando de verdad se detecta Estados
+  // Unidos. Sin esta marca las dos son indistinguibles, y el % de usuarios
+  // "estadounidenses" viene subiendo (37% en julio → 54% en septiembre) sin que
+  // se pueda saber si son personas reales allá, teléfonos con la cuenta de
+  // tienda en US, o simplemente el GeoIP fallando. Se guarda la señal, no una
+  // conclusión: la conclusión se saca leyendo el reparto.
+  countrySource       String?
   state               String?
   city                String?
   currency            String    @default("")

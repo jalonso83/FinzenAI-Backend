@@ -854,6 +854,7 @@ export class AdminService {
       referralsMade,
       referralsConvertedFromCohort,
       registrationsByChannel,
+      fuenteDelPaisData,
       streakActiveUsersData,
       timeToFirstTxData,
       zenioMessagesAgg,
@@ -915,6 +916,26 @@ export class AdminService {
         orderBy: { _count: { country: 'desc' } },
         take: 10,
       }),
+
+      // De dónde salió el país en los registros por Google/Apple.
+      //
+      // Hace falta porque el valor por defecto ES la cadena "Estados Unidos": en
+      // la base, un estadounidense de verdad y un "no se pudo averiguar" quedan
+      // idénticos. El % marcado como US venía subiendo (37% en julio → 54% en
+      // septiembre) sin manera de saber si eran personas reales allá, teléfonos
+      // con la cuenta de tienda en US, o el GeoIP fallando.
+      //
+      // `countrySource` en NULL son los registros por formulario, donde el país
+      // lo escribió la persona — no se infirió nada y por eso se muestran aparte.
+      prisma.$queryRawUnsafe<{ fuente: string; pais: string; n: bigint }[]>(`
+        SELECT COALESCE("countrySource", 'formulario') AS fuente,
+               country AS pais,
+               COUNT(*)::bigint AS n
+        FROM users
+        WHERE "createdAt" >= $1 AND "createdAt" <= $2
+        GROUP BY 1, 2
+        ORDER BY 3 DESC
+      `, from, to),
 
       // Users con racha de HÁBITO real en el período.
       // currentStreak >= 2 (NO > 0): una racha de 1 la crea cualquier actividad
@@ -1261,6 +1282,16 @@ export class AdminService {
       registrationsByChannel: registrationsByChannel.map(r => ({
         country: r.country,
         count: r._count.country,
+      })),
+      // Reparto por señal, con el desglose de a qué país llevó cada una. Lo que
+      // hay que vigilar es la fila `default`: ahí el país NO se detectó, se
+      // asumió. Solo tiene datos desde que se desplegó `countrySource`; lo
+      // anterior sale como `formulario` aunque fuera SSO, porque el campo no
+      // existía. Ver la nota del campo en schema.prisma.
+      fuenteDelPais: fuenteDelPaisData.map(r => ({
+        fuente: r.fuente,
+        country: r.pais || '(vacío)',
+        count: Number(r.n),
       })),
       featureUsage,
       period: { from, to },

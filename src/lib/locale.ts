@@ -66,6 +66,17 @@ export interface InferredLocale {
 }
 
 /**
+ * Cuál de las cuatro señales terminó decidiendo el país. `default` significa que
+ * NINGUNA funcionó — y como el valor por defecto es "Estados Unidos", sin esta
+ * marca ese caso es idéntico en la base a un estadounidense de verdad.
+ */
+export type FuenteDelPais = 'device' | 'locale' | 'geoip' | 'default';
+
+export interface LocaleResuelto extends InferredLocale {
+  fuente: FuenteDelPais;
+}
+
+/**
  * Devuelve { country, currency } para un country code ISO (DO, US, MX, ...).
  * Retorna null si el código no está en el mapeo soportado (apps fuera de Latam).
  */
@@ -140,23 +151,30 @@ export async function resolveSSOLocale(opts: {
   deviceCountry: string | null | undefined;
   deviceLocale: string | null | undefined;
   ipAddress: string | null | undefined;
-}): Promise<InferredLocale> {
+}): Promise<LocaleResuelto> {
   // 1. Device country (más confiable)
   const fromDevice = inferLocaleFromCountryCode(opts.deviceCountry);
-  if (fromDevice) return fromDevice;
+  if (fromDevice) return { ...fromDevice, fuente: 'device' };
 
   // 2. Locale tipo "es-DO" → extraer "DO"
   if (opts.deviceLocale && opts.deviceLocale.includes('-')) {
     const region = opts.deviceLocale.split('-')[1];
     const fromLocale = inferLocaleFromCountryCode(region);
-    if (fromLocale) return fromLocale;
+    if (fromLocale) return { ...fromLocale, fuente: 'locale' };
   }
 
   // 3. GeoIP fallback
   const ipCountry = await inferCountryCodeFromIp(opts.ipAddress);
   const fromIp = inferLocaleFromCountryCode(ipCountry);
-  if (fromIp) return fromIp;
+  if (fromIp) return { ...fromIp, fuente: 'geoip' };
 
-  // 4. Default global
-  return SSO_LOCALE_DEFAULT;
+  // 4. Default global.
+  //
+  // Aquí es donde se pierde la información: se devuelve "Estados Unidos", que es
+  // la misma cadena que se guarda cuando el país SÍ se detectó como US. La
+  // `fuente` es lo único que después permite separar un estadounidense real de
+  // un "no pudimos averiguarlo". Ojo al leerlo: que caiga aquí no significa que
+  // las señales estén rotas — también pasa con países fuera del mapeo de 22
+  // (COUNTRY_CODE_TO_NAME), que se descartan y siguen de largo.
+  return { ...SSO_LOCALE_DEFAULT, fuente: 'default' };
 }

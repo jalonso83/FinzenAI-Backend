@@ -163,7 +163,17 @@ async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult>
   // Inferir country/currency: device > deviceLocale > GeoIP. Si nada match,
   // queda vacío y el user lo edita desde Profile.
   const inferred = await resolveSSOLocale({ deviceCountry, deviceLocale, ipAddress });
-  logger.log(`[SSO] Locale inferido para nuevo user ${normalizedEmail}: country="${inferred.country}" currency="${inferred.currency}"`);
+  // A `error` a propósito: en producción el logger solo saca errores, así que
+  // con `log` esta línea no se escribía — justo la que hace falta para
+  // diagnosticar por qué la mitad de los registros caen en Estados Unidos. Se
+  // registran las señales CRUDAS además del resultado: si el país sale del
+  // default, lo que importa es ver qué mandó el teléfono para saber si el
+  // problema es la app, el GeoIP o el mapeo de países.
+  logger.error(
+    `[SSO] Locale inferido para ${normalizedEmail}: country="${inferred.country}" ` +
+    `currency="${inferred.currency}" fuente=${inferred.fuente} ` +
+    `(deviceCountry=${deviceCountry ?? 'null'} deviceLocale=${deviceLocale ?? 'null'} ip=${ipAddress ?? 'null'})`,
+  );
 
   const created = await prisma.user.create({
     data: {
@@ -175,6 +185,7 @@ async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult>
       authProvider: provider,
       country: inferred.country,
       currency: inferred.currency,
+      countrySource: inferred.fuente,
       [subField]: sub,
     } as any,
   });

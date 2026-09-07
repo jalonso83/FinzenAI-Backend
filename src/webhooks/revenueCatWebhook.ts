@@ -205,10 +205,44 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
         await notifyDowngradedToFree(userId);
         break;
 
-      case RC_WEBHOOK_EVENTS.BILLING_ISSUE_DETECTED:
+      case RC_WEBHOOK_EVENTS.BILLING_ISSUE_DETECTED: {
         // Billing issue: marcar PAST_DUE
         await subscriptionService.updateSubscriptionStatus(userId, SubscriptionStatus.PAST_DUE);
         logger.log(`Billing issue detectado para usuario ${userId}`);
+
+        // Fila FAILED en `payments`, igual que hace Stripe en handlePaymentFailed.
+        // Sin esto la tarjeta "Pagos Fallidos" del panel era CIEGA a iOS: solo
+        // veía los rebotes de web, porque este caso cambiaba el estado y mandaba
+        // el push pero no dejaba registro con fecha. Y el estado se pierde en
+        // cuanto Apple cobra, así que el rebote desaparecía sin rastro.
+        //
+        // Best-effort a propósito: si falla el registro NO se rompe el webhook —
+        // marcar PAST_DUE y avisarle al usuario importa más que la métrica, y
+        // RevenueCat reintentaría todo el evento por un error aquí.
+        try {
+          const subParaPago = await prisma.subscription.findUnique({
+            where: { userId },
+            select: { id: true },
+          });
+          if (subParaPago) {
+            await prisma.payment.create({
+              data: {
+                userId,
+                subscriptionId: subParaPago.id,
+                // RevenueCat no manda el monto en este evento: lo que falló es el
+                // cobro de la renovación, cuyo precio vive en la suscripción. Se
+                // deja en 0 en vez de inventar una cifra — el dato que importa
+                // aquí es que hubo un rebote y cuándo.
+                amount: 0,
+                currency: 'usd',
+                status: 'FAILED',
+                description: `RevenueCat ${eventType} - cobro rechazado por la tienda`,
+              },
+            });
+          }
+        } catch (paymentError: any) {
+          logger.error(`[RevenueCat] No se pudo registrar el cobro fallido de ${userId}:`, paymentError.message);
+        }
         // Apple/Google ya le mandan su propio correo (son ellos quienes cobran),
         // pero el push es el que el usuario ve de verdad. RevenueCat manda este
         // evento UNA vez, así que solo aplica el aviso inicial — el "último
@@ -221,6 +255,7 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
           'Actualiza tu método de pago para conservar tu plan. Tienes unos días antes de que cambie a Gratis.',
         );
         break;
+      }
 
       case RC_WEBHOOK_EVENTS.TRANSFER:
         // Transferencia: re-sync desde RC
