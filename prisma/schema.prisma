@@ -455,6 +455,27 @@ model Subscription {
   currentPeriodStart     DateTime?
   currentPeriodEnd       DateTime?
   cancelAtPeriodEnd      Boolean            @default(false)
+  // Cuándo terminó de verdad una suscripción de pago, y cuándo rebotó un cobro.
+  // Existen por la MISMA razón que `trialEndedAt` unas líneas más abajo: el
+  // estado de esta tabla es el derecho de acceso de AHORA, es mutable y se
+  // auto-repara, así que no puede cargar también la historia.
+  //
+  // Al degradar, `downgradeToFree` resetea de golpe `status`, `currentPeriodEnd`
+  // y `cancelAtPeriodEnd` — justo los tres campos con los que el churn intentaba
+  // detectar la baja. Y `getUserSubscription` remata: si ve FREE + CANCELED lo
+  // repara a ACTIVE en cada chequeo de plan. Por eso el churn daba 0% con la
+  // fórmula correcta: no fallaba la división, se borraba la evidencia.
+  //
+  // `pastDueAt` va aparte de `canceledAt` porque son cosas distintas: un cobro
+  // que rebota y se recupera NO es una baja. Sin este sello, un rebote solo se
+  // ve si uno se asoma justo durante la ventana de reintentos — que es lo que
+  // pasó en julio de 2026 y se leyó como una salida que nunca ocurrió.
+  //
+  // Ninguno de los dos se limpia al recuperarse; `canceledAt` solo se pone en
+  // NULL si la persona vuelve a suscribirse (si no, un cliente que regresa
+  // quedaría contado como baja para siempre).
+  canceledAt             DateTime?
+  pastDueAt              DateTime?
   trialEndsAt            DateTime?
   trialStartedAt         DateTime?
   // Cuándo venció el trial de verdad. Existe porque al vencer el scheduler pone

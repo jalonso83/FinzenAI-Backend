@@ -225,6 +225,10 @@ export class RevenueCatService {
         currentPeriodStart: null,
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
+        // Mismo sello que en subscriptionService.downgradeToFree: si solo se
+        // pusiera allí, las bajas de iOS (que entran por EXPIRATION de
+        // RevenueCat, no por Stripe) seguirían siendo invisibles al churn.
+        canceledAt: new Date(),
       },
     });
 

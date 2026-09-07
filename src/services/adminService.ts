@@ -128,6 +128,8 @@ export class AdminService {
       trialsActive,
       churnedCount,
       activeStartOfPeriod,
+      enRecuperacionCount,
+      marcadosParaCancelarCount,
       dauRaw,
       mauRaw,
       freeToPaidCount,
@@ -172,22 +174,45 @@ export class AdminService {
         where: { status: 'TRIALING' },
       }),
 
-      // Churn: suscripciones de pago cuyo acceso terminó SIN renovar dentro del
-      // periodo — basado en el ESTADO de la suscripción (status perdido +
-      // currentPeriodEnd dentro de [from, to]), NO en la recencia del pago.
-      // Esto evita marcar como churn a suscriptores anuales, que pagan 1 vez al
-      // año y naturalmente no pagan el mes siguiente.
+      // Churn: bajas de pago selladas con `canceledAt` dentro del período.
+      //
+      // Antes esto miraba `status IN (CANCELED, UNPAID, INCOMPLETE_EXPIRED)` con
+      // `currentPeriodEnd` en rango, y era imposible que contara nada: al dar de
+      // baja, `downgradeToFree` pone el status en ACTIVE y `currentPeriodEnd` en
+      // NULL, o sea que el propio acto de cancelar rompía las dos condiciones. Y
+      // si algo se colaba, `getUserSubscription` repara FREE+CANCELED a ACTIVE en
+      // cada chequeo de plan. Por eso el indicador daba 0% con 4.393 filas y sin
+      // un solo estado terminal en toda la base.
+      //
+      // `canceledAt` no lo toca ninguna reparación y lo escriben los DOS caminos
+      // de baja (Stripe y RevenueCat), así que iOS ya no queda fuera. Ojo: mide
+      // desde su despliegue; lo anterior no se puede reconstruir.
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
         SELECT COUNT(*)::bigint as cnt
         FROM subscriptions
-        WHERE status IN ('CANCELED', 'UNPAID', 'INCOMPLETE_EXPIRED')
-          AND "currentPeriodEnd" >= $1 AND "currentPeriodEnd" <= $2
+        WHERE "canceledAt" >= $1 AND "canceledAt" <= $2
       `, from, to),
 
       // Base de churn: suscripciones de pago actualmente activas. El rate se
       // calcula como churned / (churned + activas).
       prisma.subscription.count({
         where: { plan: { in: ['PREMIUM', 'PRO'] }, status: 'ACTIVE' },
+      }),
+
+      // En recuperación: le rebotó el cobro y el proveedor está reintentando.
+      // NO es churn —puede entrar el pago, como pasó en agosto de 2026— pero sí
+      // es ingreso en riesgo, y es lo que explica que el conteo de activas baje
+      // sin que nadie se haya ido. Sin esta línea, una cuenta desaparece del
+      // tablero durante semanas y parece una baja.
+      prisma.subscription.count({
+        where: { plan: { in: ['PREMIUM', 'PRO'] }, status: 'PAST_DUE' },
+      }),
+
+      // Ya canceló pero conserva el acceso hasta que termine lo pagado. Es la
+      // única señal ANTICIPADA que existe: avisa de la baja el día que se decide,
+      // no semanas después cuando vence. Lo llenan los dos proveedores.
+      prisma.subscription.count({
+        where: { plan: { in: ['PREMIUM', 'PRO'] }, cancelAtPeriodEnd: true },
       }),
 
       // DAU: distinct users with HUMAN gamification events in the last 7 days.
@@ -395,6 +420,12 @@ export class AdminService {
       activatedUsers: Number(activatedUsers[0]?.cnt ?? 0),
       planDistribution: planCounts,
       churnRate,
+      // Acompañan al churn y hay que leerlos juntos: el churn dice quién se fue,
+      // estos dos dicen quién está a punto de irse y a quién no le entró el
+      // cobro. Con pocos suscriptores el porcentaje no informa, pero estos
+      // conteos sí — son personas concretas.
+      enRecuperacion: enRecuperacionCount,
+      marcadosParaCancelar: marcadosParaCancelarCount,
       trialsActive,
       trialsStarted,
       trialConversionRate,

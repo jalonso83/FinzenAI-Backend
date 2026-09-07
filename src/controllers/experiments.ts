@@ -226,6 +226,45 @@ export const getH13Stats = async (req: Request, res: Response) => {
     const cohort = participants.filter((p) => !isH13Whitelisted(p.userId));
     const cohortIds = cohort.map((p) => p.userId);
 
+    // ─── Embudo de la oferta: se lee de EVENTOS, no del estado ───────────────
+    //
+    // El estado no sirve para reconstruir el embudo porque `closeExpiredChallenges`
+    // pisa OFFERED / ACCEPTED / ACTIVE / DECLINED con COMPLETED al vencer la
+    // ventana. Al cerrar, un usuario que nunca aceptó —o que RECHAZÓ— queda
+    // indistinguible de uno que aceptó y llegó al final.
+    //
+    // Contarlo por estado daba 42 "aceptaron" cuando los eventos decían 24: la
+    // regla vieja sumaba COMPLETED a los aceptados, así que la tasa de aceptación
+    // crecía sola a medida que iban venciendo los retos. Los eventos son
+    // inmutables y con fecha, así que son la única fuente honesta del embudo.
+    //
+    // Ojo con la diferencia entre las dos primeras etapas: el estado OFFERED se
+    // pone al ENROLAR (o sea "le toca ver la oferta"), mientras que el evento
+    // h13_offer_shown se emite cuando la oferta se SIRVIÓ de verdad. Quien nunca
+    // volvió a abrir la app cuenta en la primera y no en la segunda; por eso se
+    // reportan las dos por separado en vez de mezclarlas.
+    const funnelEvents = cohortIds.length
+      ? await prisma.experimentEvent.findMany({
+          where: {
+            experimentKey: run,
+            userId: { in: cohortIds },
+            eventType: { in: ['h13_offer_shown', 'h13_offer_accepted', 'h13_offer_declined'] },
+          },
+          select: { userId: true, eventType: true },
+        })
+      : [];
+
+    // Distintos por usuario: un doble-tap no debe contar dos veces.
+    const usuariosPorEvento = new Map<string, Set<string>>();
+    for (const e of funnelEvents) {
+      let s = usuariosPorEvento.get(e.eventType);
+      if (!s) usuariosPorEvento.set(e.eventType, (s = new Set()));
+      s.add(e.userId);
+    }
+    const vieronOferta = usuariosPorEvento.get('h13_offer_shown') ?? new Set<string>();
+    const aceptaron = usuariosPorEvento.get('h13_offer_accepted') ?? new Set<string>();
+    const rechazaron = usuariosPorEvento.get('h13_offer_declined') ?? new Set<string>();
+
     // Todas las TX válidas de la cohorte en una sola query (no una por usuario).
     // "Válida" = mismo criterio que ejecuta el reto: monto > 0 y con categoría.
     // Margen de ±2 días por los bordes de zona horaria; el filtro fino es por día local.
@@ -265,20 +304,23 @@ export const getH13Stats = async (req: Request, res: Response) => {
 
     const now = new Date();
     const acc = {
-      reto: { n: 0, matured: 0, reachedTarget: 0, offered: 0, accepted: 0, declined: 0, completed: 0 },
-      control: { n: 0, matured: 0, reachedTarget: 0, offered: 0, accepted: 0, declined: 0, completed: 0 },
+      reto: { n: 0, matured: 0, reachedTarget: 0, eligible: 0, sawOffer: 0, accepted: 0, declined: 0, closed: 0 },
+      control: { n: 0, matured: 0, reachedTarget: 0, eligible: 0, sawOffer: 0, accepted: 0, declined: 0, closed: 0 },
     };
 
     for (const p of cohort) {
       const g = p.arm === 'reto' ? acc.reto : acc.control;
       g.n++;
 
-      // Embudo de la oferta — solo tiene sentido en el brazo reto.
+      // Embudo de la oferta — solo tiene sentido en el brazo reto. Todo por
+      // eventos salvo `eligible` y `closed`, que sí son propiedades del estado:
+      // `closed` = "se le venció la ventana", NO "lo logró" (eso es reachedTarget).
       if (p.arm === 'reto') {
-        if (p.state && p.state !== 'ASSIGNED') g.offered++;
-        if (p.state === 'ACCEPTED' || p.state === 'ACTIVE' || p.state === 'COMPLETED') g.accepted++;
-        if (p.state === 'DECLINED') g.declined++;
-        if (p.state === 'COMPLETED') g.completed++;
+        if (p.state && p.state !== 'ASSIGNED') g.eligible++;
+        if (vieronOferta.has(p.userId)) g.sawOffer++;
+        if (aceptaron.has(p.userId)) g.accepted++;
+        if (rechazaron.has(p.userId)) g.declined++;
+        if (p.state === 'COMPLETED') g.closed++;
       }
 
       const country = p.user?.country;
@@ -307,11 +349,23 @@ export const getH13Stats = async (req: Request, res: Response) => {
       reachedTarget: g.reachedTarget,
       // Denominador = maduros. Con 0 maduros la tasa es 0 y sufficientSample es false.
       targetRate: rate(g.reachedTarget, g.matured),
-      offered: g.offered,
+      // `reachedTarget` (arriba) es cuántos LO LOGRARON. `closed` es cuántos se
+      // les venció la ventana, lo lograran o no — son cosas muy distintas y el
+      // panel las mostraba con el mismo nombre ("completados"), que daba a
+      // entender lo contrario de lo que pasó: 35 cerrados con 2 logros.
+      closed: g.closed,
+      succeeded: g.reachedTarget,
+      eligible: g.eligible,
+      sawOffer: g.sawOffer,
       accepted: g.accepted,
       declined: g.declined,
-      completed: g.completed,
-      acceptRate: rate(g.accepted, g.offered),
+      // Denominador = quienes VIERON la oferta, no quienes eran elegibles: quien
+      // nunca volvió a abrir la app no tuvo ocasión de aceptar y castiga la tasa
+      // sin decir nada del atractivo de la oferta.
+      acceptRate: rate(g.accepted, g.sawOffer),
+      // Cuántos de los elegibles llegaron a ver la oferta. Si esto es bajo, el
+      // problema es de alcance (no vuelven a abrir), no de propuesta.
+      reachRate: rate(g.sawOffer, g.eligible),
     });
 
     const reto = build(acc.reto);

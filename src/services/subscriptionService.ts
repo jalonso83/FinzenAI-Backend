@@ -315,6 +315,11 @@ export class SubscriptionService {
           ...datosStripe,
           // Solo se escribe si el llamador lo sabe. Ver la nota del parámetro.
           ...(cancelAtPeriodEnd !== undefined ? { cancelAtPeriodEnd } : {}),
+          // Vuelve a estar suscrito: se levanta el sello de la baja anterior. Sin
+          // esto, quien se va y regresa quedaría contado como churn para siempre
+          // y la tasa nunca bajaría. `pastDueAt` NO se limpia a propósito: que un
+          // cobro entre no borra el hecho de que antes rebotó.
+          canceledAt: null,
         },
       });
 
@@ -381,6 +386,12 @@ export class SubscriptionService {
           currentPeriodStart: null,
           currentPeriodEnd: null,
           cancelAtPeriodEnd: false,
+          // El sello de la baja, ANTES de que el reset de arriba borre las tres
+          // señales con las que se detectaba (status, currentPeriodEnd y
+          // cancelAtPeriodEnd). Es de donde sale el churn: sin esto el numerador
+          // es cero por construcción. Solo llegan aquí las bajas de pago —
+          // el vencimiento de trial va por trialScheduler y sella `trialEndedAt`.
+          canceledAt: new Date(),
         },
       });
 
@@ -399,7 +410,16 @@ export class SubscriptionService {
     try {
       const subscription = await prisma.subscription.update({
         where: { userId },
-        data: { status },
+        // Al entrar en PAST_DUE se sella la fecha y NO se limpia al recuperarse:
+        // un cobro que rebota y luego entra no es una baja, pero sí es un hecho
+        // que hay que poder ver después. Sin el sello solo se nota si uno mira
+        // justo durante los reintentos, y eso fue lo que pasó con el rebote de
+        // julio de 2026: se leyó como una salida definitiva porque la cuenta
+        // desapareció del conteo de activas y al mes siguiente ya no quedaba
+        // rastro de por qué.
+        data: status === SubscriptionStatus.PAST_DUE
+          ? { status, pastDueAt: new Date() }
+          : { status },
       });
 
       logger.log(`✅ Estado de suscripción actualizado: usuario ${userId} -> ${status}`);
