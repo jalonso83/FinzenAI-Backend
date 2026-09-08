@@ -220,8 +220,17 @@ export class TrialScheduler {
             continue;
           }
 
+          // Duración REAL del trial de esta persona, no la configurada hoy: si la
+          // configuración cambia a mitad de camino, quien ya está corriendo se
+          // sigue juzgando con la suya. Se calcula antes que el día porque el día
+          // se acota con ella.
+          const duracionDeEsteTrial = Math.max(
+            1,
+            Math.round((trialEndsAt.getTime() - trialStartedAt.getTime()) / 86400000)
+          );
+
           // Calcular día del trial
-          const dayOfTrial = this.calculateDayOfTrial(trialStartedAt);
+          const dayOfTrial = this.calculateDayOfTrial(trialStartedAt, duracionDeEsteTrial);
 
           // Días que FALTAN para vencer. El aviso final se ancla aquí y no al
           // día transcurrido, para que siga cayendo al final del trial aunque se
@@ -233,10 +242,6 @@ export class TrialScheduler {
           // El aviso final gana sobre los de arranque si ambos cayeran el mismo
           // día (pasa con trials cortos, donde el día 5 y "faltan 2" coinciden):
           // avisar de que se acaba pesa más que un recordatorio de mitad.
-          const duracionDeEsteTrial = Math.max(
-            1,
-            Math.round((trialEndsAt.getTime() - trialStartedAt.getTime()) / 86400000)
-          );
           const agenda = [...TRIAL_NOTIFICATIONS, ...avisosIntermedios(duracionDeEsteTrial)];
 
           const notificationToSend =
@@ -279,11 +284,27 @@ export class TrialScheduler {
   /**
    * Calcula el día del trial (1-7)
    */
-  private static calculateDayOfTrial(trialStartedAt: Date): number {
+  /**
+   * Día del trial en el que va el usuario, contando desde 1.
+   *
+   * El tope venía fijo en 8, heredado de cuando el trial duraba 7 días. Con uno
+   * de 21 eso rompía en silencio los avisos intermedios: `avisosIntermedios()`
+   * los agenda para los días 11 y 16, la agenda se busca por número exacto
+   * (`agenda.find(n => n.day === dayOfTrial)`), y como el día nunca pasaba de 8
+   * NINGUNO de los dos podía dispararse. El usuario recibía los avisos 1, 3 y 5
+   * y después nada hasta el último día — justo el hueco de dos semanas que esos
+   * dos avisos existían para tapar.
+   *
+   * Ahora el tope es la duración real del trial de esa persona. Se mantiene
+   * acotado (no se deja crecer sin límite) para que una fila con fechas
+   * corruptas no genere un número absurdo, pero el límite ya no es una constante
+   * suelta que se desincroniza de la configuración.
+   */
+  private static calculateDayOfTrial(trialStartedAt: Date, duracionDelTrial: number): number {
     const now = new Date();
     const diffTime = now.getTime() - trialStartedAt.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return Math.max(1, Math.min(diffDays, 8)); // Entre 1 y 8
+    return Math.max(1, Math.min(diffDays, Math.max(1, duracionDelTrial)));
   }
 
   /**
