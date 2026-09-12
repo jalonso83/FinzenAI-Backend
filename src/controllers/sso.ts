@@ -160,7 +160,7 @@ async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult>
   const safeName = (name && name.trim()) || normalizedEmail.split('@')[0];
   const safeLastName = (lastName && lastName.trim()) || '-';
 
-  // Inferir country/currency: device > deviceLocale > GeoIP. Si nada match,
+  // Inferir country/currency: GeoIP > device > deviceLocale. Si nada match,
   // queda vacío y el user lo edita desde Profile.
   const inferred = await resolveSSOLocale({ deviceCountry, deviceLocale, ipAddress });
   // A `error` a propósito: en producción el logger solo saca errores, así que

@@ -142,31 +142,40 @@ const SSO_LOCALE_DEFAULT: InferredLocale = {
 
 /**
  * Resuelve country + currency para un user SSO nuevo combinando señales:
- *  1. deviceCountry pasado por la app (Localization.region) — más confiable
- *  2. Primera región del deviceLocale ("es-DO" → DO) como fallback secundario
- *  3. GeoIP del request — fallback si la app no mandó nada
+ *  1. GeoIP del request — dónde está la PERSONA (la asigna el operador)
+ *  2. deviceCountry pasado por la app (Localization.region) — fallback
+ *  3. Primera región del deviceLocale ("es-DO" → DO) — fallback secundario
  *  4. Default a USD/Estados Unidos si nada match — app funcional desde minuto cero.
+ *
+ * GeoIP va PRIMERO a propósito (antes iba de último). `Localization.region`
+ * no mide dónde vive la persona sino la región configurada en el teléfono,
+ * que en la práctica va atada a la cuenta de App Store / Play. En RD es muy
+ * común el iPhone/Android con cuenta de tienda en US: esa gente se conecta
+ * desde Claro/Altice y aun así el teléfono decía "US" → quedaban en Estados
+ * Unidos con moneda USD. A nivel de país la IP acierta casi siempre; la
+ * excepción (VPN, alguien de viaje) se corrige desde Perfil.
  */
 export async function resolveSSOLocale(opts: {
   deviceCountry: string | null | undefined;
   deviceLocale: string | null | undefined;
   ipAddress: string | null | undefined;
 }): Promise<LocaleResuelto> {
-  // 1. Device country (más confiable)
+  // 1. GeoIP (dónde está la persona). Si ipwho.is falla o se pasa del
+  // timeout, inferCountryCodeFromIp devuelve null y se sigue con el device.
+  const ipCountry = await inferCountryCodeFromIp(opts.ipAddress);
+  const fromIp = inferLocaleFromCountryCode(ipCountry);
+  if (fromIp) return { ...fromIp, fuente: 'geoip' };
+
+  // 2. Device country (región configurada en el teléfono)
   const fromDevice = inferLocaleFromCountryCode(opts.deviceCountry);
   if (fromDevice) return { ...fromDevice, fuente: 'device' };
 
-  // 2. Locale tipo "es-DO" → extraer "DO"
+  // 3. Locale tipo "es-DO" → extraer "DO"
   if (opts.deviceLocale && opts.deviceLocale.includes('-')) {
     const region = opts.deviceLocale.split('-')[1];
     const fromLocale = inferLocaleFromCountryCode(region);
     if (fromLocale) return { ...fromLocale, fuente: 'locale' };
   }
-
-  // 3. GeoIP fallback
-  const ipCountry = await inferCountryCodeFromIp(opts.ipAddress);
-  const fromIp = inferLocaleFromCountryCode(ipCountry);
-  if (fromIp) return { ...fromIp, fuente: 'geoip' };
 
   // 4. Default global.
   //
