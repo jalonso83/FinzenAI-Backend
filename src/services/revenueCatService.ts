@@ -193,14 +193,27 @@ export class RevenueCatService {
    * Downgrade a FREE cuando expira la suscripción de Apple
    */
   async downgradeToFree(userId: string): Promise<any> {
-    // Obtener plan actual para saber si necesitamos limpiar email connections
+    // Obtener plan actual: decide si hay algo que bajar y si se limpian email connections
     const currentSub = await prisma.subscription.findUnique({
       where: { userId },
-      select: { plan: true },
+      select: { plan: true, status: true, originalTransactionId: true, stripeSubscriptionId: true },
     });
 
+    // Aquí NO solo llegan bajas de pago. `verifyAndSyncPurchase` cae aquí cada
+    // vez que RevenueCat responde "este usuario no tiene nada activo", y eso lo
+    // dispara la propia app (pantalla de planes, restaurar compras) para
+    // cualquiera. Para alguien en TRIAL —que nunca compró— esa respuesta es la
+    // esperada, y bajarlo le mataba el trial a las horas de registrarse y lo
+    // sellaba como churn (14,29% en el Pulso con una sola persona que jamás
+    // pagó, 12-sep-2026). Si no hay suscripción de pago que retirar, no se toca.
+    const teniaPago = Boolean(currentSub?.originalTransactionId || currentSub?.stripeSubscriptionId);
+    if (!currentSub || currentSub.plan === 'FREE' || currentSub.status === 'TRIALING' || !teniaPago) {
+      logger.log(`Usuario ${userId} sin suscripción de pago que bajar (plan=${currentSub?.plan ?? 'ninguno'} status=${currentSub?.status ?? '-'}); se deja igual`);
+      return currentSub;
+    }
+
     // Si baja de PRO, eliminar conexiones de email
-    if (currentSub?.plan === 'PRO') {
+    if (currentSub.plan === 'PRO') {
       try {
         const deleted = await EmailSyncService.deleteAllUserEmailConnections(userId);
         if (deleted > 0) {
@@ -211,15 +224,9 @@ export class RevenueCatService {
       }
     }
 
-    const subscription = await prisma.subscription.upsert({
+    const subscription = await prisma.subscription.update({
       where: { userId },
-      create: {
-        userId,
-        plan: SubscriptionPlan.FREE,
-        status: SubscriptionStatus.ACTIVE,
-        paymentProvider: 'APPLE',
-      },
-      update: {
+      data: {
         plan: SubscriptionPlan.FREE,
         status: SubscriptionStatus.ACTIVE,
         currentPeriodStart: null,
@@ -228,6 +235,7 @@ export class RevenueCatService {
         // Mismo sello que en subscriptionService.downgradeToFree: si solo se
         // pusiera allí, las bajas de iOS (que entran por EXPIRATION de
         // RevenueCat, no por Stripe) seguirían siendo invisibles al churn.
+        // Solo se llega aquí con una suscripción de pago real (guard de arriba).
         canceledAt: new Date(),
       },
     });

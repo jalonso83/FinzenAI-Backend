@@ -42,6 +42,16 @@ class MerchantMappingService {
     if (!merchantName) return '';
 
     return merchantName
+      // Lo que llega aquí muchas veces NO es el comercio sino la `description`
+      // completa de la transacción, que el email sync arma con colas:
+      //   "CITIZENS INC - (****9914) - [Importado de Email] -  [USD 10.84 → DOP 636.38 @58.7]"
+      //   "Amazon.com  [USD 16.95 → DOP 1003.33 @59.19]"
+      // Sin cortarlas, un mismo comercio quedaba guardado en 3 variantes y el
+      // match exacto casi nunca daba. Se corta en el primer " - " y se quita la
+      // conversión de moneda ANTES del resto de la limpieza.
+      .replace(/\s+-\s+.*$/, '')
+      .replace(/\s*\[?\s*(USD|DOP|EUR|MXN|COP|PEN|CLP|ARS)\s+[\d.,]+\s*(→|->).*$/i, '')
+      .replace(/\[importado de email\]/i, '')
       .toUpperCase()
       .trim()
       // Eliminar múltiples espacios
@@ -70,33 +80,55 @@ class MerchantMappingService {
   }
 
   /**
+   * ¿`candidate` (nombre guardado) corresponde al comercio `normalized`?
+   * Igualdad exacta, o uno es prefijo del otro cortado en límite de PALABRA
+   * ("SM NACIONAL SANTIAGO" ↔ "SM NACIONAL SANTIAGO 9994"). Nunca substring
+   * dentro de una palabra.
+   *
+   * Antes esto era `contains: primeraPalabra` en la query, y esa primera
+   * palabra era "SM" → hacía match con "PRICE**SM**ART". Como el resultado se
+   * ordenaba por `timesUsed` y cada acierto falso le sumaba +1 al mapeo
+   * equivocado, en cuanto PRICESMART se adelantó (sept-2026) TODAS las compras
+   * de SM Nacional del usuario salían como Restaurantes aunque él las
+   * corrigiera una por una. Bucle de retroalimentación: no se arreglaba solo.
+   */
+  private matchesMerchant(normalized: string, candidate: string): boolean {
+    if (!candidate) return false;
+    if (candidate === normalized) return true;
+    const [corto, largo] = candidate.length < normalized.length ? [candidate, normalized] : [normalized, candidate];
+    // Prefijo mínimo de 4 caracteres y terminado en límite de palabra
+    return corto.length >= 4 && largo.startsWith(corto) && largo[corto.length] === ' ';
+  }
+
+  /**
    * Busca un mapeo para el comercio dado
    * Prioridad: Usuario > Global confiable > null
    */
   async findMapping(userId: string, merchantName: string): Promise<MappingResult | null> {
     const normalized = this.normalizeMerchantName(merchantName);
-
     if (!normalized) return null;
 
-    // 1. Buscar mapeo del usuario específico (prioridad máxima)
-    const userMapping = await prisma.merchantCategoryMapping.findFirst({
-      where: {
-        userId,
-        OR: [
-          { merchantName: normalized },
-          { merchantName: { contains: normalized.split(' ')[0] } }
-        ]
-      },
-      include: {
-        category: { select: { id: true, name: true } }
-      },
-      orderBy: { timesUsed: 'desc' }
+    // Se traen los candidatos y se filtra en memoria: son pocas decenas por
+    // persona, y el match por prefijo de palabra no se expresa bien en Prisma.
+    // `startsWith` con la primera palabra solo acota la consulta.
+    const primeraPalabra = normalized.split(' ')[0];
+
+    // 1. Mapeo del usuario (prioridad máxima). Exacto primero; si no, el
+    // prefijo más largo. `updatedAt` desc desempata: la corrección más
+    // reciente del usuario es la que vale.
+    const candidatosUser = await prisma.merchantCategoryMapping.findMany({
+      where: { userId, merchantName: { startsWith: primeraPalabra } },
+      include: { category: { select: { id: true, name: true } } },
+      orderBy: [{ updatedAt: 'desc' }, { timesUsed: 'desc' }]
     });
+    const userMapping =
+      candidatosUser.find(m => m.merchantName === normalized) ??
+      candidatosUser
+        .filter(m => this.matchesMerchant(normalized, m.merchantName))
+        .sort((a, b) => b.merchantName.length - a.merchantName.length)[0];
 
     if (userMapping) {
-      // Incrementar contador de uso
       await this.incrementUsage(userMapping.id);
-
       return {
         categoryId: userMapping.categoryId,
         categoryName: userMapping.category.name,
@@ -105,31 +137,23 @@ class MerchantMappingService {
       };
     }
 
-    // 2. Buscar mapeo global confiable
-    const globalMapping = await prisma.merchantCategoryMapping.findFirst({
+    // 2. Mapeo global confiable — mismo criterio de match, sin substring
+    const candidatosGlobal = await prisma.merchantCategoryMapping.findMany({
       where: {
         userId: null,
         confirmedByUsers: { gte: MIN_USERS_FOR_GLOBAL_TRUST },
         confidence: { gte: MIN_CONFIDENCE_FOR_GLOBAL },
-        OR: [
-          { merchantName: normalized },
-          { merchantName: { contains: normalized.split(' ')[0] } }
-        ]
+        merchantName: { startsWith: primeraPalabra }
       },
-      include: {
-        category: { select: { id: true, name: true } }
-      },
-      orderBy: [
-        { confirmedByUsers: 'desc' },
-        { confidence: 'desc' },
-        { timesUsed: 'desc' }
-      ]
+      include: { category: { select: { id: true, name: true } } },
+      orderBy: [{ confirmedByUsers: 'desc' }, { confidence: 'desc' }, { timesUsed: 'desc' }]
     });
+    const globalMapping =
+      candidatosGlobal.find(m => m.merchantName === normalized) ??
+      candidatosGlobal.find(m => this.matchesMerchant(normalized, m.merchantName));
 
     if (globalMapping) {
-      // Incrementar contador de uso
       await this.incrementUsage(globalMapping.id);
-
       return {
         categoryId: globalMapping.categoryId,
         categoryName: globalMapping.category.name,

@@ -376,6 +376,19 @@ export class SubscriptionService {
    */
   async downgradeToFree(userId: string) {
     try {
+      // Mismo guard que en revenueCatService.downgradeToFree: `canceledAt` es
+      // el numerador del churn y solo puede sellarlo una baja de PAGO. Hoy el
+      // único llamador es el webhook `subscription.deleted` de Stripe, pero si
+      // la fila ya está en FREE o en trial no hay nada que bajar ni que contar.
+      const actual = await prisma.subscription.findUnique({
+        where: { userId },
+        select: { plan: true, status: true, stripeSubscriptionId: true },
+      });
+      if (!actual || actual.plan === 'FREE' || actual.status === 'TRIALING' || !actual.stripeSubscriptionId) {
+        logger.log(`Usuario ${userId} sin suscripción de pago que bajar (plan=${actual?.plan ?? 'ninguno'} status=${actual?.status ?? '-'}); se deja igual`);
+        return actual;
+      }
+
       const subscription = await prisma.subscription.update({
         where: { userId },
         data: {
