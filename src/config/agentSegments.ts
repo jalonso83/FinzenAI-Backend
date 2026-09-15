@@ -137,6 +137,65 @@ export const AGENT_SEGMENTS: AgentSegmentDef[] = [
   },
 ];
 
+AGENT_SEGMENTS.push(
+  {
+    slug: 'one_and_done',
+    name: 'Una y nunca más',
+    description: 'Usuarios con EXACTAMENTE una transacción de por vida y sin actividad en los últimos N días. Subconjunto de "dormidos" con mensaje propio: registrar la segunda.',
+    params: [
+      { name: 'days', type: 'int', required: false, default: 7, description: 'Días sin actividad (1-365)' },
+      ...STANDARD_PARAMS,
+    ],
+    buildFilters: (p) => ({
+      ...baseFilters('one_and_done', p),
+      oneAndDoneDays: parseIntParam(p.days, 7, 1, 365),
+    }),
+  },
+  {
+    slug: 'payment_failed',
+    name: 'Pago rechazado',
+    description: 'Suscriptores de pago (PREMIUM/PRO) cuyo último cobro rebotó y está en reintento (PAST_DUE). Todavía tienen acceso; si no se recupera, el proveedor los da de baja.',
+    params: [...STANDARD_PARAMS],
+    buildFilters: (p) => baseFilters('payment_failed', p),
+  },
+  {
+    slug: 'subscriber_inactive',
+    name: 'Pagan y no usan',
+    description: 'Suscriptores de pago activos (PREMIUM/PRO) sin actividad en los últimos N días. Churn anticipado.',
+    params: [
+      { name: 'days', type: 'int', required: false, default: 14, description: 'Días sin actividad (1-365)' },
+      ...STANDARD_PARAMS,
+    ],
+    buildFilters: (p) => ({
+      ...baseFilters('subscriber_inactive', p),
+      dormantDays: parseIntParam(p.days, 14, 1, 365),
+    }),
+  },
+  {
+    slug: 'trial_no_activity',
+    name: 'Trial sin usar lo Pro',
+    description:
+      'Usuarios en trial desde hace ≥ N días que no han usado nada exclusivo del plan pagado: sin correo conectado, ' +
+      'presupuestos/metas dentro del límite FREE y Zenio dentro del límite FREE. Al vencer caen a FREE sin haber visto ' +
+      'la diferencia; es el momento de rescate.',
+    params: [
+      { name: 'minDays', type: 'int', required: false, default: 3, description: 'Días mínimos desde que empezó el trial (0-30)' },
+      ...STANDARD_PARAMS,
+    ],
+    buildFilters: (p) => ({
+      ...baseFilters('trial_no_activity', p),
+      trialMinDays: parseIntParam(p.minDays, 3, 0, 30),
+    }),
+  },
+  {
+    slug: 'near_paywall',
+    name: 'Cerca del límite FREE',
+    description: 'Usuarios FREE que rozan la cuota: presupuestos activos a uno del límite o metas en el límite. Zenio no se usa como criterio (casi nadie llega a 15/mes).',
+    params: [...STANDARD_PARAMS],
+    buildFilters: (p) => baseFilters('near_paywall', p),
+  },
+);
+
 export function getAgentSegment(slug: string): AgentSegmentDef | undefined {
   return AGENT_SEGMENTS.find((s) => s.slug === slug);
 }

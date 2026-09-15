@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { userBucket } from '../lib/userBucket';
 import { NotificationService, NotificationPayload } from './notificationService';
 import { isInQuietHours } from '../utils/timezone';
+import { PLANS } from '../config/stripe';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Broadcast service — notificaciones masivas (re-engagement / anuncios).
@@ -18,15 +19,40 @@ export type LifecycleSegment = 'never_activated' | 'dormant' | 'active';
 //    activarla. Se filtra por `users.hasUsedTrial = false`, que es el mismo flag
 //    que valida el backend al activar (controllers/subscriptions.ts:startTrial),
 //    así que el segmento no promete algo que la app vaya a rechazar.
-export type AudienceSegment = LifecycleSegment | 'budget_exceeded' | 'trial_ending' | 'trial_available';
+//  - one_and_done: exactamente 1 transacción de por vida y sin actividad en
+//    los últimos `oneAndDoneDays` (default 7). Subconjunto de "dormant" con
+//    mensaje propio: no es "vuelve", es "registra la segunda".
+//  - payment_failed: suscripción de pago en PAST_DUE (el cobro rebotó y el
+//    proveedor está reintentando). Recuperar un pago vale más que cualquier
+//    campaña; hoy es 0 pero queda listo.
+//  - subscriber_inactive: paga (PREMIUM/PRO ACTIVE) y no tiene actividad en
+//    `dormantDays`. Churn anticipado.
+//  - trial_no_activity: en TRIALING desde hace ≥ `trialMinDays` (default 3) y
+//    no ha tocado NADA que FREE no le daría: sin conexión de email, ≤ límite
+//    FREE de presupuestos y metas, ≤ límite FREE de Zenio. Es el único momento
+//    en que se puede rescatar la conversión: cae a FREE al vencer.
+//  - near_paywall: FREE que roza la cuota: presupuestos activos ≥ límite-1 o
+//    metas ≥ límite. Zenio no entra: casi nadie se acerca a las 15/mes.
+export type AudienceSegment =
+  | LifecycleSegment
+  | 'budget_exceeded'
+  | 'trial_ending'
+  | 'trial_available'
+  | 'one_and_done'
+  | 'payment_failed'
+  | 'subscriber_inactive'
+  | 'trial_no_activity'
+  | 'near_paywall';
 
 export interface AudienceFilters {
   plans: string[];               // ['FREE','PREMIUM','PRO']
   platforms: string[];           // ['IOS','ANDROID'] (plataforma del DISPOSITIVO)
   country?: string;              // undefined o 'Todos' = todos los países
   segments: AudienceSegment[];   // combinados con OR
-  dormantDays?: number;          // umbral "dormido", default 14
+  dormantDays?: number;          // umbral "dormido" (dormant/active/subscriber_inactive), default 14
   trialEndingDays?: number;      // ventana de trial_ending, default 3
+  oneAndDoneDays?: number;       // días sin actividad para one_and_done, default 7
+  trialMinDays?: number;         // días mínimos en trial para trial_no_activity, default 3
   type: string;                  // NotificationType (para opt-out)
   // Modo prueba / envío dirigido a un solo usuario. Ignora la segmentación y
   // envía SOLO a testUserId. testUserId lo inyecta el controller (admin o el
@@ -94,6 +120,16 @@ export class BroadcastService {
       f.segments.includes('trial_ending'),     // $11
       f.trialEndingDays ?? 3,                  // $12
       f.segments.includes('trial_available'),  // $13
+      f.segments.includes('one_and_done'),     // $14
+      f.oneAndDoneDays ?? 7,                   // $15
+      f.segments.includes('payment_failed'),   // $16
+      f.segments.includes('subscriber_inactive'), // $17
+      f.segments.includes('trial_no_activity'),   // $18
+      f.trialMinDays ?? 3,                     // $19
+      PLANS.FREE.limits.budgets,               // $20
+      PLANS.FREE.limits.goals,                 // $21
+      PLANS.FREE.limits.zenioQueries,          // $22
+      f.segments.includes('near_paywall'),     // $23
     ];
     const sql = `
       FROM users u
@@ -104,6 +140,10 @@ export class BroadcastService {
         ON tc."userId" = u.id
       LEFT JOIN (SELECT "userId", MAX("createdAt") AS last_at FROM gamification_events GROUP BY "userId") la
         ON la."userId" = u.id
+      LEFT JOIN (SELECT user_id, COUNT(*) AS n FROM budgets WHERE is_active = true GROUP BY user_id) bc
+        ON bc.user_id = u.id
+      LEFT JOIN (SELECT "userId", COUNT(*) AS n FROM goals GROUP BY "userId") gc
+        ON gc."userId" = u.id
       WHERE COALESCE(s.plan::text, 'FREE') = ANY($1::text[])
         AND d.platform::text = ANY($2::text[])
         AND ($3 = 'ALL' OR u.country = $3)
@@ -129,6 +169,25 @@ export class BroadcastService {
           -- ofrecerle una prueba no tiene sentido.
           OR ($13::boolean AND u."hasUsedTrial" = false
               AND COALESCE(s.plan::text, 'FREE') = 'FREE')
+          OR ($14::boolean AND COALESCE(tc.tx_count, 0) = 1
+              AND (la.last_at IS NULL OR la.last_at < NOW() - make_interval(days => $15::int)))
+          OR ($16::boolean AND s.status::text = 'PAST_DUE'
+              AND s.plan::text IN ('PREMIUM', 'PRO'))
+          OR ($17::boolean AND s.status::text = 'ACTIVE'
+              AND s.plan::text IN ('PREMIUM', 'PRO')
+              AND (la.last_at IS NULL OR la.last_at < NOW() - make_interval(days => $7::int)))
+          -- trial_no_activity: lleva ≥ N días en trial y no ha usado nada exclusivo
+          -- del plan pagado. Los límites FREE vienen de PLANS (config/stripe), no
+          -- van hardcodeados aquí para que un cambio de plan no rompa el segmento.
+          OR ($18::boolean AND s.status::text = 'TRIALING'
+              AND s."trialStartedAt" IS NOT NULL
+              AND s."trialStartedAt" <= NOW() - make_interval(days => $19::int)
+              AND NOT EXISTS (SELECT 1 FROM email_connections ec WHERE ec."userId" = u.id AND ec."isActive" = true)
+              AND COALESCE(bc.n, 0) <= $20::int
+              AND COALESCE(gc.n, 0) <= $21::int
+              AND COALESCE(s."zenioQueriesUsed", 0) <= $22::int)
+          OR ($23::boolean AND COALESCE(s.plan::text, 'FREE') = 'FREE'
+              AND (COALESCE(bc.n, 0) >= $20::int - 1 OR COALESCE(gc.n, 0) >= $21::int))
         )
         AND (
           NOT $9::boolean
