@@ -1460,6 +1460,14 @@ model CampaignCost {
   // Para ocultar campañas que solo existen como tráfico (sin costo manual) se crea
   // una fila marcadora con costUSD 0 y hidden=true.
   hidden       Boolean   @default(false)
+  // Métricas escritas a mano (copiadas del Ads Manager de Meta/TikTok) para
+  // campañas cuyo tráfico NO pasa por la landing (van directo a la tienda) y
+  // por tanto el píxel no ve nada. Si están, MANDAN sobre lo que cuenta
+  // attribution_events; en NULL se usa lo automático. No se suman: lo que se
+  // copia de Meta ya es el total.
+  manualVisitors      Int?
+  manualLeads         Int?
+  manualRegistrations Int?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

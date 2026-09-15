@@ -280,7 +280,14 @@ export const getCampaignCosts = async (req: Request, res: Response) => {
 
 export const upsertCampaignCost = async (req: Request, res: Response) => {
   try {
-    const { source, campaign, costUSD, notes, campaignDate } = req.body ?? {};
+    const { source, campaign, costUSD, notes, campaignDate, manualVisitors, manualLeads, manualRegistrations } = req.body ?? {};
+    // Métricas manuales: ausente = no tocar; null o '' = limpiar; número = fijar.
+    const manualInt = (v: unknown): number | null | undefined => {
+      if (v === undefined) return undefined;
+      if (v === null || v === '') return null;
+      const n = typeof v === 'string' ? parseInt(v, 10) : Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
     if (typeof source !== 'string' || !source.trim()) {
       return res.status(400).json({ message: 'source es requerido', error: 'Bad request' });
     }
@@ -294,6 +301,9 @@ export const upsertCampaignCost = async (req: Request, res: Response) => {
       costUSD: cost,
       notes,
       campaignDate: typeof campaignDate === 'string' ? campaignDate : null,
+      manualVisitors: manualInt(manualVisitors),
+      manualLeads: manualInt(manualLeads),
+      manualRegistrations: manualInt(manualRegistrations),
     });
     return res.json({ message: 'Campaign cost saved', data });
   } catch (error) {

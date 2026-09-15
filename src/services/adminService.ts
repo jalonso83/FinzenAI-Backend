@@ -2474,9 +2474,19 @@ export class AdminService {
       notes: string | null;
       campaignDate: string | null; // ISO; solo filas con costo manual la tienen
       hidden: boolean; // borrado lógico
+      // Efectivos: manual si existe, si no automático (píxel). Es lo que se
+      // muestra y con lo que se calculan CPV/CPL/CAC.
       visitors: number;
       leads: number;
       registrations: number;
+      // Lo que vio el píxel, siempre, para poder compararlo con lo manual.
+      autoVisitors: number;
+      autoLeads: number;
+      autoRegistrations: number;
+      // Lo escrito a mano (null = no hay).
+      manualVisitors: number | null;
+      manualLeads: number | null;
+      manualRegistrations: number | null;
       cpv: number | null;
       cpl: number | null;
       cac: number | null;
@@ -2499,6 +2509,12 @@ export class AdminService {
         visitors: Number(m.visitors),
         leads: Number(m.leads),
         registrations: Number(m.registrations),
+        autoVisitors: Number(m.visitors),
+        autoLeads: Number(m.leads),
+        autoRegistrations: Number(m.registrations),
+        manualVisitors: null,
+        manualLeads: null,
+        manualRegistrations: null,
         cpv: null,
         cpl: null,
         cac: null,
@@ -2517,11 +2533,21 @@ export class AdminService {
         existing.notes = c.notes;
         existing.campaignDate = c.campaignDate ? c.campaignDate.toISOString() : null;
         existing.hidden = c.hidden;
+        existing.manualVisitors = c.manualVisitors;
+        existing.manualLeads = c.manualLeads;
+        existing.manualRegistrations = c.manualRegistrations;
+        existing.visitors = c.manualVisitors ?? existing.autoVisitors;
+        existing.leads = c.manualLeads ?? existing.autoLeads;
+        existing.registrations = c.manualRegistrations ?? existing.autoRegistrations;
         existing.cpv = existing.visitors > 0 ? Math.round((cost / existing.visitors) * 100) / 100 : null;
         existing.cpl = existing.leads > 0 ? Math.round((cost / existing.leads) * 100) / 100 : null;
         existing.cac = existing.registrations > 0 ? Math.round((cost / existing.registrations) * 100) / 100 : null;
       } else {
-        // Costo manual sin eventos todavía.
+        // Costo manual sin eventos todavía: si trae métricas a mano, CPV/CPL/CAC
+        // salen de ellas (es justo el caso de las campañas directas a la tienda).
+        const visitors = c.manualVisitors ?? 0;
+        const leads = c.manualLeads ?? 0;
+        const registrations = c.manualRegistrations ?? 0;
         map.set(k, {
           id: c.id,
           source: c.source,
@@ -2530,12 +2556,18 @@ export class AdminService {
           notes: c.notes,
           campaignDate: c.campaignDate ? c.campaignDate.toISOString() : null,
           hidden: c.hidden,
-          visitors: 0,
-          leads: 0,
-          registrations: 0,
-          cpv: null,
-          cpl: null,
-          cac: null,
+          visitors,
+          leads,
+          registrations,
+          autoVisitors: 0,
+          autoLeads: 0,
+          autoRegistrations: 0,
+          manualVisitors: c.manualVisitors,
+          manualLeads: c.manualLeads,
+          manualRegistrations: c.manualRegistrations,
+          cpv: visitors > 0 ? Math.round((cost / visitors) * 100) / 100 : null,
+          cpl: leads > 0 ? Math.round((cost / leads) * 100) / 100 : null,
+          cac: registrations > 0 ? Math.round((cost / registrations) * 100) / 100 : null,
           hasEvents: false,
           isManual: true,
         });
@@ -2579,6 +2611,10 @@ export class AdminService {
     costUSD: number;
     notes?: string | null;
     campaignDate?: string | null;
+    // undefined = no tocar; null = borrar (volver al automático); número = fijar.
+    manualVisitors?: number | null;
+    manualLeads?: number | null;
+    manualRegistrations?: number | null;
   }) {
     const source = input.source.trim();
     if (!source) throw new Error('source es requerido');
@@ -2598,10 +2634,27 @@ export class AdminService {
       campaignDate = parsed;
     }
 
+    const manual = (v: number | null | undefined, nombre: string): number | null | undefined => {
+      if (v === undefined) return undefined;
+      if (v === null) return null;
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0) throw new Error(`${nombre} inválido (entero ≥ 0)`);
+      return n;
+    };
+    const manualVisitors = manual(input.manualVisitors, 'manualVisitors');
+    const manualLeads = manual(input.manualLeads, 'manualLeads');
+    const manualRegistrations = manual(input.manualRegistrations, 'manualRegistrations');
+
     return prisma.campaignCost.upsert({
       where: { source_campaign: { source, campaign } },
-      create: { source, campaign, costUSD, notes, campaignDate },
-      update: { costUSD, notes, campaignDate },
+      create: {
+        source, campaign, costUSD, notes, campaignDate,
+        manualVisitors: manualVisitors ?? null,
+        manualLeads: manualLeads ?? null,
+        manualRegistrations: manualRegistrations ?? null,
+      },
+      // Prisma ignora las claves en undefined: editar el costo no pisa lo manual.
+      update: { costUSD, notes, campaignDate, manualVisitors, manualLeads, manualRegistrations },
     });
   }
 
