@@ -2769,8 +2769,10 @@ export class AdminService {
       // A6 — Desenlace POR SEMANA de vencimiento (lo pidió Junior el 15-sep para
       // cerrar la identidad iniciados = activos + vencidos + convertidos +
       // cancelados semana a semana). No depende del rango del panel: va desde
-      // el 21-sep, que es cuando vencen los primeros trials de 21 días de la
-      // cohorte limpia, hasta la semana en curso. Semanas ISO (lunes-domingo).
+      // la semana del 31-ago (arranque del trial de 21 días) hasta la semana en
+      // curso, para que "en trial al cierre" se vea crecer y se pueda comprobar
+      // que cuadra antes de que empiecen los vencimientos el 21-sep. Semanas ISO
+      // (lunes-domingo).
       //
       //  - vencieron:   `trialEndedAt` en la semana y SIN evento trial_cancelado.
       //  - cancelaron:  `trialEndedAt` en la semana CON evento trial_cancelado
@@ -2788,7 +2790,7 @@ export class AdminService {
         WITH semanas AS (
           SELECT gs::date AS inicio, (gs + interval '7 days')::date AS fin
           FROM generate_series(
-            date_trunc('week', '2026-09-21'::date),
+            date_trunc('week', '2026-08-31'::date),
             date_trunc('week', NOW()),
             interval '7 days'
           ) gs
