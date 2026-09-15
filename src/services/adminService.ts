@@ -2669,6 +2669,7 @@ export class AdminService {
       retencionPorDia,
       contrasteD7,
       contrasteD30,
+      desenlacePorSemana,
     ] = await Promise.all([
       prisma.user.count({ where: { createdAt: { gte: from, lte: to } } }),
 
@@ -2764,6 +2765,64 @@ export class AdminService {
           WHERE u."createdAt" >= $1 AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '30 days')
         ) x GROUP BY activo_sync
       `, from, to),
+
+      // A6 — Desenlace POR SEMANA de vencimiento (lo pidió Junior el 15-sep para
+      // cerrar la identidad iniciados = activos + vencidos + convertidos +
+      // cancelados semana a semana). No depende del rango del panel: va desde
+      // el 21-sep, que es cuando vencen los primeros trials de 21 días de la
+      // cohorte limpia, hasta la semana en curso. Semanas ISO (lunes-domingo).
+      //
+      //  - vencieron:   `trialEndedAt` en la semana y SIN evento trial_cancelado.
+      //  - cancelaron:  `trialEndedAt` en la semana CON evento trial_cancelado
+      //                 (la cancelación temprana también sella trialEndedAt).
+      //  - convirtieron: PRIMER pago SUCCEEDED en la semana, de alguien que tuvo
+      //                 trial. Se ancla al pago, no al vencimiento: el que paga
+      //                 antes del día 21 cuenta la semana que pagó.
+      //  - enTrialAlCierre: seguían TRIALING al terminar la semana. Es lo que
+      //                 hace comprobable la identidad: cada semana los activos
+      //                 bajan en (vencidos + cancelados + convertidos que
+      //                 estaban en trial) y suben con los nuevos registros.
+      // Solo columnas existentes: trialStartedAt/trialEndedAt/status de
+      // subscriptions, payments y feature_usage. Nada nuevo en el esquema.
+      prisma.$queryRawUnsafe<any[]>(`
+        WITH semanas AS (
+          SELECT gs::date AS inicio, (gs + interval '7 days')::date AS fin
+          FROM generate_series(
+            date_trunc('week', '2026-09-21'::date),
+            date_trunc('week', NOW()),
+            interval '7 days'
+          ) gs
+        ),
+        con_trial AS (
+          SELECT s."userId", s.status::text AS estado, s."trialStartedAt", s."trialEndedAt",
+                 EXISTS (SELECT 1 FROM feature_usage f WHERE f."userId" = s."userId"
+                         AND f.feature = 'suscripciones' AND f.action = 'trial_cancelado') AS cancelo,
+                 (SELECT MIN(p."createdAt") FROM payments p
+                  WHERE p."userId" = s."userId" AND p.status = 'SUCCEEDED') AS primer_pago
+          FROM subscriptions s
+          JOIN users u ON u.id = s."userId"
+          WHERE u."createdAt" >= $1
+            AND (s."trialStartedAt" IS NOT NULL OR s."trialEndedAt" IS NOT NULL)
+        )
+        SELECT
+          w.inicio,
+          w.fin,
+          COUNT(*) FILTER (WHERE t."trialEndedAt" >= w.inicio AND t."trialEndedAt" < w.fin AND NOT t.cancelo)::bigint AS vencieron,
+          COUNT(*) FILTER (WHERE t."trialEndedAt" >= w.inicio AND t."trialEndedAt" < w.fin AND t.cancelo)::bigint AS cancelaron,
+          COUNT(*) FILTER (WHERE t.primer_pago >= w.inicio AND t.primer_pago < w.fin)::bigint AS convirtieron,
+          -- En trial al cierre: empezó antes del cierre y (sigue TRIALING o
+          -- terminó después del cierre). Como el scheduler pone trialStartedAt en
+          -- NULL al vencer, para los ya vencidos se reconstruye con trialEndedAt.
+          COUNT(*) FILTER (WHERE
+            COALESCE(t."trialStartedAt", t."trialEndedAt" - interval '21 days') < w.fin
+            AND (t.estado = 'TRIALING' OR t."trialEndedAt" >= w.fin)
+            AND (t.primer_pago IS NULL OR t.primer_pago >= w.fin)
+          )::bigint AS en_trial_al_cierre
+        FROM semanas w
+        CROSS JOIN con_trial t
+        GROUP BY w.inicio, w.fin
+        ORDER BY w.inicio
+      `, AdminService.INICIO_COHORTE_TRIAL_NUEVO),
     ]);
 
     const n = (v: any) => Number(v ?? 0);
@@ -2812,6 +2871,14 @@ export class AdminService {
         pct: pct(n(r.activos), n(r.cohorte)),
       })),
       contraste: { d7: partir(contrasteD7), d30: partir(contrasteD30) },
+      desenlacePorSemana: desenlacePorSemana.map((r: any) => ({
+        semana: r.inicio,
+        vencieron: n(r.vencieron),
+        cancelaron: n(r.cancelaron),
+        convirtieron: n(r.convirtieron),
+        enTrialAlCierre: n(r.en_trial_al_cierre),
+        parcial: new Date(r.fin).getTime() > Date.now(),
+      })),
       cohorteLimpiaDesde: AdminService.INICIO_COHORTE_TRIAL_NUEVO,
       period: { from, to },
     };
