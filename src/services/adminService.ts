@@ -2259,29 +2259,51 @@ export class AdminService {
     // Respeta el borrado lógico (hidden) para ser consistente con la pantalla Costos.
     const acqCosts = await prisma.campaignCost.findMany();
     const costKey = (s: string, c: string | null) => `${s}::${c ?? ''}`;
-    const costMap = new Map<string, { costUSD: number; campaignDate: string | null }>();
+    type CostInfo = {
+      costUSD: number;
+      campaignDate: string | null;
+      manualVisitors: number | null;
+      manualLeads: number | null;
+      manualRegistrations: number | null;
+    };
+    const costMap = new Map<string, CostInfo>();
     const hiddenSet = new Set<string>();
     for (const c of acqCosts) {
       const k = costKey(c.source, c.campaign);
       costMap.set(k, {
         costUSD: Number(c.costUSD),
         campaignDate: c.campaignDate ? c.campaignDate.toISOString() : null,
+        manualVisitors: c.manualVisitors,
+        manualLeads: c.manualLeads,
+        manualRegistrations: c.manualRegistrations,
       });
       if (c.hidden) hiddenSet.add(k);
     }
 
+    // Misma regla que en Costos: si la campaña tiene métricas escritas a mano
+    // (copiadas del Ads Manager porque su tráfico no pasó por la landing), esas
+    // MANDAN sobre lo que contó el píxel. `manual` dice qué campos vinieron así,
+    // para que la tabla los marque y nadie los lea como medidos.
+    const vistos = new Set<string>();
     const bySource = bySourceRaw
       .filter(row => !hiddenSet.has(costKey(row.source ?? 'Directo', row.campaign)))
       .map(row => {
-        const visitors = Number(row.visitors);
-        const registrations = Number(row.registrations);
         const cost = costMap.get(costKey(row.source ?? 'Directo', row.campaign));
+        vistos.add(costKey(row.source ?? 'Directo', row.campaign));
+        const visitors = cost?.manualVisitors ?? Number(row.visitors);
+        const leads = cost?.manualLeads ?? Number(row.leads);
+        const registrations = cost?.manualRegistrations ?? Number(row.registrations);
+        const manual = [
+          cost?.manualVisitors != null ? 'visitors' : null,
+          cost?.manualLeads != null ? 'leads' : null,
+          cost?.manualRegistrations != null ? 'registrations' : null,
+        ].filter((f): f is string => f !== null);
         return {
           source: row.source ?? 'Directo',
           medium: row.medium ?? null,
           campaign: row.campaign ?? null,
           visitors,
-          leads: Number(row.leads),
+          leads,
           registrations,
           subscriptions: Number(row.subscriptions),
           revenue: Number(row.revenue ?? 0),
@@ -2290,8 +2312,43 @@ export class AdminService {
           conversionRate: visitors > 0 ? Math.round((registrations / visitors) * 10000) / 100 : 0,
           costUSD: cost?.costUSD ?? 0,
           campaignDate: cost?.campaignDate ?? null,
+          manual,
         };
-      })
+      });
+
+    // Campañas de Costos que el píxel NUNCA vio (p. ej. anuncios al perfil de
+    // Instagram): antes no salían aquí aunque tuvieran inversión y métricas a
+    // mano. Entran como fila propia, sin subs ni revenue (eso solo lo mide el
+    // píxel) y con todo marcado como manual.
+    for (const c of acqCosts) {
+      const k = costKey(c.source, c.campaign);
+      if (c.hidden || vistos.has(k)) continue;
+      const tieneManual = c.manualVisitors != null || c.manualLeads != null || c.manualRegistrations != null;
+      if (!tieneManual && Number(c.costUSD) === 0) continue;
+      const visitors = c.manualVisitors ?? 0;
+      const registrations = c.manualRegistrations ?? 0;
+      bySource.push({
+        source: c.source,
+        medium: null,
+        campaign: c.campaign || null,
+        visitors,
+        leads: c.manualLeads ?? 0,
+        registrations,
+        subscriptions: 0,
+        revenue: 0,
+        conversionRate: visitors > 0 ? Math.round((registrations / visitors) * 10000) / 100 : 0,
+        costUSD: Number(c.costUSD),
+        campaignDate: c.campaignDate ? c.campaignDate.toISOString() : null,
+        // Solo se marca lo que de verdad se escribió; un 0 por ausencia no es "manual".
+        manual: [
+          c.manualVisitors != null ? 'visitors' : null,
+          c.manualLeads != null ? 'leads' : null,
+          c.manualRegistrations != null ? 'registrations' : null,
+        ].filter((f): f is string => f !== null),
+      });
+    }
+
+    bySource
       .sort((a, b) => {
         // Orden por fecha de inicio desc. Las sin fecha van al final, y entre
         // ellas se mantiene el orden por visitors desc.

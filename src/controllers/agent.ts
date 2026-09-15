@@ -113,6 +113,8 @@ export const getAgentKpis = async (req: Request, res: Response) => {
           revenue_usd: s.revenue,
           cost_usd: s.costUSD,
           conversion_rate_pct: s.conversionRate,
+          // Campos copiados a mano del Ads Manager (no medidos por el píxel).
+          manual_fields: s.manual,
           cac_usd: s.costUSD > 0 && s.registrations > 0
             ? Math.round((s.costUSD / s.registrations) * 100) / 100
             : null,
