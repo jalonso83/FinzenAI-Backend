@@ -2659,7 +2659,18 @@ export class AdminService {
     `'email_sync_daily','email_tx_imported','points_awarded','streak_break'`;
 
   static async getTrialEval(query: { from?: string; to?: string }) {
-    const { from, to } = parseDateRange(query);
+    const rango = parseDateRange(query);
+    // La eval es del trial de 21 días, que existe desde el 1-sep. El rango del
+    // panel (30 días por defecto) arrastraba dos semanas del régimen anterior:
+    // la tarjeta decía 328 iniciados / 8 vencidos (trials viejos de 7 días) y
+    // la tabla semanal, que ya nacía acotada, 318 / 0. Mismos datos, cohortes
+    // distintas, y los números no cerraban entre sí (15-sep-2026). Se acota
+    // TODO —tarjeta, denominador de Email Sync, curva, contraste, tabla— a la
+    // cohorte limpia, para que cada bloque hable de la misma gente.
+    const from = rango.from < AdminService.INICIO_COHORTE_TRIAL_NUEVO
+      ? AdminService.INICIO_COHORTE_TRIAL_NUEVO
+      : rango.from;
+    const to = rango.to;
     const NO_HUMANOS = AdminService.EVENTOS_NO_HUMANOS;
 
     const [
@@ -2803,7 +2814,7 @@ export class AdminService {
                   WHERE p."userId" = s."userId" AND p.status = 'SUCCEEDED') AS primer_pago
           FROM subscriptions s
           JOIN users u ON u.id = s."userId"
-          WHERE u."createdAt" >= $1
+          WHERE u."createdAt" >= $1 AND u."createdAt" <= $2
             AND (s."trialStartedAt" IS NOT NULL OR s."trialEndedAt" IS NOT NULL)
         )
         SELECT
@@ -2824,7 +2835,7 @@ export class AdminService {
         CROSS JOIN con_trial t
         GROUP BY w.inicio, w.fin
         ORDER BY w.inicio
-      `, AdminService.INICIO_COHORTE_TRIAL_NUEVO),
+      `, from, to),
     ]);
 
     const n = (v: any) => Number(v ?? 0);
