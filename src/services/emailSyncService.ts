@@ -314,15 +314,27 @@ export class EmailSyncService {
    */
   private static async createDefaultBankFilters(connectionId: string, userCountry: string = 'DO'): Promise<void> {
     // Obtener bancos soportados desde la base de datos
-    const supportedBanks = await prisma.supportedBank.findMany({
+    let supportedBanks = await prisma.supportedBank.findMany({
       where: {
         isActive: true,
         country: userCountry
       }
     });
 
+    // Sin bancos para ese país → usar los de RD, que es el único país con bancos
+    // cargados. Antes se devolvía sin crear nada y la conexión quedaba con la
+    // lista de remitentes VACÍA: la búsqueda a Gmail salía como `from:()`, que
+    // trae TODO el buzón (100 correos por sync, del banco o de Amazon) y cada
+    // uno se mandaba a OpenAI. A 2026-09-16 eran 36 de 70 conexiones activas,
+    // todas de dominicanos a los que el GeoIP/relay o la región del teléfono
+    // marcó como "Estados Unidos". Con el fallback les llega la lista de RD.
+    if (supportedBanks.length === 0 && userCountry !== 'DO') {
+      logger.warn(`[EmailSync] Sin bancos para country=${userCountry}; usando los de RD como fallback`);
+      supportedBanks = await prisma.supportedBank.findMany({ where: { isActive: true, country: 'DO' } });
+    }
+
     if (supportedBanks.length === 0) {
-      logger.warn(`[EmailSync] No supported banks found for country: ${userCountry}`);
+      logger.error(`[EmailSync] No supported banks found for country: ${userCountry} (ni fallback DO)`);
       return;
     }
 

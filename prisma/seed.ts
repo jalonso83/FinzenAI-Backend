@@ -10,6 +10,18 @@ async function main() {
   // =============================================
   const supportedBanks = [
     {
+      // Neobanco del Popular. Asunto real: "Usaste tu tarjeta de crédito Qik" —
+      // no trae ninguna de las palabras estándar (consumo, compra...), por eso
+      // 'usaste'. OJO: sus fechas van en MM-DD-YYYY (09-07-2026 = 7 de
+      // septiembre), al revés que el resto de RD; el parser lo sabe por nombre.
+      name: 'Qik Banco Digital',
+      country: 'DO',
+      senderEmails: ['notificaciones@qik.do'],
+      subjectPatterns: ['usaste', 'consumo', 'compra', 'transaccion', 'cargo', 'pago', 'notificacion'],
+      isActive: true,
+      logoUrl: null
+    },
+    {
       name: 'Banco Popular Dominicano',
       country: 'DO',
       senderEmails: [

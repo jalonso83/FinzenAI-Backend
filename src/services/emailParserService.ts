@@ -216,6 +216,10 @@ const CASH_WITHDRAWAL_SUBJECT_PATTERNS = [
   /\batm\b/,
 ];
 
+// Bancos que escriben la fecha como MM-DD-YYYY (en minúsculas, se compara con
+// includes). Confirmado con correos reales: Qik, 09-07-2026 = 7-sep-2026.
+const BANCOS_CON_FECHA_MM_DD = ['qik'];
+
 export class EmailParserService {
 
   /**
@@ -535,7 +539,16 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
       throw new Error('No categories provided - must query from database first');
     }
 
-    return `Extrae la informacion de esta notificacion bancaria${bankName ? ` de ${bankName}` : ''}:
+    // El system prompt fija DD/MM para toda RD. Los bancos de esta lista van al
+    // revés y hay que decírselo al modelo, si no "09-07-2026" (7 de septiembre)
+    // se guarda como 9 de julio.
+    const formatoFecha = bankName && BANCOS_CON_FECHA_MM_DD.some(b => bankName.toLowerCase().includes(b))
+      ? `
+
+ATENCION: ${bankName} escribe las fechas en formato MM-DD-YYYY (mes-dia-año), al reves que los demas bancos dominicanos. Ejemplo: "09-07-2026 09:14 PM" es el 7 de septiembre de 2026, NO el 9 de julio.`
+      : '';
+
+    return `Extrae la informacion de esta notificacion bancaria${bankName ? ` de ${bankName}` : ''}:${formatoFecha}
 
 ASUNTO: ${subject}
 
