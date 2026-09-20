@@ -10,6 +10,7 @@ import { elTrialArrancaSolo } from '../config/trial';
 import { TrialScheduler } from '../services/trialScheduler';
 import { verifyGoogleIdToken } from '../lib/googleAuth';
 import { resolveSSOLocale } from '../lib/locale';
+import { clientIp } from '../lib/clientIp';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import { ReferralService } from '../services/referralService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
@@ -63,7 +64,7 @@ function fireCompleteRegistration(user: User, req: Request): void {
     userId: user.id,
     email: user.email,
     phone: null,
-    ipAddress: req.ip ?? null,
+    ipAddress: clientIp(req),
     userAgent: req.get('user-agent') ?? null,
     actionSource: 'app',
     customData: {
@@ -106,6 +107,9 @@ interface SSOResolveInput {
   deviceCountry: string | null;
   deviceLocale: string | null;
   ipAddress: string | null;
+  // `X-Forwarded-For` crudo, solo para el log: es la prueba de qué IP era del
+  // cliente y cuáles del proxy cuando el país sale mal.
+  forwardedFor?: string | null;
 }
 
 interface SSOResolveResult {
@@ -124,7 +128,7 @@ interface SSOResolveResult {
  * Lanza Error si no se puede resolver (ej: Apple subsecuente sin email y sub no existe).
  */
 async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult> {
-  const { provider, sub, email, emailVerified, name, lastName, deviceCountry, deviceLocale, ipAddress } = input;
+  const { provider, sub, email, emailVerified, name, lastName, deviceCountry, deviceLocale, ipAddress, forwardedFor } = input;
   const subField = provider === 'APPLE' ? 'appleSub' : 'googleSub';
 
   // 1. Match por sub (login de SSO user existente)
@@ -172,7 +176,8 @@ async function resolveSSOUser(input: SSOResolveInput): Promise<SSOResolveResult>
   logger.error(
     `[SSO] Locale inferido para ${normalizedEmail}: country="${inferred.country}" ` +
     `currency="${inferred.currency}" fuente=${inferred.fuente} ` +
-    `(deviceCountry=${deviceCountry ?? 'null'} deviceLocale=${deviceLocale ?? 'null'} ip=${ipAddress ?? 'null'})`,
+    `(deviceCountry=${deviceCountry ?? 'null'} deviceLocale=${deviceLocale ?? 'null'} ip=${ipAddress ?? 'null'} ` +
+    `xff="${forwardedFor ?? 'null'}")`,
   );
 
   const created = await prisma.user.create({
@@ -275,7 +280,8 @@ export const appleSignIn = async (req: Request, res: Response) => {
         lastName: lastName ?? null,
         deviceCountry: deviceCountry ?? null,
         deviceLocale: deviceLocale ?? null,
-        ipAddress: req.ip ?? null,
+        ipAddress: clientIp(req),
+        forwardedFor: (Array.isArray(req.headers['x-forwarded-for']) ? req.headers['x-forwarded-for'].join(',') : req.headers['x-forwarded-for']) ?? null,
       });
     } catch (err: any) {
       if (err?.message === 'SSO_NO_EMAIL_NO_MATCH') {
@@ -332,7 +338,8 @@ export const googleSignIn = async (req: Request, res: Response) => {
         lastName: verified.familyName,
         deviceCountry: deviceCountry ?? null,
         deviceLocale: deviceLocale ?? null,
-        ipAddress: req.ip ?? null,
+        ipAddress: clientIp(req),
+        forwardedFor: (Array.isArray(req.headers['x-forwarded-for']) ? req.headers['x-forwarded-for'].join(',') : req.headers['x-forwarded-for']) ?? null,
       });
     } catch (err: any) {
       if (err?.message === 'SSO_NO_EMAIL_NO_MATCH') {

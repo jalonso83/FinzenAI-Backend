@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { clientIp } from '../lib/clientIp';
 import crypto from 'crypto';
 import { promises as dns } from 'dns';
 import bcrypt from 'bcryptjs';
@@ -396,7 +397,7 @@ export const register = async (req: Request, res: Response) => {
       ((parseInt(completeRegEventId[16], 16) & 0x3) | 0x8).toString(16) + completeRegEventId.slice(17, 20),
       completeRegEventId.slice(20, 32),
     ].join('-');
-    const ipForAttribution = req.ip ?? null;
+    const ipForAttribution = clientIp(req);
     const userAgentForAttribution = req.get('user-agent') ?? null;
     void ingestAttributionEvent({
       eventName: 'CompleteRegistration',
@@ -1019,7 +1020,7 @@ export const verifyEmailWithAttribution = async (req: Request, res: Response) =>
     logger.log(`✅ Email verificado via landing para: ${email}`);
 
     // Best-effort attribution matching — fire-and-forget, NO bloquea respuesta
-    const ipAddress = req.ip ?? null;
+    const ipAddress = clientIp(req);
     const userAgent = req.get('user-agent') ?? null;
     const trimmedAnonId = (typeof anonymousId === 'string' && anonymousId.trim() !== '') ? anonymousId : null;
 

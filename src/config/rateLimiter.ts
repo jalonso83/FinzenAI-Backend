@@ -1,4 +1,5 @@
 import rateLimit from 'express-rate-limit';
+import { clientIp } from '../lib/clientIp';
 import { Request, Response } from 'express';
 import { logger } from '../utils/logger';
 import { validatePdfToken } from '../services/pdfTokenService';
@@ -25,7 +26,7 @@ const isValidPdfRender = (req: Request): boolean => {
 
 // Handler personalizado cuando se excede el límite
 const rateLimitHandler = (req: Request, res: Response) => {
-  logger.warn(`[RateLimit] IP bloqueada: ${req.ip} en ${req.path}`);
+  logger.warn(`[RateLimit] IP bloqueada: ${clientIp(req)} en ${req.path}`);
   return res.status(429).json({
     error: 'Too Many Requests',
     message: 'Demasiadas solicitudes. Por favor, intenta más tarde.',
@@ -51,6 +52,7 @@ export const loginLimiter = rateLimit({
   standardHeaders: true, // Incluye `RateLimit-*` headers
   legacyHeaders: false, // Deshabilita `X-RateLimit-*` headers antiguos
   handler: rateLimitHandler,
+  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
   skipFailedRequests: false, // Cuenta todos los intentos, exitosos o no
 });
 
@@ -68,6 +70,7 @@ export const registerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
+  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
 });
 
 /**
@@ -84,6 +87,7 @@ export const passwordResetLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
+  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
 });
 
 /**
@@ -100,6 +104,7 @@ export const emailVerificationLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
+  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
 });
 
 /**
@@ -116,6 +121,7 @@ export const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
+  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
   skip: (req: Request) => {
     // Skip para health checks y para el render interno del PDF (pdfToken válido)
     return req.path === '/health' || req.path === '/api/health' || isValidPdfRender(req);
@@ -136,6 +142,7 @@ export const strictApiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
+  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
   // El render del PDF (Puppeteer) hace múltiples llamadas con pdfToken válido;
   // no deben contar contra este límite estricto.
   skip: (req: Request) => isValidPdfRender(req),
@@ -171,4 +178,5 @@ export const feedbackLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
+  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
 });

@@ -98,6 +98,16 @@ export function inferLocaleFromCountryCode(code: string | null | undefined): Inf
  *  - IPs privadas / localhost devuelven null
  *  - Rate limit no documentado, pero observado ~10k req/día sin problema
  */
+// Fragmentos (en minúsculas) del `connection.org/isp` de ipwho.is que delatan
+// que la IP no es de una persona sino de un datacenter, CDN, VPN o relay.
+// Datacamp = CDN77, la que salía en Railway / Private Relay (Miami).
+const ORGS_DATACENTER = [
+  'datacamp', 'cdn77', 'cloudflare', 'akamai', 'fastly', 'amazon', 'aws',
+  'google llc', 'google cloud', 'microsoft', 'azure', 'digitalocean', 'linode',
+  'akamai', 'ovh', 'hetzner', 'm247', 'vultr', 'oracle', 'railway', 'private relay',
+  'icloud', 'nordvpn', 'expressvpn', 'surfshark', 'proton', 'mullvad', 'hosting',
+];
+
 export async function inferCountryCodeFromIp(ip: string | null | undefined): Promise<string | null> {
   if (!ip) return null;
   // Filtrar IPs privadas y loopback — GeoIP no las puede resolver.
@@ -114,8 +124,23 @@ export async function inferCountryCodeFromIp(ip: string | null | undefined): Pro
     });
     if (!response.ok) return null;
 
-    const json = (await response.json()) as { success?: boolean; country_code?: string };
+    const json = (await response.json()) as {
+      success?: boolean;
+      country_code?: string;
+      connection?: { org?: string; isp?: string; asn?: number };
+    };
     if (json?.success === false || !json?.country_code) return null;
+
+    // Si la IP es de un datacenter / CDN / relay, el país es el del nodo de
+    // salida, no el de la persona (iCloud Private Relay, VPNs, o un proxy que
+    // se coló). Se devuelve null para que la resolución caiga al regionCode
+    // del teléfono, que ahí sí es mejor señal. Se loguea a `error` porque en
+    // producción el logger solo saca errores y es lo que hay que ver.
+    const org = `${json.connection?.org ?? ''} ${json.connection?.isp ?? ''}`.toLowerCase();
+    if (org && ORGS_DATACENTER.some(d => org.includes(d))) {
+      logger.error(`[Locale] GeoIP ignorado: ip=${ip} es de datacenter/relay (${json.connection?.org ?? json.connection?.isp}) → país=${json.country_code}`);
+      return null;
+    }
 
     return String(json.country_code).toUpperCase();
   } catch (err: any) {

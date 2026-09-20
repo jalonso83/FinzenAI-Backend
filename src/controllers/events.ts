@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { clientIp } from '../lib/clientIp';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import { logger } from '../utils/logger';
 
@@ -99,7 +100,7 @@ export const trackEvent = async (req: Request, res: Response) => {
     }
 
     // IP y UA del request — confiables (vienen del proxy, no del body)
-    const ipAddress = req.ip ?? null;
+    const ipAddress = clientIp(req);
     const userAgent = req.get('user-agent') ?? null;
 
     // IMPORTANTE: NO aceptamos email/phone del body. Esos solo se setean cuando el
