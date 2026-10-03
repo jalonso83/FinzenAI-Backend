@@ -115,6 +115,29 @@ export class AdminService {
     return new Date(firstEvent.createdAt.getTime() - TRACKING_START_MARGIN_MS);
   }
 
+  /**
+   * Un trial por usuario con su fecha de inicio. Fuente única de "Trials
+   * Iniciados", "Conversión Trial→Pago" y la serie mensual del Pulso.
+   *
+   * trial_device_registry sola ya no alcanza: solo se escribe cuando el
+   * registro trae deviceId, y Google/Apple no lo mandan. Desde que el trial
+   * arranca solo al registrarse (31-ago-2026) ~87% entra por SSO, así que la
+   * tabla veía 68 de 507 trials de septiembre. Para quien no tiene fila, el
+   * trial empezó al registrarse: se toma users.createdAt, pero solo desde el
+   * 31-ago y solo si hasUsedTrial (ese día se mezclaron los dos regímenes).
+   * Antes de esa fecha no se inventa ninguna: queda el registry como estaba.
+   */
+  private static readonly TRIAL_STARTS_SQL = `
+    SELECT t."usedByUserId" AS "userId", t."usedAt" AS inicio
+    FROM trial_device_registry t
+    UNION ALL
+    SELECT u.id AS "userId", u."createdAt" AS inicio
+    FROM users u
+    WHERE u."hasUsedTrial" = true
+      AND u."createdAt" >= '2026-08-31T00:00:00Z'
+      AND NOT EXISTS (SELECT 1 FROM trial_device_registry t2 WHERE t2."usedByUserId" = u.id)
+  `;
+
   // ─── PULSE ───────────────────────────────────────────────
   static async getPulse(query: { from?: string; to?: string }) {
     const { from, to, prevFrom, prevTo } = parseDateRange(query);
@@ -138,7 +161,7 @@ export class AdminService {
       retentionD1Data,
       retentionD7Data,
       retentionD30Data,
-      trialsStarted,
+      trialsStartedData,
       trialConversionsData,
       trialsByMonthData,
     ] = await Promise.all([
@@ -319,36 +342,67 @@ export class AdminService {
           AND u."createdAt" <= LEAST($2::timestamp, NOW() - interval '30 days')
       `, from, to),
 
-      // Trials iniciados en el período. FUENTE: trial_device_registry.usedAt,
-      // que se escribe en el momento de activar el trial y NUNCA se borra.
-      // NO usar subscription.trialStartedAt: el cron lo pone a null al terminar
-      // el trial (7 días) o al convertir, así que subcontaba ~10x en rangos > 7d.
-      prisma.trialDeviceRegistry.count({
-        where: { usedAt: { gte: from, lte: to } },
-      }),
+      // Trials iniciados en el período, por su fecha real de inicio
+      // (TRIAL_STARTS_SQL). NO usar subscription.trialStartedAt: el cron lo pone
+      // a null al terminar el trial o al convertir, y subcontaba ~10x.
+      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
+        SELECT COUNT(DISTINCT ts."userId")::bigint AS cnt
+        FROM (${AdminService.TRIAL_STARTS_SQL}) ts
+        WHERE ts.inicio >= $1 AND ts.inicio <= $2
+      `, from, to),
 
       // Conversiones de esos trials: usuarios cuyo trial inició en el período Y
       // que tienen ≥1 pago SUCCEEDED (convirtieron a plan de pago). Nota: un trial
       // iniciado al final del período puede convertir DESPUÉS, así que en rangos
       // recientes esta tasa puede subir con el tiempo (lag de conversión).
-      // Mismo cambio de fuente: ventana sobre trial_device_registry.usedAt.
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT t."usedByUserId")::bigint as cnt
-        FROM trial_device_registry t
-        JOIN payments p ON p."userId" = t."usedByUserId"
-        WHERE t."usedAt" >= $1 AND t."usedAt" <= $2
+        SELECT COUNT(DISTINCT ts."userId")::bigint AS cnt
+        FROM (${AdminService.TRIAL_STARTS_SQL}) ts
+        JOIN payments p ON p."userId" = ts."userId"
+        WHERE ts.inicio >= $1 AND ts.inicio <= $2
           AND p.status = 'SUCCEEDED'
       `, from, to),
 
-      // Serie mensual de trials iniciados (últimos 12 meses). Independiente del
-      // filtro de rango para que la tendencia siempre muestre la evolución
-      // completa. Misma fuente inmutable (usedAt).
-      prisma.$queryRawUnsafe<{ mes: string; trials: bigint }[]>(`
-        SELECT to_char(date_trunc('month', "usedAt"), 'YYYY-MM') as mes,
-               COUNT(*)::bigint as trials
-        FROM trial_device_registry
-        WHERE "usedAt" >= date_trunc('month', NOW()) - interval '11 months'
-        GROUP BY 1
+      // Serie mensual (últimos 12 meses, independiente del filtro de rango):
+      // cuántos trials empezaron y en qué terminaron. Desde que el trial es
+      // automático, "empezaron" es igual a registros; lo que dice algo es el
+      // desenlace. Mismas definiciones que la tabla semanal de la Eval del trial
+      // (getTrialEval, A6), para que las dos cuadren:
+      //  - convirtieron: PRIMER pago SUCCEEDED de alguien que tuvo trial, en el
+      //                  mes en que pagó.
+      //  - vencieron:    trialEndedAt en el mes, sin evento trial_cancelado.
+      //  - cancelaron:   trialEndedAt en el mes, con evento trial_cancelado.
+      // Devuelve los 12 meses aunque alguno quede en cero.
+      prisma.$queryRawUnsafe<{ mes: string; trials: bigint; convirtieron: bigint; vencieron: bigint; cancelaron: bigint }[]>(`
+        WITH meses AS (
+          SELECT generate_series(
+            date_trunc('month', NOW()) - interval '11 months',
+            date_trunc('month', NOW()),
+            interval '1 month'
+          ) AS mes
+        ),
+        inicios AS (${AdminService.TRIAL_STARTS_SQL}),
+        primeros_pagos AS (
+          SELECT p."userId", MIN(p."createdAt") AS primer_pago
+          FROM payments p
+          WHERE p.status = 'SUCCEEDED'
+            AND p."userId" IN (SELECT "userId" FROM inicios)
+          GROUP BY p."userId"
+        ),
+        fines AS (
+          SELECT s."trialEndedAt",
+                 EXISTS (SELECT 1 FROM feature_usage f WHERE f."userId" = s."userId"
+                         AND f.feature = 'suscripciones' AND f.action = 'trial_cancelado') AS cancelo
+          FROM subscriptions s
+          WHERE s."trialEndedAt" IS NOT NULL
+        )
+        SELECT
+          to_char(m.mes, 'YYYY-MM') AS mes,
+          (SELECT COUNT(DISTINCT i."userId") FROM inicios i WHERE date_trunc('month', i.inicio) = m.mes)::bigint AS trials,
+          (SELECT COUNT(*) FROM primeros_pagos pp WHERE date_trunc('month', pp.primer_pago) = m.mes)::bigint AS convirtieron,
+          (SELECT COUNT(*) FROM fines f WHERE date_trunc('month', f."trialEndedAt") = m.mes AND NOT f.cancelo)::bigint AS vencieron,
+          (SELECT COUNT(*) FROM fines f WHERE date_trunc('month', f."trialEndedAt") = m.mes AND f.cancelo)::bigint AS cancelaron
+        FROM meses m
         ORDER BY 1 ASC
       `),
     ]);
@@ -404,15 +458,19 @@ export class AdminService {
 
     // Conversión Trial → Pago: de los trials iniciados en el período, qué % llegó
     // a tener un pago exitoso. Si no hubo trials en el período, 0%.
+    const trialsStarted = Number(trialsStartedData[0]?.cnt ?? 0);
     const trialConversions = Number(trialConversionsData[0]?.cnt ?? 0);
     const trialConversionRate = trialsStarted > 0
       ? Math.round((trialConversions / trialsStarted) * 10000) / 100
       : 0;
 
-    // Serie mensual de trials para el gráfico de tendencia.
+    // Serie mensual de trials (inicio y desenlace) para el gráfico de tendencia.
     const trialsByMonth = trialsByMonthData.map(r => ({
       month: r.mes,
       trials: Number(r.trials),
+      convirtieron: Number(r.convirtieron),
+      vencieron: Number(r.vencieron),
+      cancelaron: Number(r.cancelaron),
     }));
 
     // #8: marcar cuando el período de comparación ("vs período anterior") cruza el
