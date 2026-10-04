@@ -1,4 +1,4 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { clientIp } from '../lib/clientIp';
 import { Request, Response } from 'express';
 import { logger } from '../utils/logger';
@@ -23,6 +23,19 @@ const isValidPdfRender = (req: Request): boolean => {
  * NOTA: Usamos validate: false para IPv6 ya que Railway/proxy maneja
  * las IPs correctamente con trust proxy habilitado en Express.
  */
+
+/**
+ * Clave con la que se cuentan los intentos: la IP real del cliente (no la del
+ * edge de Railway, ver lib/clientIp) pasada por `ipKeyGenerator`.
+ *
+ * Una conexión IPv6 recibe un bloque entero de direcciones (millones) y puede
+ * cambiar de una a otra a voluntad. Contando por dirección exacta, rotar dentro
+ * del propio bloque saltaba cualquier límite (ej. los 5 intentos de login).
+ * `ipKeyGenerator` agrupa las IPv6 por su bloque (/56) y deja las IPv4 igual.
+ * Sin esto la librería avisa ERR_ERL_KEY_GEN_IPV6 en cada arranque.
+ */
+const claveIp = (req: Request): string =>
+  ipKeyGenerator(clientIp(req) ?? req.ip ?? '0.0.0.0');
 
 // Handler personalizado cuando se excede el límite
 const rateLimitHandler = (req: Request, res: Response) => {
@@ -52,7 +65,7 @@ export const loginLimiter = rateLimit({
   standardHeaders: true, // Incluye `RateLimit-*` headers
   legacyHeaders: false, // Deshabilita `X-RateLimit-*` headers antiguos
   handler: rateLimitHandler,
-  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
+  keyGenerator: claveIp, // IP real del cliente agrupada por bloque IPv6 (ver claveIp)
   skipFailedRequests: false, // Cuenta todos los intentos, exitosos o no
 });
 
@@ -70,7 +83,7 @@ export const registerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
+  keyGenerator: claveIp, // IP real del cliente agrupada por bloque IPv6 (ver claveIp)
 });
 
 /**
@@ -87,7 +100,7 @@ export const passwordResetLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
+  keyGenerator: claveIp, // IP real del cliente agrupada por bloque IPv6 (ver claveIp)
 });
 
 /**
@@ -104,7 +117,7 @@ export const emailVerificationLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
+  keyGenerator: claveIp, // IP real del cliente agrupada por bloque IPv6 (ver claveIp)
 });
 
 /**
@@ -121,7 +134,7 @@ export const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
+  keyGenerator: claveIp, // IP real del cliente agrupada por bloque IPv6 (ver claveIp)
   skip: (req: Request) => {
     // Skip para health checks y para el render interno del PDF (pdfToken válido)
     return req.path === '/health' || req.path === '/api/health' || isValidPdfRender(req);
@@ -142,7 +155,7 @@ export const strictApiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
+  keyGenerator: claveIp, // IP real del cliente agrupada por bloque IPv6 (ver claveIp)
   // El render del PDF (Puppeteer) hace múltiples llamadas con pdfToken válido;
   // no deben contar contra este límite estricto.
   skip: (req: Request) => isValidPdfRender(req),
@@ -178,5 +191,5 @@ export const feedbackLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: clientIp as any, // IP real del cliente, no la del edge de Railway (ver lib/clientIp)
+  keyGenerator: claveIp, // IP real del cliente agrupada por bloque IPv6 (ver claveIp)
 });
