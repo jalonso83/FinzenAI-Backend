@@ -14,7 +14,12 @@ import {
   getSyncLogs,
   getConfiguredBanks,
   toggleBankFilter,
-  getSupportedBanks
+  getSupportedBanks,
+  getCards,
+  excludeCard,
+  includeCard,
+  addExcludedCard,
+  markCardsReviewed
 } from '../controllers/emailSync';
 
 const router: ReturnType<typeof Router> = Router();
@@ -68,5 +73,12 @@ router.get('/banks', authenticateToken, requirePlan('PRO'), getConfiguredBanks);
 
 // Activar/desactivar filtro de banco
 router.patch('/banks/:bankId/toggle', authenticateToken, requirePlan('PRO'), toggleBankFilter);
+
+// Tarjetas: elegir de cuáles se importan los consumos (ej. apagar la corporativa)
+router.get('/cards', authenticateToken, requirePlan('PRO'), getCards);
+router.post('/cards', authenticateToken, requirePlan('PRO'), addExcludedCard);
+router.post('/cards/revisadas', authenticateToken, requirePlan('PRO'), markCardsReviewed);
+router.post('/cards/:last4/exclude', authenticateToken, requirePlan('PRO'), excludeCard);
+router.delete('/cards/:last4/exclude', authenticateToken, requirePlan('PRO'), includeCard);
 
 export default router;

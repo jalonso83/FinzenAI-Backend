@@ -10,6 +10,7 @@ import { encrypt, decrypt } from '../utils/encryption';
 import { recordFeatureUsage } from '../lib/featureUsage';
 import { historialPrimeraSyncDias } from '../config/trial';
 import { subscriptionService } from './subscriptionService';
+import { CardExclusionService, CARD_EXCLUDED_SKIPPED } from './cardExclusionService';
 
 import { logger } from '../utils/logger';
 export interface SyncResult {
@@ -466,14 +467,45 @@ export class EmailSyncService {
         ? await OutlookService.ensureValidToken(connection)
         : await GmailService.ensureValidToken(connection);
 
+      // Conexión sin NINGÚN filtro de banco (ni activo ni apagado): nunca se le
+      // crearon. Pasó con conexiones del 16 y 17 de sept de 2026 cuyo país no
+      // tenía bancos cargados. Sin filtros, la búsqueda salía como `from:()` y
+      // traía el buzón entero: recibos de Uber, Apple, Amazon… que acababan como
+      // gastos, muchos duplicando el aviso del banco. Se reparan aquí, en vez de
+      // a mano, para que cualquier caso futuro se arregle solo.
+      let bankFilters = connection.bankFilters;
+      if (bankFilters.length === 0) {
+        const totalFiltros = await prisma.bankEmailFilter.count({ where: { emailConnectionId: connectionId } });
+        if (totalFiltros === 0) {
+          logger.error(`[EmailSync] Conexión ${connectionId} sin filtros de banco: se crean los de su país`);
+          await this.createDefaultBankFilters(connectionId, this.mapCountryToCode(connection.user.country || 'República Dominicana'));
+          bankFilters = await prisma.bankEmailFilter.findMany({ where: { emailConnectionId: connectionId, isActive: true } });
+        }
+      }
+
       // Recopilar todos los emails de los filtros
       const allSenderEmails: string[] = [];
       const allSubjectKeywords: string[] = [];
 
-      for (const filter of connection.bankFilters) {
+      for (const filter of bankFilters) {
         allSenderEmails.push(...filter.senderEmails);
         allSubjectKeywords.push(...filter.subjectKeywords);
       }
+
+      // Sin remitentes no se busca NADA. Una búsqueda sin remitentes no es "de
+      // ningún banco": es de todo el correo, y eso nunca se le puede leer a
+      // nadie. Pasa si el usuario apagó todos sus bancos.
+      if (allSenderEmails.length === 0) {
+        logger.error(`[EmailSync] Conexión ${connectionId} sin remitentes de banco activos: no se busca nada`);
+        result.success = true;
+        await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS');
+        await this.updateConnectionStatus(connectionId, 'SUCCESS');
+        return result;
+      }
+
+      // Tarjetas que el usuario apagó (ej. corporativas): sus avisos no entran.
+      // Se cargan una vez por corrida.
+      const tarjetasExcluidas = await CardExclusionService.getExcludedSet(connection.userId);
 
       // Verificar si hay emails importados previos
       const importedCount = await prisma.importedBankEmail.count({
@@ -489,6 +521,12 @@ export class EmailSyncService {
       // Syncs siguientes: solo desde la última, para no repetir trabajo.
       const inicioHistorial = new Date(Date.now() - historialPrimeraSyncDias() * 24 * 60 * 60 * 1000);
       const afterDate = importedCount === 0 ? inicioHistorial : (connection.lastSyncAt || inicioHistorial);
+
+      // En la primera lectura entran hasta 90 días de golpe, y entre ellos puede
+      // estar la tarjeta corporativa que el usuario va a apagar al terminar. Si
+      // se mandaran alertas de presupuesto ahora, le llegaría "te pasaste" por
+      // gastos que no son suyos, y una notificación no se puede deshacer.
+      const esPrimeraLectura = importedCount === 0;
 
       // Buscar emails según el proveedor
       let messages: any[] = [];
@@ -583,7 +621,7 @@ export class EmailSyncService {
           }
 
           // Determinar el banco
-          const bankFilter = connection.bankFilters.find(f =>
+          const bankFilter = bankFilters.find(f =>
             f.senderEmails.some(e => from.toLowerCase().includes(e.toLowerCase()))
           );
 
@@ -637,6 +675,23 @@ export class EmailSyncService {
             continue;
           }
 
+          // Tarjeta apagada por el usuario: se guarda lo extraído (para poder
+          // mostrarle la tarjeta en su lista) pero no se crea la transacción.
+          const terminacion = parseResult.transaction.cardLast4;
+          if (terminacion && tarjetasExcluidas.has(terminacion)) {
+            await prisma.importedBankEmail.update({
+              where: { id: importedEmail.id },
+              data: {
+                status: 'SKIPPED',
+                errorMessage: `${CARD_EXCLUDED_SKIPPED}: tarjeta terminada en ${terminacion} excluida por el usuario`,
+                parsedData: parseResult.transaction as any,
+                processedAt: new Date()
+              }
+            });
+            result.emailsSkipped++;
+            continue;
+          }
+
           // Verificar duplicados
           const isDuplicate = await EmailParserService.checkForDuplicate(
             connection.userId,
@@ -662,7 +717,8 @@ export class EmailSyncService {
           const transaction = await this.createTransactionFromParsed(
             connection.userId,
             parseResult.transaction,
-            importedEmail.id
+            importedEmail.id,
+            { notificar: !esPrimeraLectura }
           );
 
           if (transaction) {
@@ -851,8 +907,10 @@ export class EmailSyncService {
   private static async createTransactionFromParsed(
     userId: string,
     parsed: ParsedTransaction,
-    importedEmailId: string
+    importedEmailId: string,
+    opciones: { notificar?: boolean } = {}
   ): Promise<any> {
+    const { notificar = true } = opciones;
     try {
       // Usar categoryId del mapeo si ya viene, sino buscar por nombre
       let categoryId = parsed.categoryId;
@@ -940,7 +998,7 @@ export class EmailSyncService {
       // Servicio unificado: mismo camino que el formulario y que Zenio. Antes
       // este archivo tenía su PROPIA copia del recálculo, con su propia lógica
       // de umbrales — dos implementaciones que ya habían divergido.
-      await recalculateBudgets(userId, categoryId, transaction.date, { notify: true });
+      await recalculateBudgets(userId, categoryId, transaction.date, { notify: notificar });
 
       // ========== GAMIFICACIÓN: Puntos por transacción importada ==========
       try {

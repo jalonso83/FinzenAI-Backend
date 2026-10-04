@@ -88,6 +88,14 @@ model User {
 
   // Email Sync
   emailConnections EmailConnection[]
+  // Tarjetas cuyos consumos NO se importan (ej. corporativas). Van ligadas al
+  // usuario y no a la conexión: bajar de plan borra las conexiones en cascada
+  // y la elección del usuario tiene que sobrevivir a eso.
+  cardExclusions   CardExclusion[]
+  // Cuándo vio la lista de tarjetas detectadas por primera vez. NULL = todavía
+  // no se le mostró: la app se la presenta una sola vez (tras la primera lectura
+  // del correo, o al abrir la pantalla si ya estaba conectado).
+  tarjetasRevisadasAt DateTime?
 
   // Notificaciones Push (FCM)
   devices                 UserDevice[]
@@ -747,6 +755,22 @@ model EmailSyncLog {
 
   @@index([emailConnectionId, startedAt])
   @@map("email_sync_logs")
+}
+
+// Tarjeta excluida de Gastos en automático: los avisos cuyo cardLast4 coincide
+// no se convierten en transacción. Se compara contra los 4 dígitos que extrae
+// el parser, sin importar el remitente: la misma tarjeta llega por el aviso del
+// banco y a veces por el recibo del comercio.
+model CardExclusion {
+  id        String   @id @default(cuid())
+  userId    String
+  last4     String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, last4])
+  @@map("card_exclusions")
 }
 
 // Bancos soportados

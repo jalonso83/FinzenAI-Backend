@@ -5,6 +5,7 @@ import { OutlookService } from '../services/outlookService';
 import { EmailSyncService } from '../services/emailSyncService';
 import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 import { recordFeatureUsage } from '../lib/featureUsage';
+import { CardExclusionService, esTerminacionValida } from '../services/cardExclusionService';
 
 import { logger } from '../utils/logger';
 
@@ -657,4 +658,118 @@ export default {
   getConfiguredBanks,
   toggleBankFilter,
   getSupportedBanks
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tarjetas de Gastos en automático (2026-10-04)
+//
+// El usuario elige de qué tarjetas se importan los consumos. Caso típico: la
+// tarjeta corporativa, que no quiere mezclar con sus finanzas personales. La
+// lista se le presenta una vez (tras la primera lectura del correo, o al abrir
+// la pantalla si ya estaba conectado) y después queda en la sección "Tus
+// tarjetas" para cambiarla cuando quiera.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Tarjetas detectadas en los avisos del banco y si están apagadas.
+ * GET /api/email-sync/cards
+ */
+export const getCards = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'No autorizado' });
+
+    const { tarjetas, necesitaRevision } = await CardExclusionService.listCards(userId);
+    return res.json({ success: true, tarjetas, necesitaRevision });
+  } catch (error: any) {
+    logger.error('[EmailSync] Cards error:', error);
+    return res.status(500).json({ error: 'Error al obtener tus tarjetas', message: error.message });
+  }
+};
+
+/**
+ * Apaga una tarjeta. Body opcional: { quitarImportados: boolean } para borrar
+ * además los consumos que ya entraron por correo de esa tarjeta.
+ * POST /api/email-sync/cards/:last4/exclude
+ */
+export const excludeCard = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { last4 } = req.params;
+    if (!userId) return res.status(401).json({ error: 'No autorizado' });
+    if (!esTerminacionValida(last4)) {
+      return res.status(400).json({ error: 'La terminación de la tarjeta debe tener 4 dígitos' });
+    }
+
+    const quitarImportados = req.body?.quitarImportados === true;
+    const { quitados } = await CardExclusionService.exclude(userId, last4, quitarImportados);
+
+    recordFeatureUsage(userId, 'email_sync', 'tarjeta_excluida', { quitarImportados, quitados });
+    return res.json({ success: true, last4, excluida: true, quitados });
+  } catch (error: any) {
+    logger.error('[EmailSync] Exclude card error:', error);
+    return res.status(500).json({ error: 'No pudimos apagar la tarjeta', message: error.message });
+  }
+};
+
+/**
+ * Vuelve a encender una tarjeta: sus consumos se importan de ahí en adelante.
+ * DELETE /api/email-sync/cards/:last4/exclude
+ */
+export const includeCard = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { last4 } = req.params;
+    if (!userId) return res.status(401).json({ error: 'No autorizado' });
+    if (!esTerminacionValida(last4)) {
+      return res.status(400).json({ error: 'La terminación de la tarjeta debe tener 4 dígitos' });
+    }
+
+    await CardExclusionService.include(userId, last4);
+    recordFeatureUsage(userId, 'email_sync', 'tarjeta_incluida', {});
+    return res.json({ success: true, last4, excluida: false });
+  } catch (error: any) {
+    logger.error('[EmailSync] Include card error:', error);
+    return res.status(500).json({ error: 'No pudimos encender la tarjeta', message: error.message });
+  }
+};
+
+/**
+ * Agrega a mano una terminación que todavía no ha tenido consumos (ej. una
+ * tarjeta corporativa nueva). Queda apagada desde el inicio.
+ * POST /api/email-sync/cards  { last4 }
+ */
+export const addExcludedCard = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const last4 = String(req.body?.last4 ?? '').trim();
+    if (!userId) return res.status(401).json({ error: 'No autorizado' });
+    if (!esTerminacionValida(last4)) {
+      return res.status(400).json({ error: 'Escribe los 4 últimos dígitos de la tarjeta' });
+    }
+
+    await CardExclusionService.exclude(userId, last4, false);
+    recordFeatureUsage(userId, 'email_sync', 'tarjeta_agregada', {});
+    return res.json({ success: true, last4, excluida: true, quitados: 0 });
+  } catch (error: any) {
+    logger.error('[EmailSync] Add card error:', error);
+    return res.status(500).json({ error: 'No pudimos agregar la tarjeta', message: error.message });
+  }
+};
+
+/**
+ * El usuario ya vio la lista de tarjetas: no se le vuelve a presentar.
+ * POST /api/email-sync/cards/revisadas
+ */
+export const markCardsReviewed = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'No autorizado' });
+
+    await CardExclusionService.markReviewed(userId);
+    return res.json({ success: true });
+  } catch (error: any) {
+    logger.error('[EmailSync] Cards reviewed error:', error);
+    return res.status(500).json({ error: 'Error al guardar', message: error.message });
+  }
 };
