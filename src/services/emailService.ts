@@ -32,7 +32,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
         }
         .header {
             background-color: #204274;
-            padding: 40px 20px;
+            padding: 24px 20px;
             text-align: center;
             color: white;
         }
@@ -48,11 +48,11 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
             opacity: 0.9;
         }
         .content {
-            padding: 40px 30px;
+            padding: 24px 30px;
         }
         .welcome-message {
             font-size: 18px;
-            margin-bottom: 25px;
+            margin-bottom: 15px;
             color: #2c3e50;
             text-align: center;
         }
@@ -67,26 +67,6 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
             margin-top: 0;
             font-size: 20px;
             text-align: center;
-        }
-        .benefit-item {
-            display: flex;
-            align-items: center;
-            margin: 15px 0;
-            padding: 10px 0;
-        }
-        .benefit-icon {
-            width: 20px;
-            height: 20px;
-            background-color: #204274;
-            border-radius: 50%;
-            margin-right: 15px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-            font-size: 12px;
-            flex-shrink: 0;
         }
         .confirm-button {
             display: block;
@@ -156,7 +136,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
                 padding: 20px 15px;
             }
             .header {
-                padding: 30px 15px;
+                padding: 20px 15px;
             }
             .header h1 {
                 font-size: 28px;
@@ -172,7 +152,7 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
         <!-- Header -->
         <div class="header">
             <img src="https://finzenai.com/logo_email.png" alt="FinZen AI" width="150"
-    style="display: block; margin: 0 auto 20px; border: none; outline: none; text-decoration: none;"
+    style="display: block; margin: 0 auto 12px; border: none; outline: none; text-decoration: none;"
   />
             <p>Tu copiloto financiero</p>
         </div>
@@ -183,42 +163,41 @@ const getEmailTemplate = (name: string, token: string, email: string) => {
                 <strong>¡Bienvenido a la revolución de las finanzas inteligentes!</strong>
             </div>
 
-            <p>Hola <strong>${name}</strong>,</p>
+            <p>Hola <strong>${(name || '').trim()}</strong>,</p>
 
             <p>¡Nos emociona tenerte en la familia FinZen AI! Has dado el primer paso hacia una gestión financiera más inteligente, eficiente y orientada a resultados.</p>
+
+            <!-- Botón arriba de los beneficios: debe verse al abrir el correo sin hacer scroll -->
+            <!-- Estilos inline + span blanco: varios clientes pintan el link de azul ignorando la clase -->
+            <a href="${ENV.LANDING_URL}/verify?token=${token}&email=${encodeURIComponent(email)}" class="confirm-button"
+               style="display: block; width: 320px; max-width: 95%; margin: 20px auto 8px; padding: 15px 10px; background-color: #204274; color: #ffffff !important; text-decoration: none; border-radius: 8px; text-align: center; font-size: 17px; font-weight: bold;">
+                <span style="color: #ffffff !important; text-decoration: none;">🎯 Confirmar Cuenta y Comenzar</span>
+            </a>
+
+            <p style="text-align: center; font-size: 14px; color: #6c757d; margin: 0 0 20px 0;">
+                Este enlace expirará en 24 horas por seguridad.
+            </p>
 
             <div class="benefits-section">
                 <h3>🚀 Lo que puedes lograr con FinZen AI:</h3>
                 
-                <div class="benefit-item">
-                    <div class="benefit-icon">✓</div>
-                    <div><strong>Análisis Financiero Inteligente:</strong> Obtén insights profundos sobre tus patrones de ingresos y gastos</div>
-                </div>
-                
-                <div class="benefit-item">
-                    <div class="benefit-icon">✓</div>
-                    <div><strong>Planificación Estratégica:</strong> Diseña y monitorea tus metas financieras con precisión</div>
-                </div>
-                
-                <div class="benefit-item">
-                    <div class="benefit-icon">✓</div>
-                    <div><strong>Optimización Automática:</strong> Recibe recomendaciones personalizadas para maximizar tu patrimonio</div>
-                </div>
+                <!-- Tabla en vez de flex: Outlook/Gmail no respetan flex. La viñeta es un carácter
+                     alineado arriba, así queda a la altura de la 1ª línea aunque el texto ocupe varias. -->
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                    <tr>
+                        <td valign="top" style="width: 20px; padding: 8px 0; vertical-align: top; color: #204274; font-size: 16px; line-height: 1.6; font-weight: bold;">&bull;</td>
+                        <td valign="top" style="padding: 8px 0; vertical-align: top; font-size: 16px; line-height: 1.6;"><strong>Análisis Financiero Inteligente:</strong> Obtén insights profundos sobre tus patrones de ingresos y gastos</td>
+                    </tr>
+                    <tr>
+                        <td valign="top" style="width: 20px; padding: 8px 0; vertical-align: top; color: #204274; font-size: 16px; line-height: 1.6; font-weight: bold;">&bull;</td>
+                        <td valign="top" style="padding: 8px 0; vertical-align: top; font-size: 16px; line-height: 1.6;"><strong>Planificación Estratégica:</strong> Diseña y monitorea tus metas financieras con precisión</td>
+                    </tr>
+                    <tr>
+                        <td valign="top" style="width: 20px; padding: 8px 0; vertical-align: top; color: #204274; font-size: 16px; line-height: 1.6; font-weight: bold;">&bull;</td>
+                        <td valign="top" style="padding: 8px 0; vertical-align: top; font-size: 16px; line-height: 1.6;"><strong>Optimización Automática:</strong> Recibe recomendaciones personalizadas para maximizar tu patrimonio</td>
+                    </tr>
+                </table>
             </div>
-
-            <hr class="divider">
-
-            <p style="text-align: center; font-size: 16px; color: #2c3e50;">
-                <strong>Para comenzar tu viaje hacia la libertad financiera, confirma tu cuenta:</strong>
-            </p>
-
-            <a href="${ENV.LANDING_URL}/verify?token=${token}&email=${encodeURIComponent(email)}" class="confirm-button">
-                🎯 Confirmar Cuenta y Comenzar
-            </a>
-
-            <p style="text-align: center; font-size: 14px; color: #6c757d; margin-top: 20px;">
-                Este enlace expirará en 24 horas por seguridad.
-            </p>
 
             <hr class="divider">
         </div>
@@ -423,7 +402,7 @@ const getPasswordResetTemplate = (name: string, resetCode: string) => {
 
         <!-- Content -->
         <div class="content">
-            <p>Hola <strong>${name}</strong>,</p>
+            <p>Hola <strong>${(name || '').trim()}</strong>,</p>
 
             <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta de FinZen AI.</p>
 

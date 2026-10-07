@@ -309,9 +309,12 @@ export const register = async (req: Request, res: Response) => {
 
     // Normalizar email a minúsculas
     email = email.toLowerCase().trim();
+    // Quitar espacios sobrantes (el autocompletado del teclado deja uno al final → "Hola Fanny ,")
+    if (typeof name === 'string') name = name.trim();
+    if (typeof lastName === 'string') lastName = lastName.trim();
 
     // 1. Validar datos de entrada
-    const validation = validateRegistrationData({ ...registerData, email });
+    const validation = validateRegistrationData({ ...registerData, name, lastName, email });
     if (!validation.valid) {
       return res.status(400).json({ error: 'Validation error', message: validation.error });
     }
@@ -1334,10 +1337,13 @@ export const updateProfile = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
     }
 
-    const { name, lastName, email, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company, onboardingCompleted } = req.body;
+    const { email, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company, onboardingCompleted } = req.body;
+    // Quitar espacios sobrantes del nombre (mismo criterio que en register)
+    const name = typeof req.body.name === 'string' ? req.body.name.trim() : req.body.name;
+    const lastName = typeof req.body.lastName === 'string' ? req.body.lastName.trim() : req.body.lastName;
 
     // 1. Validar datos
-    const validation = validateProfileData(req.body);
+    const validation = validateProfileData({ ...req.body, name, lastName });
     if (!validation.valid) {
       return res.status(400).json({ error: 'Validation error', message: validation.error });
     }
