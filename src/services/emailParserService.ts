@@ -47,6 +47,8 @@ export interface ParserResult {
   transaction?: ParsedTransaction;
   error?: string;
   rawResponse?: string;
+  // Ingreso cuyo correo no trae el monto: no se registra, se le avisa al usuario
+  incomeWithoutAmount?: { incomeChannel: IncomeChannel; description: string };
 }
 
 // Keywords que indican pago de tarjeta (NO son consumos)
@@ -658,6 +660,7 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
   - Transferencias ENVIADAS por el usuario a otra persona.
   - Avisos, promociones, estados de cuenta, cambios de clave.
 Ante la duda entre INCOME e IGNORE, usa IGNORE.
+Si es INCOME pero el correo NO dice el monto (por ejemplo, un aviso de deposito de nomina sin cifra), responde igual "kind": "INCOME" con "amount": null. NUNCA inventes ni estimes el monto.
 
 Para INCOME:
 - "payer_name": nombre de quien envia el dinero (el ordenante), tal como aparece. null si el correo no lo dice (los depositos en sucursal normalmente no lo dicen). NUNCA pongas el nombre del destinatario (a quien saluda el correo).
@@ -689,10 +692,6 @@ Las reglas de CATEGORIZACION de mas abajo aplican SOLO a EXPENSE.`;
     opciones: ParseOptions,
     incomeFallbackCategory?: string
   ): ParserResult {
-    if (!parsed.amount || Number(parsed.amount) <= 0) {
-      return { success: false, error: 'Could not extract valid amount', rawResponse: rawContent };
-    }
-
     const payerName: string | undefined = typeof parsed.payer_name === 'string' && parsed.payer_name.trim()
       ? parsed.payer_name.trim()
       : undefined;
@@ -725,6 +724,19 @@ Las reglas de CATEGORIZACION de mas abajo aplican SOLO a EXPENSE.`;
       SUBAGENTE: `Depósito en subagente${location}`,
       OTRO: de ? `Ingreso de ${de}` : 'Ingreso recibido',
     };
+
+    // Hay bancos que avisan del ingreso SIN decir el monto (p. ej. "Depósito de
+    // Nómina"). No se inventa un monto: se omite y la sincronización le avisa al
+    // usuario para que lo registre él. Va DESPUÉS del filtro de transferencia
+    // propia, que esas no merecen aviso.
+    if (!parsed.amount || Number(parsed.amount) <= 0) {
+      return {
+        success: false,
+        error: 'INCOME_NO_AMOUNT_SKIPPED: El banco avisó de un ingreso sin incluir el monto',
+        rawResponse: rawContent,
+        incomeWithoutAmount: { incomeChannel: channel, description: descripcionPorCanal[channel] }
+      };
+    }
 
     const transaction: ParsedTransaction = {
       type: 'INCOME',

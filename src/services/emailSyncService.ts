@@ -663,8 +663,27 @@ export class EmailSyncService {
               parseResult.error.includes('PAYMENT_EMAIL_SKIPPED') ||
               parseResult.error.includes('DECLINED_EMAIL_SKIPPED') ||
               parseResult.error.includes('CASH_WITHDRAWAL_SKIPPED') ||
-              parseResult.error.includes('SELF_TRANSFER_SKIPPED')
+              parseResult.error.includes('SELF_TRANSFER_SKIPPED') ||
+              parseResult.error.includes('INCOME_NO_AMOUNT_SKIPPED')
             );
+
+            // Ingreso sin monto: el banco avisó pero no dijo cuánto. Se le pide
+            // al usuario que lo registre (no en la primera lectura de historial,
+            // para no mandar avisos de nóminas de hace semanas).
+            if (parseResult.incomeWithoutAmount && !esPrimeraLectura) {
+              const esNomina = parseResult.incomeWithoutAmount.incomeChannel === 'NOMINA';
+              try {
+                await NotificationService.sendToUser(connection.userId, NotificationType.EMAIL_SYNC_COMPLETE, {
+                  title: esNomina ? 'Recibiste tu nómina' : 'Recibiste un ingreso',
+                  body: esNomina
+                    ? 'Tu banco te avisó del depósito de tu nómina, pero no incluye el monto. Regístralo en Transacciones para tener tus ingresos completos.'
+                    : `Tu banco te avisó de un ingreso (${parseResult.incomeWithoutAmount.description}), pero no incluye el monto. Regístralo en Transacciones para tener tus ingresos completos.`,
+                  data: { screen: 'Transactions' }
+                });
+              } catch (notifyError) {
+                logger.error('[EmailSync] No se pudo avisar del ingreso sin monto (no bloquea):', notifyError);
+              }
+            }
 
             await prisma.importedBankEmail.update({
               where: { id: importedEmail.id },
