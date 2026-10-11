@@ -2,7 +2,8 @@ import { EmailConnection, EmailSyncStatus, ImportedEmailStatus, NotificationType
 import { prisma } from '../lib/prisma';
 import { GmailService } from './gmailService';
 import { OutlookService } from './outlookService';
-import { EmailParserService, ParsedTransaction } from './emailParserService';
+import { EmailParserService, ParsedTransaction, DEPOSIT_CHANNELS } from './emailParserService';
+import { isEmailIncomeEnabled } from '../config/emailIncome';
 import { NotificationService } from './notificationService';
 import { recalculateBudgets } from './budgetService';
 import { GamificationService } from './gamificationService';
@@ -644,18 +645,25 @@ export class EmailSyncService {
             subject,
             bankFilter?.bankName,
             connection.user.country,
-            connection.userId  // Para buscar mapeos personalizados del usuario
+            connection.userId,  // Para buscar mapeos personalizados del usuario
+            {
+              incluirIngresos: isEmailIncomeEnabled(connection.userId),
+              userName: connection.user.name,
+              userLastName: connection.user.lastName
+            }
           );
 
           if (!parseResult.success || !parseResult.transaction) {
             // Correos omitidos a propósito (no son errores de parseo): pago de
-            // tarjeta, transacción declinada/reversada y retiro de efectivo.
+            // tarjeta, transacción declinada/reversada, retiro de efectivo y
+            // transferencia entre cuentas propias (solo con ingresos activados).
             // Antes solo se contemplaba el de pago, así que los otros dos se
             // marcaban FAILED y ensuciaban el reporte de errores del sync.
             const isPaymentSkipped = !!parseResult.error && (
               parseResult.error.includes('PAYMENT_EMAIL_SKIPPED') ||
               parseResult.error.includes('DECLINED_EMAIL_SKIPPED') ||
-              parseResult.error.includes('CASH_WITHDRAWAL_SKIPPED')
+              parseResult.error.includes('CASH_WITHDRAWAL_SKIPPED') ||
+              parseResult.error.includes('SELF_TRANSFER_SKIPPED')
             );
 
             await prisma.importedBankEmail.update({
@@ -697,7 +705,8 @@ export class EmailSyncService {
             connection.userId,
             parseResult.transaction.amount,
             parseResult.transaction.date,
-            parseResult.transaction.merchant
+            parseResult.transaction.merchant,
+            parseResult.transaction.type || 'EXPENSE'
           );
 
           if (isDuplicate) {
@@ -911,6 +920,8 @@ export class EmailSyncService {
     opciones: { notificar?: boolean } = {}
   ): Promise<any> {
     const { notificar = true } = opciones;
+    // Sin `type` es un gasto: así venía siempre antes de los ingresos por correo
+    const txType = parsed.type || 'EXPENSE';
     try {
       // Usar categoryId del mapeo si ya viene, sino buscar por nombre
       let categoryId = parsed.categoryId;
@@ -920,7 +931,7 @@ export class EmailSyncService {
       // el flujo de IA/fallback resuelva una categoría activa.
       if (categoryId) {
         const mappedCategory = await prisma.category.findFirst({
-          where: { id: categoryId, isDefault: true, type: 'EXPENSE' },
+          where: { id: categoryId, isDefault: true, type: txType },
           select: { id: true }
         });
         if (!mappedCategory) {
@@ -930,11 +941,13 @@ export class EmailSyncService {
       }
 
       if (!categoryId) {
-        categoryId = await EmailParserService.findCategoryByName(parsed.category);
+        categoryId = await EmailParserService.findCategoryByName(parsed.category, txType);
       }
 
       if (!categoryId) {
-        categoryId = await EmailParserService.getDefaultExpenseCategory();
+        categoryId = txType === 'INCOME'
+          ? await EmailParserService.getDefaultIncomeCategory()
+          : await EmailParserService.getDefaultExpenseCategory();
       }
 
       if (!categoryId) {
@@ -987,7 +1000,7 @@ export class EmailSyncService {
         data: {
           userId,
           amount: finalAmount,
-          type: 'EXPENSE',
+          type: txType,
           description,
           date: safeDate,
           category_id: categoryId
@@ -998,7 +1011,34 @@ export class EmailSyncService {
       // Servicio unificado: mismo camino que el formulario y que Zenio. Antes
       // este archivo tenía su PROPIA copia del recálculo, con su propia lógica
       // de umbrales — dos implementaciones que ya habían divergido.
-      await recalculateBudgets(userId, categoryId, transaction.date, { notify: notificar });
+      // Los presupuestos son de gasto: un ingreso no mueve ninguno.
+      if (txType === 'EXPENSE') {
+        await recalculateBudgets(userId, categoryId, transaction.date, { notify: notificar });
+      }
+
+      // Depósito sin depositante (sucursal, cajero, subagente): el correo no dice
+      // quién depositó, así que puede ser un cliente o el propio usuario llevando
+      // su efectivo. Se registra como ingreso y se le avisa para que lo borre si
+      // era suyo. En la primera lectura (90 días de historial) no se avisa, para
+      // no mandar una ráfaga de pushes al conectar el correo.
+      if (
+        notificar &&
+        txType === 'INCOME' &&
+        !parsed.payerName &&
+        parsed.incomeChannel &&
+        DEPOSIT_CHANNELS.includes(parsed.incomeChannel)
+      ) {
+        try {
+          const monto = finalAmount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+          await NotificationService.sendToUser(userId, NotificationType.EMAIL_SYNC_COMPLETE, {
+            title: 'Registramos un depósito',
+            body: `Registramos un depósito de RD$${monto} como ingreso. Si era tu propio efectivo, puedes eliminarlo.`,
+            data: { screen: 'Transactions', transactionId: transaction.id }
+          });
+        } catch (notifyError) {
+          logger.error('[EmailSync] No se pudo avisar del depósito (no bloquea):', notifyError);
+        }
+      }
 
       // ========== GAMIFICACIÓN: Puntos por transacción importada ==========
       try {

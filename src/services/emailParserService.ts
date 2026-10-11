@@ -22,6 +22,24 @@ export interface ParsedTransaction {
   description?: string;
   confidence: number;
   categorySource?: 'mapping_user' | 'mapping_global' | 'ai';  // Origen de la categorización
+  // Solo con ingresos activados (config/emailIncome). Sin `type` = gasto, como siempre.
+  type?: 'EXPENSE' | 'INCOME';
+  payerName?: string;       // Ordenante de la transferencia, si el correo lo trae
+  incomeChannel?: IncomeChannel;
+}
+
+// Por dónde entró el ingreso. Los depósitos (sucursal, cajero, subagente) no
+// dicen quién depositó: puede ser un cliente o el propio usuario llevando su
+// efectivo, así que se registran y se le avisa para que lo confirme.
+export type IncomeChannel = 'TRANSFERENCIA' | 'SUCURSAL' | 'CAJERO' | 'SUBAGENTE' | 'NOMINA' | 'OTRO';
+export const DEPOSIT_CHANNELS: IncomeChannel[] = ['SUCURSAL', 'CAJERO', 'SUBAGENTE'];
+
+export interface ParseOptions {
+  // Con true se clasifica GASTO / INGRESO / IGNORAR; con false solo gastos (comportamiento original)
+  incluirIngresos?: boolean;
+  // Para detectar transferencias entre cuentas del propio usuario
+  userName?: string | null;
+  userLastName?: string | null;
 }
 
 export interface ParserResult {
@@ -59,8 +77,6 @@ const PAYMENT_KEYWORDS = [
   'abono aplicado',
   'abono a tu tarjeta',
   'abono exitoso',
-  'credito a tu cuenta',
-  'crédito a tu cuenta',
   // Pagos de tarjeta
   'pago de tarjeta',
   'pago a tarjeta',
@@ -81,22 +97,36 @@ const PAYMENT_KEYWORDS = [
   'confirmación de pago',
   'confirmamos tu pago',
   'recibimos tu pago',
-  // Transferencias entrantes (no son gastos)
-  'transferencia recibida',
-  'deposito recibido',
-  'depósito recibido',
   // Bancos dominicanos específicos
   'aplicacion de pago',
   'aplicación de pago',
   'pago tdc',
-  'acreditado a su cuenta',
-  'acreditamos a tu',
   // English
   'payment received',
   'payment applied',
   'payment processed',
   'thank you for your payment'
 ];
+
+// Dinero que ENTRA a la cuenta (transferencias recibidas, depósitos). Antes
+// vivían en PAYMENT_KEYWORDS y se descartaban siempre. Ahora:
+//   - ingresos apagados (config/emailIncome) → se siguen descartando igual;
+//   - ingresos encendidos → pasan a la IA, que decide si es ingreso, y luego se
+//     filtran las transferencias entre cuentas propias.
+// Los "abonos" se quedan en PAYMENT_KEYWORDS: en RD casi siempre son el pago de
+// la tarjeta, y registrar un pago de tarjeta como ingreso inflaría los ingresos.
+const INCOME_KEYWORDS = [
+  'transferencia recibida',
+  'deposito recibido',
+  'depósito recibido',
+  'credito a tu cuenta',
+  'crédito a tu cuenta',
+  'acreditado a su cuenta',
+  'acreditamos a tu',
+];
+
+// Tratamientos que los bancos anteponen al nombre del ordenante ("SRA ROSANNA…")
+const HONORIFICOS = new Set(['SR', 'SRA', 'SRTA', 'SRES', 'DON', 'DONA', 'DR', 'DRA', 'LIC', 'LICDA', 'ING']);
 
 // Transacciones que NO se completaron. Reportado 2026-08-04: la sincronización
 // registraba las notificaciones de compras DECLINADAS como gastos reales, porque
@@ -226,10 +256,60 @@ export class EmailParserService {
    * Verifica si el email es un pago de tarjeta (no un consumo)
    * Estos deben ser ignorados para evitar contar doble
    */
-  static isPaymentEmail(subject: string, emailContent: string): boolean {
+  static isPaymentEmail(subject: string, emailContent: string, incluirIngresos = false): boolean {
     const textToCheck = `${subject} ${emailContent}`.toLowerCase();
 
-    return PAYMENT_KEYWORDS.some(keyword => textToCheck.includes(keyword.toLowerCase()));
+    if (PAYMENT_KEYWORDS.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
+      return true;
+    }
+
+    // Con ingresos apagados, el dinero que entra se sigue descartando como antes
+    return !incluirIngresos && INCOME_KEYWORDS.some(keyword => textToCheck.includes(keyword));
+  }
+
+  /**
+   * ¿El ordenante es el mismo usuario? Una transferencia entre sus propias
+   * cuentas (Popular → BHD) no es dinero nuevo: registrarla como ingreso le
+   * infla los ingresos, y si la salida del otro banco entra como gasto, doble.
+   *
+   * Los bancos abrevian y cortan los nombres ("SRA ROSANNA M ELOY NUNEZ",
+   * "ROSANNA MERCEDES ELOY NUNE"), así que se compara por palabras: hace falta
+   * que coincida al menos un NOMBRE y al menos un APELLIDO del usuario. Un
+   * familiar con el mismo apellido pero otro nombre sí cuenta como ingreso.
+   */
+  static isSelfTransfer(payerName?: string | null, userName?: string | null, userLastName?: string | null): boolean {
+    const palabras = (s?: string | null): string[] =>
+      (s || '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toUpperCase()
+        .replace(/[^A-Z\s]/g, ' ')
+        .split(/\s+/)
+        .filter(p => p && !HONORIFICOS.has(p));
+
+    const ordenante = palabras(payerName);
+    const nombres = palabras(userName);
+    const apellidos = palabras(userLastName);
+    if (ordenante.length === 0 || nombres.length === 0 || apellidos.length === 0) return false;
+
+    // Igual, o cortada POR EL BANCO: la palabra del ordenante es el inicio de la
+    // del usuario ("NUNE" → "NUNEZ", mínimo 4 letras). Nunca al revés: si no,
+    // "JOSEFINA" o "MARIANA" (familiares) pasarían por "JOSE" o "MARIA".
+    // Las iniciales ("M") no cuentan como coincidencia.
+    const coincide = (delOrdenante: string, delUsuario: string): boolean =>
+      delOrdenante === delUsuario ||
+      (delOrdenante.length >= 4 && delUsuario.startsWith(delOrdenante));
+
+    const completas = ordenante.filter(p => p.length > 1);
+    const delUsuario = [...nombres, ...apellidos];
+    const coincideNombre = completas.some(p => nombres.some(n => coincide(p, n)));
+    const coincideApellido = completas.some(p => apellidos.some(a => coincide(p, a)));
+    // Además, TODAS las palabras completas del ordenante tienen que ser del
+    // usuario: "JOSE PEREZ ALONSO" no es "Jose Alonso Ochoa" aunque compartan
+    // nombre y un apellido (con nombres tan comunes, sería perder un ingreso real).
+    const todasSuyas = completas.every(p => delUsuario.some(u => coincide(p, u)));
+
+    return coincideNombre && coincideApellido && todasSuyas;
   }
 
   /**
@@ -256,6 +336,10 @@ export class EmailParserService {
       return true;
     }
 
+    // Un "Depósito en cajero automático" menciona el cajero pero es dinero que
+    // ENTRA: no es un retiro, que lo clasifique la IA.
+    if (/dep[oó]sito/.test(subjectLower)) return false;
+
     // Genéricos: solo en el asunto, para no matchear pies de página publicitarios
     return CASH_WITHDRAWAL_SUBJECT_PATTERNS.some(pattern => pattern.test(subjectLower));
   }
@@ -273,11 +357,13 @@ export class EmailParserService {
     subject: string,
     bankName?: string,
     userCountry?: string,
-    userId?: string
+    userId?: string,
+    opciones: ParseOptions = {}
   ): Promise<ParserResult> {
+    const incluirIngresos = opciones.incluirIngresos === true;
     try {
       // Verificar si es un pago de tarjeta (no un consumo)
-      if (this.isPaymentEmail(subject, emailContent)) {
+      if (this.isPaymentEmail(subject, emailContent, incluirIngresos)) {
         return {
           success: false,
           error: 'PAYMENT_EMAIL_SKIPPED: Este email es un pago de tarjeta, no un consumo'
@@ -318,7 +404,22 @@ export class EmailParserService {
 
       logger.log(`[EmailParser] Using ${categoryNames.length} categories from DB: ${categoryList}`);
 
-      const prompt = this.buildParserPrompt(emailContent, subject, bankName, categoryList);
+      // Categorías de INGRESO (solo con ingresos activados), mismo criterio de activas
+      const incomeCategoryNames = incluirIngresos
+        ? (await prisma.category.findMany({
+            where: { type: 'INCOME', isDefault: true },
+            select: { name: true }
+          })).map(c => c.name)
+        : [];
+      const incomeCategoryList = incomeCategoryNames.join(', ');
+      const incomeFallbackCategory = incomeCategoryNames.find(c =>
+        c.toLowerCase().includes('otro')
+      ) || incomeCategoryNames[0];
+
+      const prompt = this.buildParserPrompt(
+        emailContent, subject, bankName, categoryList,
+        incluirIngresos ? incomeCategoryList : undefined
+      );
 
       // Detectar categoría de fallback (Otros, Otros Gastos, etc.)
       const fallbackCategory = categoryNames.find(c =>
@@ -330,7 +431,12 @@ export class EmailParserService {
         messages: [
           {
             role: 'system',
-            content: `Eres un experto en extraer datos de notificaciones bancarias de CONSUMOS y COMPRAS.
+            // Con ingresos activados cambia SOLO el encabezado (qué se extrae y
+            // qué se ignora); las reglas de fecha y categorización de gastos son
+            // las mismas. Apagado, el prompt es idéntico al de siempre.
+            content: (incluirIngresos
+              ? this.buildIncomeAwareHeader(incomeCategoryList, incomeFallbackCategory)
+              : `Eres un experto en extraer datos de notificaciones bancarias de CONSUMOS y COMPRAS.
 
 IMPORTANTE - DEBES IGNORAR estos tipos de emails (responde con is_payment_email: true):
 - Pagos de tarjeta de credito (cuando el usuario PAGA su tarjeta)
@@ -359,7 +465,7 @@ Si el email es un pago/abono/deposito, responde: {"is_payment_email": true}
 Si no puedes extraer algun dato, usa null.
 El monto siempre debe ser un numero positivo.
 La fecha debe estar en formato ISO 8601.
-La moneda debe ser el codigo (RD$, USD, EUR, DOP).
+La moneda debe ser el codigo (RD$, USD, EUR, DOP).`) + `
 
 IMPORTANTE - FORMATO DE FECHAS EN BANCOS DOMINICANOS:
 Los bancos de República Dominicana usan formato DD/MM/YY (día/mes/año), NO MM/DD/YY.
@@ -421,12 +527,16 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
       const parsed = JSON.parse(content);
 
       // Si la AI detectó que es un pago de tarjeta, ignorar
-      if (parsed.is_payment_email === true) {
+      if (parsed.is_payment_email === true || (incluirIngresos && parsed.kind === 'IGNORE')) {
         logger.log(`[EmailParser] AI detected payment email, skipping: ${subject}`);
         return {
           success: false,
           error: 'PAYMENT_EMAIL_SKIPPED: AI detectó que es un pago de tarjeta, no un consumo'
         };
+      }
+
+      if (incluirIngresos && parsed.kind === 'INCOME') {
+        return this.buildIncomeResult(parsed, content, opciones, incomeFallbackCategory);
       }
 
       // Validar datos minimos requeridos
@@ -526,13 +636,127 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
   }
 
   /**
+   * Encabezado del system prompt con ingresos activados: clasifica en
+   * EXPENSE / INCOME / IGNORE en vez de "consumo o nada". Las reglas de fecha y
+   * de categorización de gastos se le concatenan después, iguales que siempre.
+   */
+  private static buildIncomeAwareHeader(incomeCategoryList: string, incomeFallbackCategory?: string): string {
+    return `Eres un experto en extraer datos de notificaciones bancarias. Clasificas cada correo en uno de tres tipos ("kind"):
+
+- "EXPENSE": CONSUMOS/COMPRAS/CARGOS (cuando el usuario GASTA dinero en un comercio).
+- "INCOME": dinero que ENTRA a una cuenta del usuario: transferencia recibida de otra persona o empresa, deposito (en sucursal, cajero o subagente), pago de nomina/salario, credito a la cuenta.
+- "IGNORE": todo lo demas, en particular:
+  - Pagos de tarjeta de credito (cuando el usuario PAGA su tarjeta) y abonos a la tarjeta. NO son ingresos: el dinero solo pasa de la cuenta a la tarjeta.
+  - Confirmaciones de pago.
+  - TRANSACCIONES QUE NO SE COMPLETARON: declinadas, rechazadas, no autorizadas,
+    fallidas, por fondos o limite insuficiente, reversadas o anuladas. El dinero
+    NUNCA se movio. Ante la duda de si una transaccion se completo o no, IGNORALA.
+  - RETIROS DE EFECTIVO (codigo cash, cajero, avance de efectivo): el dinero solo
+    cambia de forma. Si el correo describe un retiro, IGNORALO SIEMPRE.
+  - Transferencias que el correo describe como ENTRE CUENTAS PROPIAS del usuario
+    ("entre tus cuentas", "a cuenta propia"). No son dinero nuevo.
+  - Transferencias ENVIADAS por el usuario a otra persona.
+  - Avisos, promociones, estados de cuenta, cambios de clave.
+Ante la duda entre INCOME e IGNORE, usa IGNORE.
+
+Para INCOME:
+- "payer_name": nombre de quien envia el dinero (el ordenante), tal como aparece. null si el correo no lo dice (los depositos en sucursal normalmente no lo dicen). NUNCA pongas el nombre del destinatario (a quien saluda el correo).
+- "channel": TRANSFERENCIA | SUCURSAL | CAJERO | SUBAGENTE | NOMINA | OTRO
+- "location": oficina, sucursal o cajero donde se hizo el deposito, o null.
+- "origin_bank": banco de origen de la transferencia, o null.
+- "merchant": null
+- "cardLast4": null (el numero de la CUENTA no es una tarjeta).
+- "category": DEBE ser exactamente una de estas categorias de ingreso: ${incomeCategoryList}. Si es nomina, salario o sueldo, usa la que corresponda a salario.${incomeFallbackCategory ? ` Si no estas seguro, usa "${incomeFallbackCategory}".` : ''}
+
+Siempre responde UNICAMENTE con JSON valido, sin texto adicional.
+Si el email es IGNORE, responde: {"kind": "IGNORE"}
+Si no puedes extraer algun dato, usa null.
+El monto siempre debe ser un numero positivo.
+La fecha debe estar en formato ISO 8601.
+La moneda debe ser el codigo (RD$, USD, EUR, DOP).
+
+Las reglas de CATEGORIZACION de mas abajo aplican SOLO a EXPENSE.`;
+  }
+
+  /**
+   * Arma el resultado de un INGRESO. No pasa por los mapeos ni las reglas de
+   * comercio: esas son para gastos. La "descripción" (que se guarda en
+   * `merchant`, igual que el comercio en un gasto) dice de dónde vino el dinero.
+   */
+  private static buildIncomeResult(
+    parsed: any,
+    rawContent: string,
+    opciones: ParseOptions,
+    incomeFallbackCategory?: string
+  ): ParserResult {
+    if (!parsed.amount || Number(parsed.amount) <= 0) {
+      return { success: false, error: 'Could not extract valid amount', rawResponse: rawContent };
+    }
+
+    const payerName: string | undefined = typeof parsed.payer_name === 'string' && parsed.payer_name.trim()
+      ? parsed.payer_name.trim()
+      : undefined;
+
+    if (this.isSelfTransfer(payerName, opciones.userName, opciones.userLastName)) {
+      logger.log('[EmailParser] Transferencia entre cuentas propias, se omite');
+      return {
+        success: false,
+        error: 'SELF_TRANSFER_SKIPPED: El ordenante es el mismo usuario (transferencia entre sus cuentas)'
+      };
+    }
+
+    const canales: IncomeChannel[] = ['TRANSFERENCIA', 'SUCURSAL', 'CAJERO', 'SUBAGENTE', 'NOMINA', 'OTRO'];
+    const canalIA = String(parsed.channel || '').toUpperCase() as IncomeChannel;
+    const channel: IncomeChannel = canales.includes(canalIA) ? canalIA : 'OTRO';
+
+    const location = typeof parsed.location === 'string' && parsed.location.trim()
+      ? ` — ${this.toTitleCase(parsed.location.trim())}`
+      : '';
+    // Sin el tratamiento del banco: "Transferencia de Rosanna…", no "de Sra Rosanna…"
+    const de = payerName
+      ? this.toTitleCase(payerName.split(/\s+/).filter(p => !HONORIFICOS.has(p.replace(/\./g, '').toUpperCase())).join(' '))
+      : '';
+
+    const descripcionPorCanal: Record<IncomeChannel, string> = {
+      TRANSFERENCIA: de ? `Transferencia de ${de}` : 'Transferencia recibida',
+      NOMINA: de ? `Nómina ${de}` : 'Nómina',
+      SUCURSAL: `Depósito en sucursal${location}`,
+      CAJERO: `Depósito en cajero${location}`,
+      SUBAGENTE: `Depósito en subagente${location}`,
+      OTRO: de ? `Ingreso de ${de}` : 'Ingreso recibido',
+    };
+
+    const transaction: ParsedTransaction = {
+      type: 'INCOME',
+      amount: Math.abs(Number(parsed.amount)),
+      currency: this.normalizeCurrency(parsed.currency),
+      merchant: descripcionPorCanal[channel],
+      category: parsed.category || incomeFallbackCategory || '',
+      date: parsed.date || new Date().toISOString(),
+      description: parsed.description || undefined,
+      confidence: this.calculateConfidence({ ...parsed, merchant: descripcionPorCanal[channel] }),
+      categorySource: 'ai',
+      payerName,
+      incomeChannel: channel,
+    };
+
+    return { success: true, transaction };
+  }
+
+  /** "OFICINA AV JUAN PABLO DUARTE" → "Oficina Av Juan Pablo Duarte" */
+  private static toTitleCase(s: string): string {
+    return s.toLowerCase().replace(/(^|\s)(\p{L})/gu, (_m, sp, letra) => sp + letra.toUpperCase());
+  }
+
+  /**
    * Construye el prompt para el parser
    */
   private static buildParserPrompt(
     emailContent: string,
     subject: string,
     bankName?: string,
-    categoryList?: string
+    categoryList?: string,
+    incomeCategoryList?: string  // solo con ingresos activados
   ): string {
     // categoryList siempre viene de la DB, no debería ser undefined
     if (!categoryList) {
@@ -547,6 +771,32 @@ NUNCA uses "Prestamos y Deudas" para consumos - esa categoria es solo para prest
 
 ATENCION: ${bankName} escribe las fechas en formato MM-DD-YYYY (mes-dia-año), al reves que los demas bancos dominicanos. Ejemplo: "09-07-2026 09:14 PM" es el 7 de septiembre de 2026, NO el 9 de julio.`
       : '';
+
+    if (incomeCategoryList !== undefined) {
+      return `Clasifica y extrae la informacion de esta notificacion bancaria${bankName ? ` de ${bankName}` : ''}:${formatoFecha}
+
+ASUNTO: ${subject}
+
+CONTENIDO:
+${emailContent.substring(0, 3000)}
+
+Responde SOLO con este JSON:
+{
+  "kind": "<EXPENSE|INCOME|IGNORE>",
+  "amount": <numero positivo>,
+  "currency": "<RD$|USD|EUR|DOP>",
+  "merchant": "<si EXPENSE: nombre del comercio/establecimiento; si INCOME: null>",
+  "category": "<si EXPENSE: exactamente una de: ${categoryList}. Si INCOME: exactamente una de: ${incomeCategoryList}>",
+  "date": "<fecha ISO 8601>",
+  "cardLast4": "<si EXPENSE: ultimos 4 digitos de tarjeta o null; si INCOME: null>",
+  "authorizationCode": "<codigo de autorizacion o null>",
+  "description": "<descripcion adicional o null>",
+  "payer_name": "<si INCOME: nombre del ordenante o null>",
+  "channel": "<si INCOME: TRANSFERENCIA|SUCURSAL|CAJERO|SUBAGENTE|NOMINA|OTRO>",
+  "location": "<si INCOME: oficina/sucursal/cajero del deposito o null>",
+  "origin_bank": "<si INCOME: banco de origen o null>"
+}`;
+    }
 
     return `Extrae la informacion de esta notificacion bancaria${bankName ? ` de ${bankName}` : ''}:${formatoFecha}
 
@@ -631,14 +881,14 @@ Responde SOLO con este JSON:
   /**
    * Busca la categoria en la base de datos por nombre
    */
-  static async findCategoryByName(categoryName: string): Promise<string | null> {
+  static async findCategoryByName(categoryName: string, type: 'EXPENSE' | 'INCOME' = 'EXPENSE'): Promise<string | null> {
     const category = await prisma.category.findFirst({
       where: {
         name: {
           contains: categoryName,
           mode: 'insensitive'
         },
-        type: 'EXPENSE',
+        type,
         isDefault: true // no resolver a categorías canceladas
       }
     });
@@ -674,13 +924,36 @@ Responde SOLO con este JSON:
   }
 
   /**
+   * Categoría por defecto para ingresos: la de "Otros ingresos" o, si no
+   * existe, cualquier categoría de ingreso activa.
+   */
+  static async getDefaultIncomeCategory(): Promise<string> {
+    const otrosCategory = await prisma.category.findFirst({
+      where: {
+        name: { contains: 'otro', mode: 'insensitive' },
+        type: 'INCOME',
+        isDefault: true
+      }
+    });
+
+    if (otrosCategory) return otrosCategory.id;
+
+    const anyCategory = await prisma.category.findFirst({
+      where: { type: 'INCOME', isDefault: true }
+    });
+
+    return anyCategory?.id || '';
+  }
+
+  /**
    * Detecta duplicados potenciales
    */
   static async checkForDuplicate(
     userId: string,
     amount: number,
     date: string,
-    merchant?: string
+    merchant?: string,
+    type: 'EXPENSE' | 'INCOME' = 'EXPENSE'
   ): Promise<boolean> {
     const transactionDate = new Date(date);
     const startDate = new Date(transactionDate);
@@ -696,7 +969,7 @@ Responde SOLO con este JSON:
           gte: startDate,
           lte: endDate
         },
-        type: 'EXPENSE',
+        type,
         ...(merchant && {
           description: {
             contains: merchant,
