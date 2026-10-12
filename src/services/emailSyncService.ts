@@ -1056,7 +1056,7 @@ export class EmailSyncService {
           const canal = parsed.incomeChannel;
 
           let title = 'Registramos un ingreso';
-          let body = `Registramos ${parsed.merchant} por ${monto} como ingreso. Si no es correcto, puedes eliminarlo.`;
+          let body = `Registramos un ingreso de ${monto}: ${parsed.merchant}. Si no es correcto, puedes eliminarlo.`;
           if (sinOrdenante && canal && DEPOSIT_CHANNELS.includes(canal)) {
             title = 'Registramos un depósito';
             body = `Registramos un depósito de ${monto} como ingreso. Si era tu propio efectivo, puedes eliminarlo.`;

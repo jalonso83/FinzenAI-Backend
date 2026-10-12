@@ -1926,7 +1926,8 @@ export class AdminService {
           _count: {
             select: {
               transactions: true,
-              goals: true,
+              budgets: { where: { is_active: true } },
+              emailConnections: { where: { isActive: true } },
             },
           },
         },
@@ -1941,12 +1942,18 @@ export class AdminService {
     const userIds = users.map(u => u.id);
     let lastActivityMap: Record<string, Date> = {};
     let platformMap: Record<string, 'Android' | 'iOS' | 'Desconocido'> = {};
-    let goalContributionsMap: Record<string, number> = {};
+    let activeDaysMap: Record<string, number> = {};
+    let importedTxMap: Record<string, number> = {};
 
     if (userIds.length > 0) {
-      const [lastActivities, registrationUAs, goalContributions] = await Promise.all([
-        prisma.$queryRawUnsafe<{ userId: string; lastActivity: Date }[]>(
-          `SELECT "userId", MAX("createdAt") as "lastActivity"
+      const [lastActivities, registrationUAs, importedTx] = await Promise.all([
+        // Última actividad y días activos salen de la misma tabla: la app
+        // dispara `daily_open` al abrirse cada día, así que los días distintos
+        // con algún evento dicen si el usuario VOLVIÓ, no solo cuándo fue la
+        // última vez. Día calculado en hora de RD (UTC-4).
+        prisma.$queryRawUnsafe<{ userId: string; lastActivity: Date; activeDays: number }[]>(
+          `SELECT "userId", MAX("createdAt") as "lastActivity",
+                  COUNT(DISTINCT ("createdAt" - interval '4 hours')::date)::int as "activeDays"
            FROM gamification_events
            WHERE "userId" = ANY($1::text[])
            GROUP BY "userId"`,
@@ -1961,20 +1968,25 @@ export class AdminService {
            ORDER BY "userId", "eventTime" DESC`,
           userIds
         ),
-        // Total de contribuciones a metas por usuario (suma del contador por meta).
-        prisma.goal.groupBy({
-          by: ['userId'],
-          where: { userId: { in: userIds } },
-          _sum: { contributionsCount: true },
-        }),
+        // Transacciones que entraron por el correo (y siguen existiendo), para
+        // distinguir 50 TX importadas de 50 escritas a mano.
+        prisma.$queryRawUnsafe<{ userId: string; imported: number }[]>(
+          `SELECT t."userId", COUNT(DISTINCT t.id)::int as imported
+           FROM imported_bank_emails ibe
+           JOIN transactions t ON t.id = ibe."transactionId"
+           WHERE t."userId" = ANY($1::text[])
+           GROUP BY t."userId"`,
+          userIds
+        ),
       ]);
 
       lastActivities.forEach(a => {
         lastActivityMap[a.userId] = a.lastActivity;
+        activeDaysMap[a.userId] = a.activeDays;
       });
 
-      goalContributions.forEach(g => {
-        goalContributionsMap[g.userId] = g._sum.contributionsCount || 0;
+      importedTx.forEach(i => {
+        importedTxMap[i.userId] = i.imported;
       });
 
       registrationUAs.forEach(r => {
@@ -2008,8 +2020,10 @@ export class AdminService {
         currentPeriodEnd: u.subscription?.currentPeriodEnd || null,
         transactionCount: u._count.transactions,
         zenioQueries: u.subscription?.zenioMessagesTotal || 0,
-        goalCount: u._count.goals,
-        goalContributions: goalContributionsMap[u.id] || 0,
+        importedTxCount: importedTxMap[u.id] || 0,
+        budgetCount: u._count.budgets,
+        emailConnected: u._count.emailConnections > 0,
+        activeDays: activeDaysMap[u.id] || 0,
         lastActivity: lastActivityMap[u.id] || null,
         cohort,
       };
@@ -2690,7 +2704,12 @@ export class AdminService {
     }
 
     const allRows = Array.from(map.values()).sort((a, b) => {
-      // Primero las que tienen inversión, después por visitors desc.
+      // Por fecha de campaña, de la más reciente a la más antigua. Las que no
+      // tienen fecha van al final: primero las que tienen inversión, después
+      // por visitors desc.
+      if (a.campaignDate && b.campaignDate) return b.campaignDate.localeCompare(a.campaignDate);
+      if (a.campaignDate) return -1;
+      if (b.campaignDate) return 1;
       if (a.costUSD > 0 && b.costUSD === 0) return -1;
       if (a.costUSD === 0 && b.costUSD > 0) return 1;
       return b.visitors - a.visitors;
