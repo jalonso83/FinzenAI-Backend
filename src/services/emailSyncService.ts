@@ -725,7 +725,8 @@ export class EmailSyncService {
             parseResult.transaction.amount,
             parseResult.transaction.date,
             parseResult.transaction.merchant,
-            parseResult.transaction.type || 'EXPENSE'
+            parseResult.transaction.type || 'EXPENSE',
+            parseResult.transaction.currency
           );
 
           if (isDuplicate) {
@@ -985,7 +986,7 @@ export class EmailSyncService {
       if (txCurrency && txCurrency !== userCurrency) {
         const conversion = await ExchangeRateService.convert(parsed.amount, txCurrency, userCurrency);
         finalAmount = conversion.amount;
-        conversionInfo = ` [${txCurrency} ${parsed.amount} → ${userCurrency} ${finalAmount} @${conversion.rate}]`;
+        conversionInfo = `[${txCurrency} ${parsed.amount} → ${userCurrency} ${finalAmount} @${conversion.rate}]`;
       }
 
       // La descripción es SOLO el comercio. Antes se le pegaba la tarjeta, el
@@ -1035,27 +1036,45 @@ export class EmailSyncService {
         await recalculateBudgets(userId, categoryId, transaction.date, { notify: notificar });
       }
 
-      // Depósito sin depositante (sucursal, cajero, subagente): el correo no dice
-      // quién depositó, así que puede ser un cliente o el propio usuario llevando
-      // su efectivo. Se registra como ingreso y se le avisa para que lo borre si
-      // era suyo. En la primera lectura (90 días de historial) no se avisa, para
-      // no mandar una ráfaga de pushes al conectar el correo.
-      if (
-        notificar &&
-        txType === 'INCOME' &&
-        !parsed.payerName &&
-        parsed.incomeChannel &&
-        DEPOSIT_CHANNELS.includes(parsed.incomeChannel)
-      ) {
+      // Todo ingreso registrado desde el correo se avisa, para que el usuario
+      // sepa que entró y decida si es correcto. Es lo que más se puede colar:
+      // muchos correos no dicen quién envió el dinero (Popular, en las
+      // transferencias por IBANKING, solo trae el nombre del destinatario), así
+      // que una transferencia entre cuentas propias o el efectivo propio
+      // depositado en sucursal entran como ingreso sin que podamos saberlo.
+      // En la primera lectura (90 días de historial) no se avisa, para no
+      // mandar una ráfaga de pushes al conectar el correo.
+      if (notificar && txType === 'INCOME') {
         try {
-          const monto = finalAmount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+          const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+          // Si vino en otra moneda se muestra también el original: el usuario
+          // recuerda "me depositaron US$120", no "RD$7,262.78".
+          const monto = conversionInfo
+            ? `${txCurrency === 'USD' ? 'US$' : `${txCurrency} `}${fmt(parsed.amount)} (RD$${fmt(finalAmount)})`
+            : `RD$${fmt(finalAmount)}`;
+          const sinOrdenante = !parsed.payerName;
+          const canal = parsed.incomeChannel;
+
+          let title = 'Registramos un ingreso';
+          let body = `Registramos ${parsed.merchant} por ${monto} como ingreso. Si no es correcto, puedes eliminarlo.`;
+          if (sinOrdenante && canal && DEPOSIT_CHANNELS.includes(canal)) {
+            title = 'Registramos un depósito';
+            body = `Registramos un depósito de ${monto} como ingreso. Si era tu propio efectivo, puedes eliminarlo.`;
+          } else if (sinOrdenante && canal === 'TRANSFERENCIA') {
+            title = 'Registramos una transferencia';
+            body = `Registramos una transferencia de ${monto} como ingreso. Si fue entre tus cuentas, puedes eliminarla.`;
+          } else if (canal === 'NOMINA') {
+            title = 'Registramos tu nómina';
+            body = `Registramos tu nómina de ${monto} como ingreso. Si no es correcto, puedes eliminarla.`;
+          }
+
           await NotificationService.sendToUser(userId, NotificationType.EMAIL_SYNC_COMPLETE, {
-            title: 'Registramos un depósito',
-            body: `Registramos un depósito de RD$${monto} como ingreso. Si era tu propio efectivo, puedes eliminarlo.`,
+            title,
+            body,
             data: { screen: 'Transactions', transactionId: transaction.id }
           });
         } catch (notifyError) {
-          logger.error('[EmailSync] No se pudo avisar del depósito (no bloquea):', notifyError);
+          logger.error('[EmailSync] No se pudo avisar del ingreso (no bloquea):', notifyError);
         }
       }
 

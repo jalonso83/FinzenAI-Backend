@@ -5,6 +5,7 @@ import { merchantMappingService } from './merchantMappingService';
 import { logger } from '../utils/logger';
 import { OpenAiUsageService } from './openAiUsageService';
 import { calculateOpenAICost } from '../config/openaiPricing';
+import { ExchangeRateService } from './exchangeRateService';
 
 const openai = new OpenAI({
   apiKey: ENV.OPENAI_API_KEY
@@ -965,7 +966,8 @@ Responde SOLO con este JSON:
     amount: number,
     date: string,
     merchant?: string,
-    type: 'EXPENSE' | 'INCOME' = 'EXPENSE'
+    type: 'EXPENSE' | 'INCOME' = 'EXPENSE',
+    currency?: string
   ): Promise<boolean> {
     const transactionDate = new Date(date);
     const startDate = new Date(transactionDate);
@@ -973,21 +975,27 @@ Responde SOLO con este JSON:
     const endDate = new Date(transactionDate);
     endDate.setHours(23, 59, 59, 999);
 
+    // En moneda extranjera la transacción se guarda convertida a RD$, así que
+    // comparar `amount` contra el monto del correo (US$250 vs RD$15,130.80)
+    // nunca coincidía y el segundo aviso del banco entraba duplicado. En ese
+    // caso se busca el monto original en la etiqueta de conversión que
+    // createTransactionFromParsed pone en la descripción ("[USD 250 → ...").
+    const moneda = ExchangeRateService.normalizeCurrency(currency || '');
+    const extranjera = moneda !== 'DOP';
+
     const existing = await prisma.transaction.findFirst({
       where: {
         userId,
-        amount,
+        ...(!extranjera && { amount }),
         date: {
           gte: startDate,
           lte: endDate
         },
         type,
-        ...(merchant && {
-          description: {
-            contains: merchant,
-            mode: 'insensitive'
-          }
-        })
+        AND: [
+          ...(merchant ? [{ description: { contains: merchant, mode: 'insensitive' as const } }] : []),
+          ...(extranjera ? [{ description: { contains: `[${moneda} ${amount} →` } }] : [])
+        ]
       }
     });
 
