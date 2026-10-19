@@ -272,7 +272,7 @@ export async function verInvitacion(codigo: string, viewerId?: string) {
   const inv = await prisma.sharedInvitation.findUnique({
     where: { code },
     include: {
-      inviter: { select: { name: true } },
+      inviter: { select: { name: true, currency: true } },
       group: { select: { id: true, kind: true, ownerId: true, categoryId: true, goalId: true, pausedAt: true, endedAt: true } },
     },
   });
@@ -323,6 +323,8 @@ export async function verInvitacion(codigo: string, viewerId?: string) {
     esDueno: viewerId === inv.group.ownerId,
     yaEsMiembro,
     dueno: nombreDueno,
+    // Montos en la moneda de quien invita (el dueño).
+    moneda: inv.inviter?.currency || '',
     miembros: activos,
     maxMiembros: SHARED_MAX_MEMBERS,
     expiresAt: inv.expiresAt,
@@ -774,13 +776,15 @@ export async function compartidosConmigo(userId: string) {
     select: {
       groupId: true,
       joinedAt: true,
-      group: { select: { pausedAt: true, owner: { select: { name: true } }, _count: { select: { members: { where: { status: 'ACTIVE' } } } } } },
+      group: { select: { pausedAt: true, owner: { select: { name: true, currency: true } }, _count: { select: { members: { where: { status: 'ACTIVE' } } } } } },
     },
   });
 
   const resultado = [];
   for (const m of membresias) {
     const dueno = primerNombre(m.group.owner?.name);
+    // Los montos van en la moneda del dueño: la app la necesita para el símbolo.
+    const moneda = m.group.owner?.currency || '';
     if (m.group.pausedAt) {
       // Nadie se encuentra una pantalla vacía: el compartido sigue apareciendo,
       // con el porqué.
@@ -799,6 +803,7 @@ export async function compartidosConmigo(userId: string) {
       pausado: false,
       groupId: m.groupId,
       dueno,
+      moneda,
       miembros: m.group._count.members,
       budget: {
         ...budget,

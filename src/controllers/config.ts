@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { prisma } from '../lib/prisma';
 import { getOrStampExperimentStart } from '../lib/experimentStart';
 import { BroadcastService } from '../services/broadcastService';
+import { isSharedEnabled } from '../config/shared';
 
 /**
  * Hash determinístico de userId → bucket 0-99.
@@ -122,6 +123,9 @@ export const getFeatures = async (req: Request, res: Response) => {
     return res.json({
       onboardingSkipEnabled: isOnboardingSkipEnabled(userId),
       onboardingNonblockingEnabled: isOnboardingNonblockingEnabled(userId),
+      // Solo decide si la app muestra "Compartir". Lo que le compartieron se ve
+      // siempre: aceptar depende del flag de quien invita, no del invitado.
+      sharedEnabled: isSharedEnabled(userId),
     });
   } catch (error) {
     logger.error('[Config] Error getting features:', error);

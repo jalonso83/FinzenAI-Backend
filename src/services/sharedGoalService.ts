@@ -301,7 +301,7 @@ export async function metasCompartidasConmigo(userId: string) {
         select: {
           pausedAt: true,
           goalId: true,
-          owner: { select: { name: true } },
+          owner: { select: { name: true, currency: true } },
           _count: { select: { members: { where: { status: 'ACTIVE' } } } },
         },
       },
@@ -329,6 +329,7 @@ export async function metasCompartidasConmigo(userId: string) {
       pausado: false,
       groupId: m.groupId,
       dueno,
+      moneda: m.group.owner?.currency || '',
       miembros: m.group._count.members,
       miAporte: await aportadoEnMeta(goal.id, userId),
       goal,
