@@ -33,6 +33,16 @@ export const verInvitacion = async (req: Request, res: Response) => {
   }
 };
 
+/** Sin sesión: lo usa la página pública de la invitación. */
+export const vistaPublicaInvitacion = async (req: Request, res: Response) => {
+  try {
+    res.set('Cache-Control', 'public, max-age=60');
+    return res.json(await shared.vistaPublicaInvitacion(req.params.code));
+  } catch (error) {
+    return manejar(res, error, 'vista pública de invitación');
+  }
+};
+
 export const aceptarInvitacion = async (req: Request, res: Response) => {
   try {
     return res.json(await shared.aceptarInvitacion(req.params.code, req.user!.id));

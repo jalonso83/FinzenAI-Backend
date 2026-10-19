@@ -341,7 +341,7 @@ router.get('/join', (req: Request, res: Response) => {
   const refCode = escapeHtml(req.query.ref as string || '');
 
   // URLs de las tiendas (actualizar con los IDs reales)
-  const APP_STORE_URL = 'https://apps.apple.com/app/finzen-ai/id6740000000'; // TODO: Actualizar con ID real
+  const APP_STORE_URL = 'https://apps.apple.com/app/finzen-ai/id6758305719';
   const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.jl.alonso.finzenaimobile';
 
   const html = `

@@ -23,11 +23,16 @@ import {
   convertirAportes,
   aportesConvertibles,
   resumenDeDueno,
+  vistaPublicaInvitacion,
 } from '../controllers/shared';
 
 // Presupuestos y metas compartidos (2026-10). Ver services/sharedService.ts
 // y services/sharedGoalService.ts.
 const router: Router = express.Router();
+
+// Pública (sin sesión): la página /invite/CÓDIGO de la landing. Va antes del
+// authenticateToken; el límite por IP es el general de /api.
+router.get('/public/invitations/:code', vistaPublicaInvitacion);
 
 router.use(authenticateToken);
 

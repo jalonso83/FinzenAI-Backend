@@ -246,6 +246,25 @@ export async function invitarAPresupuesto(ownerId: string, budgetId: string) {
 
 // ─── Ver y aceptar una invitación ─────────────────────────────────────────────
 
+/**
+ * Lo que ve CUALQUIERA que abra el enlace, sin sesión (página /invite/CÓDIGO
+ * de la landing y su vista previa en WhatsApp). Solo quién invita (primer
+ * nombre), qué es y el estado: ni montos, ni miembros, ni nada del grupo.
+ */
+export async function vistaPublicaInvitacion(codigo: string) {
+  const v = await verInvitacion(codigo);
+  const item = v.meta ?? v.presupuesto;
+  return {
+    code: v.code,
+    tipo: v.kind === 'GOAL' ? 'meta' : 'presupuesto',
+    estado: v.estado,
+    dueno: v.dueno,
+    nombre: item?.nombre ?? null,
+    icono: item?.categoria?.icon ?? null,
+    expiresAt: v.expiresAt,
+  };
+}
+
 type EstadoInvitacion = 'valida' | 'vencida' | 'usada' | 'revocada' | 'cerrada' | 'pausada' | 'llena';
 
 export async function verInvitacion(codigo: string, viewerId?: string) {
