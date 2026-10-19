@@ -25,9 +25,9 @@ const categoryConfig: Record<string, PriceCategory> = {
     name: "Vivienda",
     icon: "🏠",
     percentageOptions: [
-      { value: 10, label: "10% (mínimo FHA)", description: "Financiamiento con seguro hipotecario" },
+      { value: 10, label: "10% (mínimo)", description: "Algunos proyectos y bancos lo aceptan; la cuota sale más alta" },
       { value: 15, label: "15% (recomendado)", description: "Balance entre inicial y cuota mensual" },
-      { value: 20, label: "20% (ideal)", description: "Sin seguro hipotecario (PMI)" },
+      { value: 20, label: "20% (ideal)", description: "Lo que suelen pedir los bancos en RD" },
       { value: 30, label: "30% (óptimo)", description: "Mejor tasa de interés" },
       { value: 100, label: "100% (al contado)", description: "Sin financiamiento" }
     ],
@@ -127,13 +127,13 @@ async function fetchPricesWithAI(): Promise<Record<string, { amount: number; des
 
 CATEGORÍAS A BUSCAR:
 
-1. VIVIENDA (precios promedio 2024-2025):
+1. VIVIENDA (precios promedio de ${new Date().getFullYear()}):
    - apartment_economic: Apartamento económico en Santo Domingo Norte o zonas populares
    - apartment_middle: Apartamento clase media en Santo Domingo Este
    - house_santiago: Casa promedio en Santiago de los Caballeros
    - apartment_premium: Apartamento en Distrito Nacional (Piantini, Naco, Evaristo Morales)
 
-2. VEHÍCULOS (precios promedio 2024-2025):
+2. VEHÍCULOS (precios promedio de ${new Date().getFullYear()}):
    - car_used: Carro usado en buen estado (5-8 años, ej: Toyota Corolla, Honda Civic)
    - car_new_economic: Carro nuevo económico (ej: Suzuki Swift, Kia Picanto)
    - suv_new: SUV nuevo (ej: Toyota RAV4, Hyundai Tucson)
@@ -156,7 +156,7 @@ IMPORTANTE:
 - Los montos deben ser en PESOS DOMINICANOS (RD$)
 - Usa precios realistas del mercado actual
 - La descripción debe ser corta (máximo 50 caracteres)
-- La fuente puede ser "Mercado RD 2025" o similar`;
+- En "source" pon "Estimado ${new Date().getFullYear()}"; no inventes nombres de fuentes`;
 
   try {
     const response = await openai.chat.completions.create({

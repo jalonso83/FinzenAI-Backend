@@ -394,7 +394,7 @@ export class ReminderService {
       // Pago vencido
       notificationType = 'PAYMENT_OVERDUE';
       title = `🚨 Pago vencido: ${reminder.name}`;
-      body = `Tu pago de ${typeInfo.label.toLowerCase()} venció hace ${Math.abs(daysUntilDue)} día(s)`;
+      body = `Tu pago de ${typeInfo.label.toLowerCase()} venció hace ${Math.abs(daysUntilDue) === 1 ? '1 día' : `${Math.abs(daysUntilDue)} días`}`;
     } else if (daysUntilDue === 0) {
       // Vence hoy
       notificationType = 'PAYMENT_DUE_TODAY';

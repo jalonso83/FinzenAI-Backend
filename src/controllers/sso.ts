@@ -14,6 +14,7 @@ import { clientIp } from '../lib/clientIp';
 import { ingestAttributionEvent } from '../services/attributionEventService';
 import { ReferralService } from '../services/referralService';
 import { REFERRAL_CONFIG } from '../config/referralConfig';
+import { registrarCodigoDeRegistro } from '../services/sharedService';
 
 // ============================================
 // HELPERS
@@ -248,13 +249,14 @@ interface AppleSignInRequest {
   name?: string;
   lastName?: string;
   referralCode?: string;
+  inviteCode?: string;
   deviceCountry?: string;
   deviceLocale?: string;
 }
 
 export const appleSignIn = async (req: Request, res: Response) => {
   try {
-    const { identityToken, name, lastName, referralCode, deviceCountry, deviceLocale } = (req.body ?? {}) as AppleSignInRequest;
+    const { identityToken, name, lastName, referralCode, inviteCode, deviceCountry, deviceLocale } = (req.body ?? {}) as AppleSignInRequest;
     if (!identityToken || typeof identityToken !== 'string') {
       return res.status(400).json({ error: 'Validation error', message: 'identityToken es requerido' });
     }
@@ -296,6 +298,7 @@ export const appleSignIn = async (req: Request, res: Response) => {
     if (result.isNewUser) {
       fireCompleteRegistration(result.user, req);
       await applyReferralIfPresent(result.user.id, result.user.email, referralCode);
+      if (inviteCode) await registrarCodigoDeRegistro(result.user.id, inviteCode);
     }
 
     return res.json(buildLoginResponse(result.user, result.isNewUser, result.linked));
@@ -308,13 +311,14 @@ export const appleSignIn = async (req: Request, res: Response) => {
 interface GoogleSignInRequest {
   idToken: string;
   referralCode?: string;
+  inviteCode?: string;
   deviceCountry?: string;
   deviceLocale?: string;
 }
 
 export const googleSignIn = async (req: Request, res: Response) => {
   try {
-    const { idToken, referralCode, deviceCountry, deviceLocale } = (req.body ?? {}) as GoogleSignInRequest;
+    const { idToken, referralCode, inviteCode, deviceCountry, deviceLocale } = (req.body ?? {}) as GoogleSignInRequest;
     if (!idToken || typeof idToken !== 'string') {
       return res.status(400).json({ error: 'Validation error', message: 'idToken es requerido' });
     }
@@ -354,6 +358,7 @@ export const googleSignIn = async (req: Request, res: Response) => {
     if (result.isNewUser) {
       fireCompleteRegistration(result.user, req);
       await applyReferralIfPresent(result.user.id, result.user.email, referralCode);
+      if (inviteCode) await registrarCodigoDeRegistro(result.user.id, inviteCode);
     }
 
     return res.json(buildLoginResponse(result.user, result.isNewUser, result.linked));

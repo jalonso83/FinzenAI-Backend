@@ -31,6 +31,9 @@ const JSON_SUELTO = /\{\s*"(operation|goal_data|budget_data|transaction_data|fil
  * devuelve una frase neutral en vez de un mensaje vacío, que en la app se ve
  * como una burbuja en blanco.
  */
+/** Lo que ve el usuario cuando la respuesta era solo código. */
+export const RESPUESTA_ENREDADA = 'Perdona, se me enredó la respuesta. ¿Me lo repites?';
+
 export function limpiarRespuestaZenio(texto: string): string {
   if (!texto) return texto;
 
@@ -43,7 +46,7 @@ export function limpiarRespuestaZenio(texto: string): string {
   limpio = limpio.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 
   if (limpio.length === 0) {
-    return 'Perdona, se me enredó la respuesta. ¿Me lo repites?';
+    return RESPUESTA_ENREDADA;
   }
 
   return limpio;

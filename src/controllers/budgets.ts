@@ -7,6 +7,7 @@ import { sanitizeLimit, sanitizePage, PAGINATION } from '../config/pagination';
 import { logger } from '../utils/logger';
 import { recalculateBudgetSpent } from './transactions';
 import { crearPresupuestoSinSolapar, buscarPresupuestoSolapado, PresupuestoSolapadoError } from '../services/budgetService';
+import { alBorrarPresupuesto, infoCompartidoDePropios } from '../services/sharedService';
 // Etiqueta en español del período, para los mensajes que ve el usuario.
 // Antes se devolvía el valor crudo ('monthly') y la app lo mostraba tal cual.
 const etiquetaPeriodo = (period: string): string => ({
@@ -86,12 +87,21 @@ export const getBudgets = async (req: Request, res: Response) => {
       prisma.budget.count({ where })
     ]);
 
+    // Presupuestos propios que están compartidos: cuántos son y si está en
+    // pausa. Los que OTROS comparten conmigo NO van aquí sino en
+    // GET /api/shared/budgets (las apps viejas cuentan esta lista para el
+    // límite del plan).
+    const compartidos = await infoCompartidoDePropios(
+      budgets.map(b => b.shared_group_id).filter((g): g is string => !!g)
+    );
+
     // Convertir Decimal a number para asegurar serialización correcta
     const serializedBudgets = budgets.map(budget => ({
       ...budget,
       amount: Number(budget.amount),
       spent: Number(budget.spent || 0),
-      alert_percentage: budget.alert_percentage ? Number(budget.alert_percentage) : null
+      alert_percentage: budget.alert_percentage ? Number(budget.alert_percentage) : null,
+      shared: (budget.shared_group_id && compartidos.get(budget.shared_group_id)) || null
     }));
 
     return res.json({
@@ -380,6 +390,21 @@ export const updateBudget = async (req: Request, res: Response) => {
       });
     }
 
+    // Compartido: la categoría ES el acuerdo con los miembros ("todo lo de Súper
+    // cuenta aquí"). Cambiarla por debajo los metería en otra categoría sin
+    // preguntarles. Se compara contra el valor actual porque la app manda el
+    // formulario completo aunque no se haya tocado.
+    if (existingBudget.shared_group_id) {
+      const cambiaCategoria = updateData.category_id !== undefined && updateData.category_id !== existingBudget.category_id;
+      const cambiaTipo = updateData.type !== undefined && updateData.type !== existingBudget.type;
+      if (cambiaCategoria || cambiaTipo) {
+        return res.status(409).json({
+          error: 'SHARED_CATEGORY_LOCKED',
+          message: 'Este presupuesto está compartido. Para cambiarle la categoría, primero deja de compartirlo.'
+        });
+      }
+    }
+
     // Si cambia la categoría O el tipo, revalidar que sigan siendo coherentes.
     // Hay que mirar los dos juntos: cambiar solo el tipo sobre la categoría vieja
     // dejaría un presupuesto de ingresos apuntando a una categoría de gastos, que
@@ -521,6 +546,14 @@ export const updateBudget = async (req: Request, res: Response) => {
       }
     });
 
+    // Desactivar el vigente de un compartido es, para los miembros, lo mismo
+    // que borrarlo: se cierra el compartido y se les avisa. Va DESPUÉS del
+    // update, nunca antes: si la edición se rechaza (fechas, solapamiento), el
+    // compartido no puede quedar cerrado igual.
+    if (budget.is_active === false && existingBudget.is_active) {
+      await alBorrarPresupuesto(existingBudget);
+    }
+
     // Recalcular `spent` tras el update: si cambiaron fechas o categoría, el
     // gasto del período pudo cambiar. Usamos una fecha dentro del período actual.
     await recalculateBudgetSpent(budget.user_id, budget.category_id, budget.start_date);
@@ -566,6 +599,10 @@ export const deleteBudget = async (req: Request, res: Response) => {
         message: 'Budget does not exist or you do not have access to it'
       });
     }
+
+    // Si era el vigente de un compartido, se cierra el compartido y se avisa a
+    // los miembros antes de que desaparezca.
+    await alBorrarPresupuesto(existingBudget);
 
     await prisma.budget.delete({
       where: { id }

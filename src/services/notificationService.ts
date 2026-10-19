@@ -45,6 +45,13 @@ export interface SendNotificationResult {
   errors?: string[];
 }
 
+
+/** Monto para avisos: "RD$12,500" o "RD$12,500.50", igual que en la app. */
+function dinero(currency: string, monto: number): string {
+  const n = Math.round(monto * 100) / 100;
+  return `${currency}${n.toLocaleString('es-DO', { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
+}
+
 export class NotificationService {
 
   /**
@@ -528,9 +535,9 @@ export class NotificationService {
   ): Promise<SendNotificationResult> {
     const payload: NotificationPayload = {
       title: 'Sincronización completada',
-      body: transactionsImported > 0
-        ? `Se importaron ${transactionsImported} transacciones de tus emails bancarios`
-        : 'No se encontraron nuevas transacciones en tus emails',
+      body: transactionsImported === 1
+        ? 'Se importó 1 transacción de tus correos bancarios'
+        : `Se importaron ${transactionsImported} transacciones de tus correos bancarios`,
       data: {
         type: 'EMAIL_SYNC_COMPLETE',
         transactionsImported: transactionsImported.toString(),
@@ -553,7 +560,7 @@ export class NotificationService {
   ): Promise<SendNotificationResult> {
     const payload: NotificationPayload = {
       title: '⚠️ Alerta de presupuesto',
-      body: `Has usado el ${percentageUsed}% de tu presupuesto "${budgetName}". Te quedan ${currency}${amountRemaining.toFixed(2)}`,
+      body: `Has usado el ${percentageUsed}% de tu presupuesto "${budgetName}". Te quedan ${dinero(currency, amountRemaining)}`,
       data: {
         type: 'BUDGET_ALERT',
         budgetName,
@@ -576,7 +583,7 @@ export class NotificationService {
   ): Promise<SendNotificationResult> {
     const payload: NotificationPayload = {
       title: '🚨 Presupuesto excedido',
-      body: `Has excedido tu presupuesto "${budgetName}" por ${currency}${amountExceeded.toFixed(2)}`,
+      body: `Has excedido tu presupuesto "${budgetName}" por ${dinero(currency, amountExceeded)}`,
       data: {
         type: 'BUDGET_EXCEEDED',
         budgetName,
@@ -600,7 +607,7 @@ export class NotificationService {
   ): Promise<SendNotificationResult> {
     const payload: NotificationPayload = {
       title: '🎯 Recordatorio de meta',
-      body: `Tu meta "${goalName}" está al ${percentageComplete}%. Faltan ${currency}${amountRemaining.toFixed(2)} para completarla`,
+      body: `Tu meta "${goalName}" está al ${percentageComplete}%. Faltan ${dinero(currency, amountRemaining)} para completarla`,
       data: {
         type: 'GOAL_REMINDER',
         goalName,
@@ -642,8 +649,8 @@ export class NotificationService {
     topCategory?: string
   ): Promise<SendNotificationResult> {
     const body = topCategory
-      ? `Esta semana gastaste ${currency}${totalSpent.toFixed(2)}. Tu mayor categoría fue ${topCategory}`
-      : `Esta semana gastaste ${currency}${totalSpent.toFixed(2)}. Revisa tu resumen completo`;
+      ? `Esta semana gastaste ${dinero(currency, totalSpent)}. Tu mayor categoría fue ${topCategory}`
+      : `Esta semana gastaste ${dinero(currency, totalSpent)}. Revisa tu resumen completo`;
 
     const payload: NotificationPayload = {
       title: '📊 Tu resumen semanal',
@@ -700,9 +707,9 @@ export class NotificationService {
     if (hasPattern) {
       // Hay patrón hormiga real
       title = period === 'weekly'
-        ? '🐜 Gastos Hormiga Semanal'
-        : '🐜 Gastos Hormiga Mensual';
-      body = `${currency}${totalAntExpenses.toLocaleString()} (${percentageOfTotal.toFixed(0)}%) en ${topCategory} y más. Usa el Detective de Gastos Hormiga para más detalles.`;
+        ? '🐜 Gastos hormiga de la semana'
+        : '🐜 Gastos hormiga del mes';
+      body = `${dinero(currency, totalAntExpenses)} (${percentageOfTotal.toFixed(0)}%) en ${topCategory} y más. Usa el Detective de Gastos Hormiga para más detalles.`;
     } else {
       // No hay patrón hormiga, pero informamos del mayor gasto
       title = period === 'weekly'
@@ -856,12 +863,17 @@ export class NotificationService {
     transaccionesImportadas: number,
     diasRestantes?: number
   ): Promise<SendNotificationResult> {
-    const restan = diasRestantes && diasRestantes > 0 ? ` Te quedan ${diasRestantes} días.` : '';
+    const restan = diasRestantes && diasRestantes > 0
+      ? ` Te ${diasRestantes === 1 ? 'queda 1 día' : `quedan ${diasRestantes} días`}.`
+      : '';
+    const compras = transaccionesImportadas === 1 ? '1 compra anotada sola' : `${transaccionesImportadas} compras anotadas solas`;
 
     const payload: NotificationPayload = conectoElCorreo && transaccionesImportadas > 0
       ? {
-          title: `📥 ${transaccionesImportadas} compras anotadas solas`,
-          body: `${userName}, no escribiste ninguna: entraron de tu correo.${restan}`,
+          title: `📥 ${compras}`,
+          body: transaccionesImportadas === 1
+            ? `${userName}, no la escribiste tú: entró de tu correo.${restan}`
+            : `${userName}, no escribiste ninguna: entraron de tu correo.${restan}`,
           data: { type: 'TRIAL_MEDIO', screen: 'Transactions' },
         }
       : {
@@ -884,12 +896,15 @@ export class NotificationService {
     transaccionesImportadas: number,
     diasRestantes?: number
   ): Promise<SendNotificationResult> {
-    const restan = diasRestantes && diasRestantes > 0 ? `Te quedan ${diasRestantes} días` : 'Tu prueba está por terminar';
+    const restan = diasRestantes && diasRestantes > 0
+      ? `Te ${diasRestantes === 1 ? 'queda 1 día' : `quedan ${diasRestantes} días`}`
+      : 'Tu prueba está por terminar';
+    const compras = transaccionesImportadas === 1 ? '1 compra registrada' : `${transaccionesImportadas} compras registradas`;
 
     const payload: NotificationPayload = conectoElCorreo && transaccionesImportadas > 0
       ? {
           title: `⏳ ${restan} de Pro`,
-          body: `Llevas ${transaccionesImportadas} compras registradas sin escribir nada. Si te suscribes, sigue igual.`,
+          body: `Llevas ${compras} sin escribir nada. Si te suscribes, sigue igual.`,
           data: { type: 'TRIAL_RECTA_FINAL', screen: 'Subscriptions' },
         }
       : {

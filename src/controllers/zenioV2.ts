@@ -34,6 +34,8 @@ import axios from 'axios';
 
 import { crearPresupuestoSinSolapar, PresupuestoSolapadoError } from '../services/budgetService';
 import { validarCategoria } from '../utils/validarCategoria';
+import { alBorrarMeta } from '../services/sharedGoalService';
+import { alBorrarPresupuesto } from '../services/sharedService';
 // =============================================
 // Cliente OpenAI para Responses API (sin header assistants)
 // =============================================
@@ -841,6 +843,7 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
   const candidates = await prisma.budget.findMany({ where, include: { category: { select: { id: true, name: true, icon: true, type: true } } } });
   if (candidates.length === 0) throw new Error('No se encontró el presupuesto');
 
+  await alBorrarPresupuesto(candidates[0]);
   await prisma.budget.update({ where: { id: candidates[0].id }, data: { is_active: false } });
   return { success: true, message: 'Presupuesto eliminado exitosamente', budget: candidates[0], action: 'budget_deleted' };
 }
@@ -984,6 +987,7 @@ async function deleteGoal(criterios: any, userId: string, categories?: any[]): P
   if (candidates.length === 0) throw new Error('No se encontró la meta');
   if (candidates.length > 1) throw new Error('Se encontraron varias metas. Especifica más');
 
+  await alBorrarMeta(candidates[0]);
   await prisma.goal.update({ where: { id: candidates[0].id }, data: { isActive: false } });
   return { success: true, message: 'Meta eliminada exitosamente', goal: candidates[0], action: 'goal_deleted' };
 }

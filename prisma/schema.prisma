@@ -138,6 +138,19 @@ model User {
   experimentParticipations ExperimentParticipant[]
   experimentEvents         ExperimentEvent[]
 
+  // Presupuestos y metas compartidos (2026-10). Ver SharedGroup.
+  sharedGroupsOwned  SharedGroup[]      @relation("SharedGroupOwner")
+  sharedMemberships  SharedMember[]
+  sharedInvitations  SharedInvitation[] @relation("SharedInvitationInviter")
+  goalContributions  GoalContribution[]
+  // Quién lo invitó, si llegó por una invitación a un compartido. Sirve para
+  // medir cuántos registros nuevos trae la función.
+  invitedByUserId    String?
+  // Código que escribió al registrarse. El registro no inicia sesión (falta
+  // verificar el correo), así que la invitación espera aquí hasta que entre y
+  // la acepte en la pantalla del acuerdo.
+  pendingInviteCode  String?
+
   @@map("users")
 }
 
@@ -160,12 +173,32 @@ model Transaction {
   recurringId String?
   recurring   RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
 
+  // De dónde vino. Las filas anteriores a 2026-10 quedan como MANUAL aunque
+  // vinieran del correo; para eso hay un backfill aparte, y el código que
+  // necesita saberlo con certeza mira también imported_bank_emails.
+  source            TransactionSource @default(MANUAL)
+  // Presupuestos compartidos: la persona sacó este gasto del compartido de su
+  // categoría ("este es personal"). Solo afecta a presupuestos compartidos; en
+  // un presupuesto personal el gasto cuenta igual.
+  sharedOptOut      Boolean           @default(false)
+  // Gasto automático (correo) ya revisado por quien lo hizo. Mientras sea NULL,
+  // los demás miembros del compartido ven solo el monto, sin comercio ni nota:
+  // la IA puede categorizar mal y no queremos exponer un gasto que no era de ahí.
+  sharedConfirmedAt DateTime?
+
   // Idempotencia del cron: una regla no puede generar dos transacciones para el
   // mismo día. Sin esto, un reinicio de Railway a la hora del cron duplica los
   // pagos. Postgres permite múltiples NULL, así que no afecta a las manuales.
   @@unique([recurringId, date])
   @@index([recurringId])
   @@map("transactions")
+}
+
+enum TransactionSource {
+  MANUAL
+  ZENIO
+  EMAIL
+  RECURRING
 }
 
 // Regla de recurrencia — "esto se repite cada X". No es una transacción: es la
@@ -251,7 +284,13 @@ model Budget {
   user_id          String
   category         Category   @relation(fields: [category_id], references: [id])
   user             User       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  // Si está compartido, el grupo al que pertenece. La renovación crea una fila
+  // NUEVA cada período, así que los miembros cuelgan del grupo (estable) y no
+  // del id del presupuesto; la renovación copia este campo.
+  shared_group_id  String?
+  shared_group     SharedGroup? @relation(fields: [shared_group_id], references: [id], onDelete: SetNull)
 
+  @@index([shared_group_id])
   @@map("budgets")
 }
 
@@ -315,8 +354,140 @@ model Goal {
   updatedAt                 DateTime  @updatedAt
   user                      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   category                  Category  @relation(fields: [categoryId], references: [id])
+  sharedGroup               SharedGroup?
+  contributions             GoalContribution[]
 
   @@map("goals")
+}
+
+// ─── Presupuestos y metas compartidos (2026-10) ───────────────────────────────
+//
+// El dueño (quien paga Plus o Pro) comparte UN presupuesto o UNA meta suya con
+// hasta 3 personas más. Cada uno conserva su FinZen personal; lo único común es
+// lo que entra al compartido. Decisiones de producto en
+// presupuestos-y-metas-compartidos-finzen-v2.html (raíz del repo).
+//
+// Un grupo por cosa compartida. Para presupuestos el grupo es lo estable entre
+// renovaciones (cada período es una fila nueva de Budget que apunta al grupo);
+// para metas, la meta ya es estable y el grupo la referencia por goalId.
+
+enum SharedKind {
+  BUDGET
+  GOAL
+}
+
+enum SharedRole {
+  OWNER
+  MEMBER
+}
+
+enum SharedMemberStatus {
+  ACTIVE
+  LEFT     // salió por su cuenta
+  REMOVED  // lo quitó el dueño, o el dueño dejó de compartir / borró
+}
+
+enum SharedInvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+model SharedGroup {
+  id          String     @id @default(uuid())
+  kind        SharedKind
+  ownerId     String
+  // Categoría del presupuesto (BUDGET). Sirve para la regla "una persona, un
+  // compartido por categoría" y para saber qué gastos entran.
+  categoryId  String?
+  goalId      String?    @unique
+  // Cuándo se compartió. Al bajar de plan quedan activos los primeros que se
+  // compartieron y el resto se pausa.
+  sharedAt    DateTime   @default(now())
+  // Pausado: el dueño bajó de plan. Los miembros dejan de verlo y sus gastos
+  // dejan de sumar, pero nada se borra; si vuelve a pagar, se reactiva.
+  pausedAt    DateTime?
+  pauseReason String?
+  // Pausas ya terminadas: [{ desde, hasta }] (ISO). Lo que los miembros gastan
+  // mientras está en pausa no cuenta NUNCA, ni al reactivar ni al recalcular un
+  // mes cerrado; sin el historial no habría forma de saber qué días excluir.
+  pauseHistory Json      @default("[]")
+  // Dejó de compartirse (el dueño lo cerró o borró el presupuesto / la meta).
+  endedAt     DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  owner       User               @relation("SharedGroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  goal        Goal?              @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  budgets     Budget[]
+  members     SharedMember[]
+  invitations SharedInvitation[]
+
+  @@index([ownerId])
+  @@index([categoryId])
+  @@map("shared_groups")
+}
+
+model SharedMember {
+  id       String             @id @default(uuid())
+  groupId  String
+  userId   String
+  role     SharedRole
+  status   SharedMemberStatus @default(ACTIVE)
+  joinedAt DateTime           @default(now())
+  leftAt   DateTime?
+  // Metas: última meta personal a la que quien salió pasó sus aportes.
+  convertedGoalId String?
+
+  group SharedGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId, status])
+  @@map("shared_members")
+}
+
+model SharedInvitation {
+  id           String                 @id @default(uuid())
+  // 6 caracteres sin los que se confunden al dictarlos (0/O, 1/I/L).
+  code         String                 @unique
+  groupId      String
+  inviterId    String
+  status       SharedInvitationStatus @default(PENDING)
+  expiresAt    DateTime
+  acceptedById String?
+  acceptedAt   DateTime?
+  createdAt    DateTime               @default(now())
+
+  group   SharedGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  inviter User        @relation("SharedInvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@map("shared_invitations")
+}
+
+// Aporte a una meta, con quién lo hizo. Hasta 2026-10 la meta solo guardaba el
+// total (currentAmount); las metas existentes reciben un aporte inicial del
+// dueño por lo que ya tenían, para que la suma cuadre.
+model GoalContribution {
+  id        String   @id @default(uuid())
+  goalId    String
+  userId    String
+  amount    Float
+  createdAt DateTime @default(now())
+  // El dueño quitó del total los aportes de alguien que salió. FinZen no guarda
+  // dinero: lo aportado sigue en la cuenta de cada quien, así que quitarlo es
+  // solo dejar de contarlo en la meta.
+  excludedAt DateTime?
+  // Quien salió ya pasó este aporte a una meta personal: no se vuelve a convertir.
+  convertedAt DateTime?
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([goalId])
+  @@index([userId])
+  @@map("goal_contributions")
 }
 
 enum TransactionType {
@@ -1004,6 +1175,9 @@ enum NotificationType {
   MARKETING       // broadcast: ofertas, promociones (opt-out independiente)
   ANNOUNCEMENT    // broadcast: novedades / cambios de producto
   RECURRING_TRANSACTION // el cron registró un gasto/ingreso automático
+  SHARED_INVITE_ACCEPTED // alguien entró a tu presupuesto o meta compartida
+  SHARED_ACTIVITY        // aporte a una meta compartida, gastos por confirmar
+  SHARED_STATUS          // te quitaron, se pausó o se cerró un compartido
 }
 
 enum NotificationStatus {

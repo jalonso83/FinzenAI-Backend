@@ -15,6 +15,7 @@ import { recordFeatureUsage } from '../lib/featureUsage';
 import { planQueConcedeElTrial, duracionTrialDias, elTrialArrancaSolo } from '../config/trial';
 
 import { logger } from '../utils/logger';
+import { registrarCodigoDeRegistro } from '../services/sharedService';
 
 /**
  * Valida que el dominio del email tenga MX records configurados.
@@ -102,6 +103,8 @@ interface RegisterRequest {
   deviceName?: string;
   // Código de referido (opcional)
   referralCode?: string;
+  // Código de invitación a un presupuesto compartido (opcional, 6 caracteres)
+  inviteCode?: string;
 }
 
 interface LoginRequest {
@@ -305,7 +308,7 @@ async function processReferralCode(
 export const register = async (req: Request, res: Response) => {
   try {
     const registerData: RegisterRequest = req.body;
-    let { name, lastName, email, password, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company, deviceId, devicePlatform, deviceName, referralCode } = registerData;
+    let { name, lastName, email, password, phone, birthDate, country, state, city, currency, preferredLanguage, occupation, company, deviceId, devicePlatform, deviceName, referralCode, inviteCode } = registerData;
 
     // Normalizar email a minúsculas
     email = email.toLowerCase().trim();
@@ -387,6 +390,10 @@ export const register = async (req: Request, res: Response) => {
     const referralResult = (referralCode && REFERRAL_CONFIG.ENABLED)
       ? await processReferralCode(user.id, email, referralCode)
       : { applied: false, discount: null, reason: undefined };
+
+    // Invitación a un compartido: queda pendiente hasta que entre y vea el
+    // acuerdo. No bloquea: un código malo no tumba el registro.
+    if (inviteCode) await registrarCodigoDeRegistro(user.id, inviteCode);
 
     // Disparar evento CompleteRegistration a Meta CAPI + TikTok Events API
     // (fire-and-forget — NO debe bloquear la respuesta del register si Meta/TikTok lentean).

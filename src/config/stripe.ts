@@ -27,6 +27,10 @@ export const PLANS = {
     limits: {
       budgets: 4,
       goals: 2,
+      // Presupuestos / metas que el DUEÑO puede compartir (ver config/shared.ts).
+      // FREE no comparte; el invitado entra gratis con cualquier plan.
+      sharedBudgets: 0,
+      sharedGoals: 0,
       zenioQueries: 15,
       reminders: 2, // Máximo 2 recordatorios de pago activos
       budgetAlerts: false, // Sin alertas de umbral de presupuesto
@@ -70,6 +74,8 @@ export const PLANS = {
     limits: {
       budgets: -1, // -1 = ilimitado
       goals: -1,
+      sharedBudgets: 2,
+      sharedGoals: 1,
       zenioQueries: -1,
       reminders: -1, // Recordatorios ilimitados
       budgetAlerts: true, // Alertas de umbral de presupuesto
@@ -114,6 +120,8 @@ export const PLANS = {
     limits: {
       budgets: -1,
       goals: -1,
+      sharedBudgets: -1,
+      sharedGoals: -1,
       zenioQueries: -1,
       reminders: -1, // Recordatorios ilimitados
       budgetAlerts: true, // Alertas de umbral de presupuesto

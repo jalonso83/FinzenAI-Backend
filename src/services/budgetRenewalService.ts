@@ -9,7 +9,7 @@ import {
   sumarMeses,
   finDeMes,
 } from '../utils/timezone';
-import { buscarPresupuestoSolapado } from './budgetService';
+import { buscarPresupuestoSolapado, calcularAcumulado } from './budgetService';
 
 export class BudgetRenewalService {
   /**
@@ -176,16 +176,18 @@ export class BudgetRenewalService {
       //    caído. Ese gasto quedaba sin contar hasta que la persona registrara
       //    otro movimiento en la misma categoría, que es lo que disparaba el
       //    recálculo completo.
-      const yaAcumulado = await tx.transaction.aggregate({
-        where: {
-          userId: expiredBudget.user_id,
-          category_id: expiredBudget.category_id,
-          type: expiredBudget.type,
-          date: { gte: newDates.start, lte: newDates.end },
-        },
-        _sum: { amount: true },
+      //
+      //    Mismo cálculo que el recálculo normal, así un presupuesto compartido
+      //    nace sumando también lo de los demás miembros.
+      const acumuladoInicial = await calcularAcumulado(tx, {
+        id: expiredBudget.id,
+        user_id: expiredBudget.user_id,
+        category_id: expiredBudget.category_id,
+        type: expiredBudget.type,
+        start_date: newDates.start,
+        end_date: newDates.end,
+        shared_group_id: expiredBudget.shared_group_id ?? null,
       });
-      const acumuladoInicial = Number(yaAcumulado._sum.amount) || 0;
 
       // 4. Crear el nuevo presupuesto con las mismas características
       await tx.budget.create({
@@ -208,7 +210,10 @@ export class BudgetRenewalService {
           start_date: newDates.start,
           end_date: newDates.end,
           spent: acumuladoInicial,
-          is_active: true
+          is_active: true,
+          // Compartido: el período nuevo sigue en el mismo grupo, con los mismos
+          // miembros. Nadie tiene que volver a invitar.
+          shared_group_id: expiredBudget.shared_group_id ?? null
         }
       });
 

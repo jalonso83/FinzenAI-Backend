@@ -162,8 +162,8 @@ export class BudgetReminderService {
               await NotificationService.sendToUser(userId, 'BUDGET_ALERT', {
                 title: `📊 Recordatorio: ${budget.name}`,
                 body: percentage >= 100
-                  ? `Tu presupuesto "${budget.name}" está excedido por ${currency}${Math.abs(remaining).toFixed(2)}`
-                  : `Tu presupuesto "${budget.name}" está al ${Math.round(percentage)}%. Te quedan ${currency}${remaining.toFixed(2)}`,
+                  ? `Tu presupuesto "${budget.name}" está excedido por ${currency}${Math.abs(remaining).toLocaleString('es-DO', { minimumFractionDigits: Number.isInteger(Math.round(remaining * 100) / 100) ? 0 : 2, maximumFractionDigits: 2 })}`
+                  : `Tu presupuesto "${budget.name}" está al ${Math.round(percentage)}%. Te quedan ${currency}${remaining.toLocaleString('es-DO', { minimumFractionDigits: Number.isInteger(Math.round(remaining * 100) / 100) ? 0 : 2, maximumFractionDigits: 2 })}`,
                 data: {
                   type: 'BUDGET_REMINDER',
                   budgetId: budget.id,

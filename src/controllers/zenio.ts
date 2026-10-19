@@ -16,6 +16,8 @@ import { calculateOpenAICost } from '../config/openaiPricing';
 
 import { crearPresupuestoSinSolapar, PresupuestoSolapadoError } from '../services/budgetService';
 import { validarCategoria } from '../utils/validarCategoria';
+import { alBorrarPresupuesto } from '../services/sharedService';
+import { alBorrarMeta } from '../services/sharedGoalService';
 const API_KEY = ENV.OPENAI_API_KEY;
 const ASSISTANT_ID = ENV.OPENAI_ASSISTANT_ID;
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
@@ -1826,7 +1828,8 @@ async function deleteBudget(category: string, previous_amount: string, userId: s
     throw new Error(`No encontré un presupuesto activo de ${category}. Verifica que exista el presupuesto que quieres eliminar.`);
   }
 
-  // Eliminar el presupuesto
+  // Eliminar el presupuesto (si estaba compartido, se cierra el compartido)
+  await alBorrarPresupuesto(budget);
   await prisma.budget.delete({ where: { id: budget.id } });
 
   return {
@@ -2235,6 +2238,7 @@ async function deleteGoal(criterios: any, userId: string, categories?: string[])
 
   const goal = candidates[0];
   
+  await alBorrarMeta(goal);
   await prisma.goal.delete({ where: { id: goal.id } });
   
   return {

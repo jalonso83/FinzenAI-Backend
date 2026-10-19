@@ -2,9 +2,10 @@ import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { subscriptionService } from '../services/subscriptionService';
-import { NotificationService } from '../services/notificationService';
 
 import { logger } from '../utils/logger';
+import { aportarAMeta, alBorrarMeta, infoCompartidoDeMetas } from '../services/sharedGoalService';
+import { SharedError } from '../services/sharedService';
 // Obtener todas las metas del usuario
 export const getUserGoals = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -35,7 +36,11 @@ export const getUserGoals = async (req: Request, res: Response): Promise<void> =
       }
     });
 
-    res.json(goals);
+    // Metas propias que están compartidas. Las que OTROS comparten conmigo van
+    // aparte, en GET /api/shared/goals (las apps viejas cuentan esta lista para
+    // el límite del plan).
+    const compartidas = await infoCompartidoDeMetas(goals.map(g => g.id));
+    res.json(goals.map(g => ({ ...g, shared: compartidas.get(g.id) ?? null })));
   } catch (error) {
     logger.error('Error al obtener metas:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
@@ -264,6 +269,13 @@ export const updateGoal = async (req: Request, res: Response): Promise<void> => 
         name,
         description,
         targetAmount: targetAmount ? parseFloat(targetAmount) : undefined,
+        // Si cambia el objetivo, se recalcula si ya se cumplió. Antes quedaba
+        // como estaba: bajar el objetivo por debajo de lo ahorrado dejaba una
+        // meta "sin cumplir" a la que nadie podía aportar ("excedería"), y con
+        // metas compartidas eso le pasa a todos los miembros.
+        isCompleted: targetAmount
+          ? existingGoal.currentAmount >= parseFloat(targetAmount) - 0.005
+          : undefined,
         targetDate: targetDate ? new Date(targetDate) : null,
         categoryId,
         priority: effectivePriority,
@@ -310,6 +322,9 @@ export const deleteGoal = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
+    // Si estaba compartida, se cierra el compartido y se avisa a los miembros.
+    await alBorrarMeta(existingGoal);
+
     // Marcar como inactiva en lugar de eliminar
     await prisma.goal.update({
       where: { id },
@@ -341,74 +356,36 @@ export const deleteGoal = async (req: Request, res: Response): Promise<void> => 
   }
 };
 
-// Agregar contribución a una meta
+// Agregar contribución a una meta (propia, o compartida conmigo)
+//
+// La lógica vive en sharedGoalService.aportarAMeta: registra quién aportó, no se
+// pisa con otro aporte simultáneo, y avisa a los demás si la meta es compartida.
 export const addContribution = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const { amount } = req.body;
     const userId = req.user?.id;
-    
+
     if (!userId) {
       res.status(401).json({ error: 'Usuario no autenticado' });
       return;
     }
 
-    if (!amount || amount <= 0) {
+    const monto = parseFloat(amount);
+    if (!amount || !(monto > 0)) {
       res.status(400).json({ error: 'El monto debe ser mayor a 0' });
       return;
     }
 
-    // Verificar que la meta existe y pertenece al usuario
-    const existingGoal = await prisma.goal.findFirst({
-      where: { id, userId, isActive: true }
-    });
-
-    if (!existingGoal) {
-      res.status(404).json({ error: 'Meta no encontrada' });
-      return;
-    }
-
-    // Verificar que no exceda el monto objetivo
-    const newCurrentAmount = existingGoal.currentAmount + parseFloat(amount);
-    if (newCurrentAmount > existingGoal.targetAmount) {
-      res.status(400).json({ 
-        error: 'La contribución excedería el monto objetivo de la meta' 
-      });
-      return;
-    }
-
-    const isNowCompleted = newCurrentAmount >= existingGoal.targetAmount;
-
-    const updatedGoal = await prisma.goal.update({
-      where: { id },
-      data: {
-        currentAmount: newCurrentAmount,
-        contributionsCount: existingGoal.contributionsCount + 1,
-        lastContributionDate: new Date(),
-        isCompleted: isNowCompleted
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            icon: true,
-            type: true
-          }
-        }
-      }
-    });
-
-    // Enviar notificación si la meta se completó
-    if (isNowCompleted && !existingGoal.isCompleted) {
-      NotificationService.notifyGoalAchieved(userId, existingGoal.name)
-        .then(() => logger.log(`[Goals] Notificación de meta completada enviada: ${existingGoal.name}`))
-        .catch((err) => logger.error('[Goals] Error enviando notificación de meta completada:', err));
-    }
-
+    const updatedGoal = await aportarAMeta(id, userId, monto);
     res.json(updatedGoal);
   } catch (error) {
+    if (error instanceof SharedError) {
+      // Mismo formato de error que siempre tuvo este endpoint: { error: texto }.
+      res.status(error.status).json({ error: error.message, code: error.code, ...error.extra });
+      return;
+    }
     logger.error('Error al agregar contribución:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
-}; 
+};

@@ -1,4 +1,4 @@
-import { EmailConnection, EmailSyncStatus, ImportedEmailStatus, NotificationType } from '@prisma/client';
+import { EmailConnection, EmailSyncStatus, ImportedEmailStatus, NotificationType, TransactionSource } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { GmailService } from './gmailService';
 import { OutlookService } from './outlookService';
@@ -12,6 +12,7 @@ import { recordFeatureUsage } from '../lib/featureUsage';
 import { historialPrimeraSyncDias } from '../config/trial';
 import { subscriptionService } from './subscriptionService';
 import { CardExclusionService, CARD_EXCLUDED_SKIPPED } from './cardExclusionService';
+import { avisarGastosPorConfirmar } from './sharedService';
 
 import { logger } from '../utils/logger';
 export interface SyncResult {
@@ -400,6 +401,7 @@ export class EmailSyncService {
     this.sincronizacionesEnCurso.add(connectionId);
 
     // Crear log de sincronizacion
+    const inicioSync = new Date();
     const syncLog = await prisma.emailSyncLog.create({
       data: {
         emailConnectionId: connectionId,
@@ -792,6 +794,11 @@ export class EmailSyncService {
 
       result.success = true;
       await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS', undefined, revisados);
+
+      // Gastos que entraron a un compartido y esperan que el autor los confirme.
+      if (result.transactionsCreated > 0) {
+        await avisarGastosPorConfirmar(connection.userId, inicioSync);
+      }
       await this.updateConnectionStatus(connectionId, 'SUCCESS');
 
       // ========== GAMIFICACIÓN: Bonus diario por sync activo ==========
@@ -815,8 +822,9 @@ export class EmailSyncService {
         logger.error('[EmailSync] Gamification error (non-blocking):', gamificationError);
       }
 
-      // Enviar notificación push si se importaron transacciones
-      if (result.transactionsCreated > 0 || result.emailsProcessed > 0) {
+      // Enviar notificación push solo si se importaron transacciones: avisar
+      // de que no entró nada es ruido.
+      if (result.transactionsCreated > 0) {
         try {
           await NotificationService.notifyEmailSyncComplete(
             connection.userId,
@@ -1023,7 +1031,8 @@ export class EmailSyncService {
           type: txType,
           description,
           date: safeDate,
-          category_id: categoryId
+          category_id: categoryId,
+          source: TransactionSource.EMAIL
         }
       });
 

@@ -25,6 +25,7 @@ import {
   ZENIO_EDUCATIVO_PROMPT,
   ZENIO_ANALISTA_PROMPT,
   ASISTENTE_TOOLS,
+  ASISTENTE_TOOLS_BASE,
   EDUCATIVO_TOOLS,
   ANALISTA_TOOLS,
   type AgentType,
@@ -36,16 +37,30 @@ const openai = new OpenAI({ apiKey: ENV.OPENAI_API_KEY });
 // Importar funciones de ejecución de tool calls
 // Nota: Estas funciones están en zenioV2.ts pero no son exportadas.
 // Las reimportamos desde las mismas fuentes que usa zenioV2.
-import { MappingSource } from '@prisma/client';
+import { MappingSource, TransactionSource } from '@prisma/client';
+import { alBorrarPresupuesto } from '../services/sharedService';
 import { merchantMappingService } from '../services/merchantMappingService';
 import { NotificationService } from '../services/notificationService';
 import { recalculateBudgetSpent } from './transactions';
 import { recalculateBudgets } from '../services/budgetService';
 import { puedeCrearPresupuestoDeIngresos, esMetaDeIngresosAmbigua, PREGUNTA_DESAMBIGUA } from '../utils/presupuestoDeIngresos';
-import { limpiarRespuestaZenio, contieneJsonVisible } from '../utils/limpiarRespuestaZenio';
+import { limpiarRespuestaZenio, contieneJsonVisible, RESPUESTA_ENREDADA } from '../utils/limpiarRespuestaZenio';
 
 import { crearPresupuestoSinSolapar, buscarPresupuestoSolapado, PresupuestoSolapadoError } from '../services/budgetService';
 import { validarCategoria } from '../utils/validarCategoria';
+import { alBorrarMeta } from '../services/sharedGoalService';
+import { compartidoDeCategoria } from '../services/sharedService';
+import {
+  aportarDesdeZenio,
+  compartidoAjenoEnCategoria,
+  compartidosParaZenio,
+  contextoCompartidoZenio,
+  manejarCompartidoZenio,
+  metaAjenaPorNombre,
+  tieneCompartidos,
+} from '../services/zenioShared';
+import { ZENIO_REGLAS_COMPARTIDOS_ASISTENTE, ZENIO_REGLAS_COMPARTIDOS_ANALISTA } from '../config/agents/zenioCompartidos';
+import { subscriptionService } from '../services/subscriptionService';
 // =============================================
 // FUNCIONES DE UTILIDAD (replicadas de zenioV2.ts)
 // =============================================
@@ -84,7 +99,7 @@ async function validateCategory(categoryName: string, expectedType: string, cate
 // TOOL CALL HANDLERS (operaciones de BD)
 // =============================================
 
-async function handleToolCall(
+export async function handleToolCall(
   call: any,
   userId: string,
   userName: string,
@@ -119,6 +134,21 @@ async function handleToolCall(
         break;
       case 'analizar_finanzas':
         result = await handleAnalizarFinanzas(args, userId);
+        break;
+      case 'aportar_a_meta':
+        // Aportar mueve dinero y avisa a otras personas: solo se ejecuta si el
+        // mensaje actual del usuario ES la confirmación. En pruebas con el modelo
+        // real, a veces lo llamaba en el mismo mensaje del PREVIEW.
+        result = esConfirmacion(mensajeUsuario)
+          ? await aportarDesdeZenio(args, userId)
+          : {
+              success: false,
+              action: 'needs_confirmation',
+              message: 'NO se registró: el usuario todavía no confirmó. Responde SOLO con el PREVIEW del aporte (una vez) y espera su "sí". No digas que lo registraste.',
+            };
+        break;
+      case 'manage_shared_record':
+        result = await manejarCompartidoZenio(args, userId);
         break;
       default:
         result = { error: true, message: `Función no soportada: ${functionName}` };
@@ -191,10 +221,23 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
         if (!isNaN(parsed.getTime())) date = parsed;
       }
 
+      // Sin descripción, se guarda con el nombre de la categoría, igual que
+      // cuando el usuario la registra a mano desde la app.
+      let description = String(transaction_data.description || '').trim();
+      if (!description) {
+        const cat = await prisma.category.findUnique({ where: { id: cv.categoryId! }, select: { name: true } }).catch(() => null);
+        description = cat?.name || '';
+      }
+
+      // "Ese es personal": el gasto no cuenta en el presupuesto compartido de
+      // esa categoría (si lo hay). Por defecto sí cuenta: compartir la
+      // categoría es un acuerdo.
+      const sharedOptOut = type === 'EXPENSE' && transaction_data.compartido === false;
+
       const tx = await prisma.transaction.create({
         data: {
           userId, type, amount, category_id: cv.categoryId!,
-          description: transaction_data.description || '', date,
+          description, date, source: TransactionSource.ZENIO, sharedOptOut,
         },
         include: { category: { select: { id: true, name: true, icon: true, type: true } } },
       });
@@ -213,11 +256,26 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
       let h13Insight: string | undefined;
       try { const r = await onValidTransactionH13(userId, tx.id); h13Insight = r?.insight; } catch {}
 
-      const baseMsg = `Transacción registrada: ${tx.category.name} por RD$${amount.toLocaleString('es-DO')}`;
+      // Si cayó en una categoría compartida, Zenio lo tiene que decir.
+      let compartido: { nombre: string; contado: boolean } | undefined;
+      if (type === 'EXPENSE') {
+        try {
+          const c = await compartidoDeCategoria(userId, cv.categoryId!);
+          if (c) compartido = { nombre: c.name, contado: !sharedOptOut };
+        } catch {}
+      }
+      const notaCompartido = compartido
+        ? compartido.contado
+          ? ` Cuenta en el presupuesto compartido "${compartido.nombre}".`
+          : ` Es personal: NO entra en el compartido "${compartido.nombre}".`
+        : '';
+
+      const baseMsg = `Transacción registrada: ${tx.category.name} por RD$${amount.toLocaleString('es-DO')}.${notaCompartido}`;
       return {
         success: true,
-        message: h13Insight ? `${baseMsg}. ${h13Insight}` : baseMsg,
+        message: h13Insight ? `${baseMsg} ${h13Insight}` : baseMsg,
         transaction: tx,
+        compartido,
         action: 'transaction_created',
       };
     }
@@ -312,6 +370,36 @@ async function handleTransaction(args: any, userId: string, categories?: any[], 
   }
 }
 
+/**
+ * El usuario pide cambiar o borrar "el presupuesto de X" y participa en un
+ * compartido de X que es de OTRA persona. Bloqueo en código, no solo en el
+ * prompt: sin esto, a quien tenía además uno personal de X se le editaba el
+ * suyo creyendo que hablaba del compartido.
+ */
+async function bloqueoCompartidoAjeno(
+  userId: string,
+  categoryId: string,
+  propios: number,
+  alcance: string | undefined,
+  verbo: 'cambiar' | 'borrar',
+): Promise<any | null> {
+  if (alcance === 'personal') return null;
+  const ajeno = await compartidoAjenoEnCategoria(userId, categoryId);
+  if (!ajeno) return null;
+  if (propios === 0 || alcance === 'compartido') {
+    return {
+      success: false,
+      action: 'shared_owner_only',
+      message: `"${ajeno.nombre}" es de ${ajeno.dueno}: solo ${ajeno.dueno} puede ${verbo}lo. Tú registras tus gastos ahí, nada más.`,
+    };
+  }
+  return {
+    success: false,
+    action: 'clarify_budget_scope',
+    message: `Tienes tu presupuesto personal de esa categoría y también participas en "${ajeno.nombre}" (de ${ajeno.dueno}). ¿Cuál quieres ${verbo}? El compartido solo lo puede ${verbo} ${ajeno.dueno}.`,
+  };
+}
+
 // --- Budget handler ---
 async function handleBudget(args: any, userId: string, categories?: any[], mensajeUsuario?: string): Promise<any> {
   // `budget_type` decide si es un TECHO de gasto o un PRESUPUESTO DE INGRESOS.
@@ -340,10 +428,10 @@ async function handleBudget(args: any, userId: string, categories?: any[], mensa
       if (!amount) throw new Error('Monto requerido');
 
       // Check limit
-      const subscription = await prisma.subscription.findUnique({ where: { userId } });
-      const BUDGET_LIMITS: Record<string, number> = { FREE: 4, PREMIUM: -1, PRO: -1 };
-      const plan = subscription?.plan || 'FREE';
-      const budgetLimit = BUDGET_LIMITS[plan] || 4;
+      // El límite sale del plan EFECTIVO (concesiones y aterrizaje del trial
+      // incluidos), igual que el middleware de la app. Antes estaba fijo aquí.
+      const sub = await subscriptionService.getUserSubscription(userId);
+      const budgetLimit = Number((sub.limits as any).budgets ?? 4);
       if (budgetLimit !== -1) {
         const count = await prisma.budget.count({ where: { user_id: userId, is_active: true } });
         if (count >= budgetLimit) return { success: false, message: `Límite de presupuestos alcanzado (${count}/${budgetLimit}).`, upgrade: true };
@@ -416,7 +504,23 @@ async function handleBudget(args: any, userId: string, categories?: any[], mensa
               porcentajeUso: pct, disponible: Math.max(0, monto - acumulado),
               nota: 'TECHO de gasto: porcentaje alto = alerta.' };
       });
-      return { success: true, budgets: budgetsEtiquetados, count: budgets.length, action: 'budgets_listed' };
+      // Los propios que están compartidos se marcan, y los que OTROS comparten
+      // conmigo van aparte (no son suyos: no los puede editar).
+      const conCompartidos = budgetsEtiquetados.map((b: any, i: number) =>
+        budgets[i].shared_group_id ? { ...b, compartido: true } : b);
+      let compartidos: any[] | undefined;
+      if (await tieneCompartidos(userId)) {
+        compartidos = (await compartidosParaZenio(userId)).presupuestos
+          .filter((p) => !p.puedesEditar)
+          .map(({ gastosRecientes, ...p }) => p);
+      }
+      return {
+        success: true,
+        budgets: conCompartidos,
+        count: budgets.length,
+        ...(compartidos?.length ? { compartidosConmigo: compartidos, nota: 'compartidosConmigo: presupuestos de OTRAS personas en los que participa. No los puede editar.' } : {}),
+        action: 'budgets_listed',
+      };
     }
     case 'update': {
       if (!category) throw new Error('Categoría requerida para update');
@@ -450,6 +554,8 @@ async function handleBudget(args: any, userId: string, categories?: any[], mensa
       where.category_id = cvU.categoryId;
 
       const candidates = await prisma.budget.findMany({ where, include: { category: { select: { id: true, name: true, icon: true, type: true } } } });
+      const bloqueo = await bloqueoCompartidoAjeno(userId, cvU.categoryId!, candidates.length, args.alcance, 'cambiar');
+      if (bloqueo) return bloqueo;
       if (candidates.length === 0) return { success: false, message: 'No se encontró el presupuesto.' };
       if (candidates.length > 1) return { success: false, message: `Tienes ${candidates.length} presupuestos de ${category}. ¿De cuál monto es el que quieres cambiar?` };
 
@@ -524,15 +630,69 @@ async function handleBudget(args: any, userId: string, categories?: any[], mensa
       if (cat2) where.category_id = cat2.id;
 
       const candidates = await prisma.budget.findMany({ where });
+      if (cat2) {
+        const bloqueo = await bloqueoCompartidoAjeno(userId, cat2.id, candidates.length, args.alcance, 'borrar');
+        if (bloqueo) return bloqueo;
+      }
       if (candidates.length === 0) return { success: false, message: 'No se encontró el presupuesto.' };
       if (candidates.length > 1) return { success: false, message: 'Se encontraron varios presupuestos. Especifica más.' };
 
+      // Si estaba compartido, se cierra el compartido y se avisa a los miembros.
+      await alBorrarPresupuesto(candidates[0]);
       await prisma.budget.update({ where: { id: candidates[0].id }, data: { is_active: false } });
       return { success: true, message: 'Presupuesto eliminado.', action: 'budget_deleted' };
     }
     default:
       throw new Error(`Operación de presupuesto no soportada: ${operation}`);
   }
+}
+
+/**
+ * El modelo a veces devuelve el MISMO mensaje dos veces (dos salidas de texto
+ * en una respuesta) y `output_text` las pega: "¿Confirmo?📋 Registrar…". Si el
+ * texto es una mitad repetida, se deja una.
+ */
+function sinRepeticion(texto: string): string {
+  const t = texto.trim();
+  for (let corte = Math.floor(t.length / 2) - 2; corte <= Math.ceil(t.length / 2) + 2; corte++) {
+    if (corte <= 10 || corte >= t.length) continue;
+    const a = t.slice(0, corte).trim();
+    const b = t.slice(corte).trim();
+    if (a && a === b) return a;
+  }
+  return texto;
+}
+
+/**
+ * ¿La respuesta del asistente hay que corregirla antes de mandarla?
+ *  - Salió solo código/JSON (el usuario vería "se me enredó la respuesta").
+ *  - Dice que registró/anotó algo y en este turno no se ejecutó ninguna acción.
+ * Visto en pruebas con el modelo real (2026-10-17), también fuera de compartidos.
+ */
+export function necesitaCorreccion(texto: string, huboAcciones: boolean): { codigo: string; nota: string } | null {
+  if (texto && limpiarRespuestaZenio(texto) === RESPUESTA_ENREDADA) {
+    return {
+      codigo: 'json_visible',
+      nota: 'Tu último mensaje salió como código y el usuario no puede verlo. Si ibas a ejecutar una acción, LLAMA la función (no la escribas en el texto). Si no, responde en texto normal, en español.',
+    };
+  }
+  if (!huboAcciones && /(¡\s*anotado|anotad[oa]!|ya (lo |la )?(registr|anot)[eé]|qued[oó] (registrad|anotad|guardad)|aporte registrado|se registr[oó])/i.test(texto)) {
+    return {
+      codigo: 'afirma_sin_ejecutar',
+      nota: 'OJO: dijiste que registraste/anotaste algo, pero NO llamaste ninguna función y NO se guardó nada. Si el usuario ya confirmó tu PREVIEW, llama ahora la función que corresponde. Si todavía no lo había confirmado, muestra el PREVIEW y espera su "sí". No vuelvas a decir que se registró si no llamaste la función.',
+    };
+  }
+  return null;
+}
+
+/** ¿El mensaje del usuario es una confirmación ("sí", "dale", "confirmo"...)? */
+export function esConfirmacion(mensaje?: string): boolean {
+  const m = String(mensaje || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[¡!¿?.,;:]/g, ' ').trim();
+  return /^(si|sip|dale|confirmo|confirmado|confirma|ok|okay|okey|hazlo|va|vale|claro|listo|perfecto|correcto|exacto|de acuerdo|adelante|procede|yes|aja|seguro|por supuesto|eso|asi es|esta bien)\b/.test(m);
+}
+
+function normalizarNombre(s: string): string {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 // --- Goal handler ---
@@ -553,13 +713,28 @@ async function handleGoal(args: any, userId: string, categories?: any[], mensaje
       if (!goal_data) throw new Error('Datos de meta requeridos');
 
       // Check limit
-      const subscription = await prisma.subscription.findUnique({ where: { userId } });
-      const GOAL_LIMITS: Record<string, number> = { FREE: 2, PREMIUM: -1, PRO: -1 };
-      const plan = subscription?.plan || 'FREE';
-      const goalLimit = GOAL_LIMITS[plan] || 2;
+      const sub = await subscriptionService.getUserSubscription(userId);
+      const goalLimit = Number((sub.limits as any).goals ?? 2);
       if (goalLimit !== -1) {
         const count = await prisma.goal.count({ where: { userId, isActive: true, isCompleted: false } });
         if (count >= goalLimit) return { success: false, message: `Límite de metas alcanzado (${count}/${goalLimit}).`, upgrade: true };
+      }
+
+      // "Aparté 1500 para el fondo de emergencia" llegó a crear una SEGUNDA meta
+      // llamada igual en vez de aportarle a la que ya existía. Bloqueo en código.
+      const nombreNuevo = normalizarNombre(goal_data.name || '');
+      if (nombreNuevo) {
+        const existentes = await prisma.goal.findMany({ where: { userId, isActive: true }, select: { name: true, currentAmount: true, targetAmount: true } });
+        const igual = existentes.find((g) => normalizarNombre(g.name) === nombreNuevo);
+        const ajena = igual ? null : await metaAjenaPorNombre(userId, goal_data.name);
+        const nombreIgual = igual?.name ?? (ajena && normalizarNombre(ajena.nombre) === nombreNuevo ? ajena.nombre : null);
+        if (nombreIgual) {
+          return {
+            success: false,
+            action: 'goal_duplicate',
+            message: `Ya existe la meta "${nombreIgual}". Si el usuario puso dinero, es un APORTE: usa aportar_a_meta (con PREVIEW). Pregúntale si quiere aportarle en vez de crear otra igual.`,
+          };
+        }
       }
 
       const cv = await validateCategory(goal_data.category || 'Otros gastos', 'gasto', categories);
@@ -604,7 +779,17 @@ async function handleGoal(args: any, userId: string, categories?: any[], mensaje
         where: { userId, isActive: true, isCompleted: false }, orderBy: { createdAt: 'desc' }, take: filtros_busqueda?.limit || 10,
         include: { category: { select: { name: true, icon: true, type: true } } },
       });
-      return { success: true, goals, count: goals.length, action: 'goals_listed' };
+      let compartidas: any[] | undefined;
+      if (await tieneCompartidos(userId)) {
+        compartidas = (await compartidosParaZenio(userId)).metas.filter((m) => !m.puedesEditar);
+      }
+      return {
+        success: true,
+        goals,
+        count: goals.length,
+        ...(compartidas?.length ? { compartidasConmigo: compartidas, nota: 'compartidasConmigo: metas de OTRAS personas en las que participa. Puede aportar (aportar_a_meta) pero no editarlas ni borrarlas.' } : {}),
+        action: 'goals_listed',
+      };
     }
     case 'update': {
       if (!goal_data) throw new Error('Datos de meta requeridos para update');
@@ -620,7 +805,11 @@ async function handleGoal(args: any, userId: string, categories?: any[], mensaje
       }
 
       const candidates = await prisma.goal.findMany({ where, include: { category: { select: { id: true, name: true, icon: true, type: true } } } });
-      if (candidates.length === 0) return { success: false, message: 'No se encontró la meta con esos criterios.' };
+      if (candidates.length === 0) {
+        const ajena = criterios_identificacion.name ? await metaAjenaPorNombre(userId, criterios_identificacion.name) : null;
+        if (ajena) return { success: false, action: 'shared_owner_only', message: `"${ajena.nombre}" es de ${ajena.dueno}: solo ${ajena.dueno} puede cambiarla. Tú sí puedes aportarle.` };
+        return { success: false, message: 'No se encontró la meta con esos criterios.' };
+      }
       if (candidates.length > 1) return { success: false, message: `Se encontraron ${candidates.length} metas. Especifica más criterios.` };
 
       const updateData: any = {};
@@ -660,9 +849,14 @@ async function handleGoal(args: any, userId: string, categories?: any[], mensaje
       }
 
       const candidates = await prisma.goal.findMany({ where });
-      if (candidates.length === 0) return { success: false, message: 'No se encontró la meta con esos criterios.' };
+      if (candidates.length === 0) {
+        const ajena = criterios_identificacion.name ? await metaAjenaPorNombre(userId, criterios_identificacion.name) : null;
+        if (ajena) return { success: false, action: 'shared_owner_only', message: `"${ajena.nombre}" es de ${ajena.dueno}: solo ${ajena.dueno} puede borrarla. Si ya no quieres participar, puedes salir de ella desde Metas.` };
+        return { success: false, message: 'No se encontró la meta con esos criterios.' };
+      }
       if (candidates.length > 1) return { success: false, message: `Se encontraron ${candidates.length} metas. Especifica más criterios.` };
 
+      await alBorrarMeta(candidates[0]);
       await prisma.goal.update({ where: { id: candidates[0].id }, data: { isActive: false } });
       return { success: true, message: 'Meta eliminada.', action: 'goal_deleted' };
     }
@@ -694,7 +888,7 @@ async function handleListCategories(args: any, categories?: any[]): Promise<any>
 }
 
 // --- Analizar finanzas handler (ANALISTA) ---
-async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
+export async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
   const periodo = args?.periodo || 'ambos';
 
   const ahora = new Date();
@@ -879,7 +1073,18 @@ async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
     rangoIngresos: onboarding.incomeRange,
   } : null;
 
-  // 6. Días restantes del mes
+  // 6. Compartidos (solo si participa en alguno)
+  let compartidosSnapshot: any = null;
+  try {
+    if (await tieneCompartidos(userId)) {
+      compartidosSnapshot = {
+        ...(await compartidosParaZenio(userId)),
+        nota: 'Presupuestos y metas compartidos con otras personas. NO se suman a los totales personales de arriba. De los demás solo está lo que entró al compartido.',
+      };
+    }
+  } catch (e) { logger.error('[ZenioAgents] Error armando compartidos del snapshot:', e); }
+
+  // 7. Días restantes del mes
   const diasEnMes = new Date(fechaRD.getFullYear(), fechaRD.getMonth() + 1, 0).getDate();
   const diaActual = fechaRD.getDate();
   const diasRestantesMes = diasEnMes - diaActual;
@@ -908,6 +1113,8 @@ async function handleAnalizarFinanzas(args: any, userId: string): Promise<any> {
       presupuestos: presupuestosResumen,
       metas: metasResumen,
       perfilOnboarding,
+      // Aparte y sin sumarse a lo personal. Solo lo que entró al compartido.
+      ...(compartidosSnapshot ? { compartidos: compartidosSnapshot } : {}),
     },
     action: 'finanzas_analizadas',
   };
@@ -981,7 +1188,7 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
       analista: ANALISTA_TOOLS,
     };
     const agentPrompt = agentPromptMap[agentType];
-    const agentTools = agentToolsMap[agentType];
+    const agentToolsBase = agentToolsMap[agentType];
 
     // 7. Construir contexto dinámico
     const ahora = new Date();
@@ -999,7 +1206,18 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
     }
 
     const dateContext = `\n\nFECHA ACTUAL: Hoy es ${fechaHumana} (${fechaActual}). Año ${fechaRD.getFullYear()}. Zona horaria: República Dominicana (UTC-4).`;
-    const dynamicInstructions = `${agentPrompt}${dateContext}${categoriesContext}`;
+    // Compartidos: reglas + datos, solo para quien participa en alguno.
+    let compartidoContext = '';
+    if (agentType !== 'educativo') {
+      const datos = await contextoCompartidoZenio(userId);
+      if (datos) {
+        const reglas = agentType === 'analista' ? ZENIO_REGLAS_COMPARTIDOS_ANALISTA : ZENIO_REGLAS_COMPARTIDOS_ASISTENTE;
+        compartidoContext = `${reglas}${datos}`;
+      }
+    }
+    const dynamicInstructions = `${agentPrompt}${dateContext}${categoriesContext}${compartidoContext}`;
+    // Quien no comparte nada no ve las herramientas de compartidos.
+    const agentTools = agentType === 'asistente' && !compartidoContext ? ASISTENTE_TOOLS_BASE : agentToolsBase;
 
     // 8. Construir input
     const input: any[] = [];
@@ -1052,6 +1270,11 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
     let toolCallIterations = 0;
     const maxToolCallIterations = 10;
 
+    // Una sola corrección por mensaje (ver `necesitaCorreccion`): el modelo a
+    // veces escribe la llamada a la función como texto, o dice "¡Anotado!" sin
+    // haber llamado nada. Lo segundo es mentirle al usuario sobre su dinero.
+    let correccionHecha = false;
+    corregir: while (true) {
     while (toolCallIterations < maxToolCallIterations) {
       const functionCalls = response.output.filter((item: any) => item.type === 'function_call');
       if (functionCalls.length === 0) break;
@@ -1097,6 +1320,33 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
       }
     }
 
+    const motivoCorreccion = agentType === 'asistente' && !correccionHecha
+      ? necesitaCorreccion(
+          stripFileCitations(response.output_text) || '',
+          // Solo cuentan las acciones que GUARDAN algo; listar no es registrar.
+          executedActions.some((a: any) => !/_listed$|^finanzas_analizadas$|^needs_confirmation$/.test(String(a.action))),
+        )
+      : null;
+    if (!motivoCorreccion) break corregir;
+    correccionHecha = true;
+    logger.error(`[ZenioAgents] Corrigiendo respuesta (${motivoCorreccion.codigo}) para ${userId}: "${(response.output_text || '').slice(0, 160).replace(/\n/g, ' ')}" | usuario: "${String(message || '').slice(0, 80)}"`);
+    try {
+      response = await openai.responses.create({
+        model: ZENIO_MODEL,
+        instructions: dynamicInstructions,
+        input: [{ role: 'developer', content: motivoCorreccion.nota }],
+        tools: agentTools,
+        temperature: ZENIO_TEMPERATURE,
+        previous_response_id: response.id,
+        store: true,
+      });
+      lastKnownResponseId = response.id;
+    } catch (e) {
+      logger.error('[ZenioAgents] Falló la corrección; se usa la respuesta original:', e);
+      break corregir;
+    }
+    }
+
     // 11. Obtener respuesta final (limpiando los marcadores de citación de file_search)
     // Se limpia SIEMPRE, no solo cuando falla el prompt: el agente a veces
     // escribe en el mensaje la llamada que iba a hacer (ver la nota larga en
@@ -1107,7 +1357,7 @@ export const chatWithZenioAgents = async (req: Request, res: Response) => {
       // hay que poder verlo sin desplegar nada.
       logger.error(`[ZenioAgents] JSON visible en la respuesta (agente: ${agentType}), recortado antes de enviar`);
     }
-    const assistantResponse = limpiarRespuestaZenio(textoCrudo);
+    const assistantResponse = sinRepeticion(limpiarRespuestaZenio(textoCrudo));
 
     // 12. Incrementar contador
     let zenioUsage = { used: 0, limit: 15, remaining: 15 };

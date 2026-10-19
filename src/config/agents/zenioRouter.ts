@@ -54,6 +54,14 @@ const ANALYSIS_PATTERNS = [
   /\bvoy\s+corto\b/i,
   /cuanto\s+me\s+falta\s+(por\s+)?(facturar|cobrar|ingresar)/i,
   /como\s+va\s+mi/i,
+
+  // ─── Compartidos (2026-10) ─────────────────────────────────────────────────
+  // Preguntas en plural o por otra persona: "¿cómo vamos con el súper?",
+  // "¿cuánto ha gastado Juan?", "¿cuánto he aportado al viaje?".
+  /como\s+vamos/i,
+  /cuanto\s+(ha|han)\s+(gastado|aportado|puesto)/i,
+  /cuanto\s+(he|llevo|hemos|llevamos)\s+(aportado|puesto|juntado|ahorrado)/i,
+  /cuanto\s+(llevamos|hemos\s+gastado)/i,
 ];
 
 // Patrones para detectar intención operativa (ASISTENTE)
@@ -74,6 +82,10 @@ const OPERATION_PATTERNS = [
   /\b(cu[aá]nto|cu[aá]les|mis|lista|listar|ver|muestra|mostrar)\s+(gasto|ingreso|meta|presupuesto|transacci[oó]n)/i,
   // Categorías
   /\b(categor[ií]a)/i,
+  // Compartidos: aportar, invitar, "ese es personal", confirmar automáticos
+  /\b(aport[eéoa]|aportar|abon[eéoa]|ponle|ponerle)\b/i,
+  /\binvit\w*/i,
+  /\b(es\s+personal|no\s+(lo\s+)?cuentes|sac(a|alo|ar)\s+del\s+compartid|por\s+confirmar|confirm(a|ar|alos|o)\b)/i,
   // Gastos hormiga (redirección, pero el Asistente la maneja)
   /\b(gastos?\s+hormiga|detective|peque[ñn]os\s+gastos|donde\s+se\s+va\s+mi\s+dinero)/i,
 ];

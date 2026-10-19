@@ -88,7 +88,7 @@ export class H13CueScheduler {
 
     // Sin margen: tiene que registrar todos los días que le quedan.
     if (quedan <= faltan) {
-      return `Te quedan ${dias(quedan)} y necesitas los ${faltan}. ${anota} y sigues en carrera.`;
+      return `Te ${quedan === 1 ? 'queda' : 'quedan'} ${dias(quedan)} y necesitas los ${faltan}. ${anota} y sigues en carrera.`;
     }
 
     // Con un día de colchón: puede fallar uno y todavía llegar.

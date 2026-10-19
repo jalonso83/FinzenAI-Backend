@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma';
-import { recalculateBudgets } from './budgetService';
+import { recalculateBudgets, recalcularCompartidosEnRango } from './budgetService';
 import { logger } from '../utils/logger';
 
 /**
@@ -208,6 +208,10 @@ export class CardExclusionService {
       }
     }
 
+    const categorias = [...new Set(transacciones.map(t => t.category_id))];
+    const desde = new Date(Math.min(...transacciones.map(t => t.date.getTime())));
+    const hasta = new Date(Math.max(...transacciones.map(t => t.date.getTime())));
+
     // recalculateBudgets solo toca presupuestos ACTIVOS. Pero lo quitado puede
     // ser de hasta 90 días atrás (la primera lectura del correo), y el
     // presupuesto de un mes ya cerrado se quedaría con el gastado viejo. Se
@@ -221,17 +225,22 @@ export class CardExclusionService {
             AND t.type::text = b.type::text
             AND t.date >= b.start_date AND t.date <= b.end_date), 0)
         WHERE b.user_id = $1 AND b.is_active = false
+          AND b.shared_group_id IS NULL
           AND b.category_id = ANY($2)
           AND b.start_date <= $4 AND b.end_date >= $3
       `,
         userId,
-        [...new Set(transacciones.map(t => t.category_id))],
-        new Date(Math.min(...transacciones.map(t => t.date.getTime()))),
-        new Date(Math.max(...transacciones.map(t => t.date.getTime()))),
+        categorias,
+        desde,
+        hasta,
       );
     } catch (error) {
       logger.error('[CardExclusion] Error recalculando presupuestos cerrados:', error);
     }
+
+    // Los compartidos (activos o cerrados) suman a varios miembros y ese SQL
+    // solo sabe sumar lo del dueño; van por el cálculo común.
+    await recalcularCompartidosEnRango(userId, categorias, desde, hasta);
 
     logger.log(`[CardExclusion] Usuario ${userId}: tarjeta ${last4} excluida, ${transacciones.length} consumos quitados`);
     return { quitados: transacciones.length };

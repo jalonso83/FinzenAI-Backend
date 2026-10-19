@@ -42,10 +42,10 @@ interface RiskProfile {
   volatility: string;
 }
 
-// Data de equivalencias Gen Z para República Dominicana (precios actuales 2025)
+// Data de equivalencias Gen Z para República Dominicana (precios revisados oct-2026)
 const genZEquivalencies = [
   { amount: 50000, description: "Una laptop gamer de gama media 💻" },
-  { amount: 75000, description: "Un iPhone 17 Pro Max nuevo 📱" },
+  { amount: 80000, description: "Un iPhone 17 Pro Max nuevo 📱" },
   { amount: 120000, description: "Una moto Honda PCX nueva 🛵" },
   { amount: 200000, description: "Un semestre de universidad privada 🎓" },
   { amount: 350000, description: "Un viaje completo por Europa 15 días ✈️" },
@@ -56,7 +56,7 @@ const genZEquivalencies = [
   { amount: 3000000, description: "Un apartamento completo en zona popular 🏢" },
   { amount: 5000000, description: "Inicial para casa en zona residencial 🏘️" },
   { amount: 8000000, description: "Una casa completa en zona media 🏆" },
-  { amount: 15000000, description: "¡Eres millonario en dólares! 💎" }
+  { amount: 15000000, description: "Casi un cuarto de millón de dólares 💎" }
 ];
 
 // Perfiles de riesgo
@@ -70,7 +70,7 @@ const riskProfiles: Record<string, RiskProfile> = {
   },
   balanced: {
     level: "Balanceado", 
-    description: "Perfect balance entre riesgo y ganancia",
+    description: "El equilibrio entre riesgo y ganancia",
     minReturn: 7,
     maxReturn: 10,
     volatility: "Media"
@@ -288,9 +288,9 @@ const goalConfigurations = {
     name: "Vivienda",
     icon: "🏠",
     percentageOptions: [
-      { value: 10, label: "10% (mínimo FHA)", description: "Financiamiento con seguro hipotecario" },
+      { value: 10, label: "10% (mínimo)", description: "Algunos proyectos y bancos lo aceptan; la cuota sale más alta" },
       { value: 15, label: "15% (recomendado)", description: "Balance entre inicial y cuota mensual" },
-      { value: 20, label: "20% (ideal)", description: "Sin seguro hipotecario (PMI)" },
+      { value: 20, label: "20% (ideal)", description: "Lo que suelen pedir los bancos en RD" },
       { value: 30, label: "30% (óptimo)", description: "Mejor tasa de interés" },
       { value: 100, label: "100% (al contado)", description: "Sin financiamiento" }
     ],
@@ -761,16 +761,16 @@ interface InflationResult {
   impactMessage: string;
 }
 
-// Ejemplos de precios actuales dominicanos Gen Z (2025)
+// Ejemplos de precios dominicanos Gen Z (revisados oct-2026)
 const currentPricesDR = [
-  { item: "iPhone 17 Pro Max", price: 75000, icon: "📱" },
-  { item: "Gasolina Regular (galón)", price: 290, icon: "⛽" },
+  { item: "iPhone 17 Pro Max", price: 80000, icon: "📱" },
+  { item: "Gasolina Regular (galón)", price: 318, icon: "⛽" },
   { item: "Combo McDonald's", price: 650, icon: "🍔" },
   { item: "Entrada cine (Palacio del Cine)", price: 450, icon: "🎬" },
   { item: "Uber 10km en Santiago", price: 350, icon: "🚗" },
   { item: "Mensualidad PUCMM", price: 85000, icon: "🎓" },
   { item: "Apartamento 1 habitación/mes", price: 25000, icon: "🏠" },
-  { item: "Salario mínimo mensual", price: 21000, icon: "💼" },
+  { item: "Salario mínimo mensual", price: 29988, icon: "💼" },
   { item: "Libra de pollo", price: 150, icon: "🍗" },
   { item: "Plan Claro 20GB", price: 1200, icon: "📞" }
 ];
@@ -822,7 +822,7 @@ export const calculateInflation = async (req: Request, res: Response) => {
     const {
       currentAmount,
       years,
-      inflationRate = 7 // Inflación promedio RD histórica
+      inflationRate = 5 // BCRD: 5.12% interanual a sept-2026 (meta 4% ±1)
     }: InflationCalculationRequest = req.body;
 
     // Validaciones
@@ -852,7 +852,7 @@ export const calculateInflation = async (req: Request, res: Response) => {
     
     // Generar mensaje de impacto
     const percentageLost = ((calculations.lostValue / currentAmount) * 100).toFixed(1);
-    const impactMessage = `En ${years} años, tus RD$${currentAmount.toLocaleString()} perderán ${percentageLost}% de su poder de compra por culpa de la inflación`;
+    const impactMessage = `En ${years} años, tus RD$${currentAmount.toLocaleString('es-DO')} perderán ${percentageLost}% de su poder de compra por culpa de la inflación`;
 
     const result: InflationResult = {
       currentAmount,

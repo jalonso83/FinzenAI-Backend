@@ -20,6 +20,7 @@ import { ExchangeRateScheduler } from './services/exchangeRateScheduler';
 import { AttributionRetryScheduler } from './services/attributionRetryScheduler';
 import { RecurringTransactionScheduler } from './services/recurringTransactionScheduler';
 import { H13CueScheduler } from './services/h13/h13CueScheduler';
+import { SharedPauseScheduler } from './services/sharedPauseService';
 import startOpenAiUsageProcessor from './schedulers/openaiUsageProcessor';
 import { validateReferralConfig } from './config/referralConfig';
 import { validateRecurringConfig } from './config/recurringConfig';
@@ -38,6 +39,7 @@ import zenioAgentsRoutes from './routes/zenioAgents';
 import ttsRoutes from './routes/tts';
 import categoryRoutes from './routes/categories';
 import goalRoutes from './routes/goals';
+import sharedRoutes from './routes/shared';
 import reportRoutes from './routes/reports';
 import gamificationRoutes from './routes/gamification';
 import investmentRoutes from './routes/investment';
@@ -171,6 +173,7 @@ app.use('/api/zenio/agents', zenioAgentsRoutes);
 app.use('/api/tts', ttsRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/goals', goalRoutes);
+app.use('/api/shared', sharedRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/investment', investmentRoutes);
@@ -274,6 +277,11 @@ async function startServer() {
     // variables el día del build.
     logger.error(`[Trial] Configuración activa → ${describirConfigTrial()}`);
     TrialScheduler.startScheduler();
+
+    // Pausa/reactivación de compartidos según el plan del dueño: se engancha a
+    // toda escritura de la suscripción y repasa cada hora (las concesiones
+    // caducan sin que nada se escriba).
+    SharedPauseScheduler.startScheduler();
 
     // Iniciar scheduler de expiración de referidos
     ReferralScheduler.startScheduler();

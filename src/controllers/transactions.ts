@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { MappingSource, RecurrenceFrequency } from '@prisma/client';
+import { MappingSource, RecurrenceFrequency, TransactionSource } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { GamificationService } from '../services/gamificationService';
 import { NotificationService } from '../services/notificationService';
@@ -11,6 +11,7 @@ import { onValidTransaction as onValidTransactionH13 } from '../services/h13/h13
 import { VALID_FREQUENCIES, isValidFrequency } from '../config/recurringConfig';
 
 import { logger } from '../utils/logger';
+import { compartidoDeCategoria } from '../services/sharedService';
 // Función inteligente para analizar y disparar eventos de gamificación
 export async function analyzeAndDispatchTransactionEvents(userId: string, transaction: any) {
   const today = new Date();
@@ -341,6 +342,28 @@ export interface CreateTransactionCoreInput {
   date?: Date;
   recurringId?: string | null;
   engagementHooks?: boolean;
+  /** De dónde vino. Si trae `recurringId` es RECURRING sin importar lo que se pase. */
+  source?: TransactionSource;
+  /** Nace fuera del compartido de su categoría ("este es personal"). */
+  sharedOptOut?: boolean;
+}
+
+/**
+ * `{ compartido }` si el gasto cae en la categoría de un presupuesto compartido
+ * de esta persona; `{}` si no. Best-effort: nunca rompe la respuesta.
+ */
+async function compartidoDeLaTransaccion(
+  userId: string,
+  transaction: { type: string; category_id: string; sharedOptOut?: boolean },
+): Promise<{ compartido?: { groupId: string; budgetId: string; name: string; contado: boolean } }> {
+  if (transaction.type !== 'EXPENSE') return {};
+  try {
+    const compartido = await compartidoDeCategoria(userId, transaction.category_id);
+    return compartido ? { compartido: { ...compartido, contado: !transaction.sharedOptOut } } : {};
+  } catch (error) {
+    logger.error('Error consultando el compartido de la transacción:', error);
+    return {};
+  }
 }
 
 export async function createTransactionCore(
@@ -355,6 +378,8 @@ export async function createTransactionCore(
     date,
     recurringId = null,
     engagementHooks = true,
+    source = TransactionSource.MANUAL,
+    sharedOptOut = false,
   } = input;
 
   const transaction = await prisma.transaction.create({
@@ -366,6 +391,8 @@ export async function createTransactionCore(
       description,
       date: date ?? new Date(),
       recurringId,
+      source: recurringId ? TransactionSource.RECURRING : source,
+      sharedOptOut,
     },
     include: {
       category: {
@@ -427,6 +454,9 @@ interface CreateTransactionRequest {
   // La frecuencia se tipa desde el enum de Prisma, no como unión literal, para
   // que agregar una frecuencia al schema no deje este tipo desactualizado.
   recurrence?: { frequency: RecurrenceFrequency } | null;
+  // Presupuestos compartidos: la persona apagó "Contado en 'X' (compartido)"
+  // antes de guardar. El gasto queda solo en lo suyo.
+  sharedOptOut?: boolean;
 }
 
 interface UpdateTransactionRequest {
@@ -560,7 +590,7 @@ export const getTransactionById = async (req: Request, res: Response) => {
 export const createTransaction = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { amount, type, category_id, description, date, recurrence }: CreateTransactionRequest = req.body;
+    const { amount, type, category_id, description, date, recurrence, sharedOptOut }: CreateTransactionRequest = req.body;
 
     // Validaciones
     if (!amount || !type || !category_id) {
@@ -610,6 +640,7 @@ export const createTransaction = async (req: Request, res: Response) => {
       category_id,
       description,
       date: date ? new Date(date) : new Date(),
+      sharedOptOut: sharedOptOut === true,
     });
 
     // Si el usuario marcó "repetir automáticamente", además de la transacción de
@@ -654,6 +685,9 @@ export const createTransaction = async (req: Request, res: Response) => {
       transaction,
       ...(recurringRule ? { recurring: recurringRule } : {}),
       ...(h13Insight ? { h13Insight } : {}),
+      // Compartido en el que contó (o habría contado, si lo sacó). La app lo usa
+      // para confirmar "Contado en 'Súper casa' (compartido)".
+      ...(await compartidoDeLaTransaccion(userId, transaction)),
     });
   } catch (error) {
     logger.error('Create transaction error:', error);
@@ -793,10 +827,25 @@ export const updateTransaction = async (req: Request, res: Response) => {
       await recalculateBudgetSpent(userId, transaction.category_id, transaction.date);
     }
 
+    // Si la descripción es solo el nombre de una categoría (la app la pone así
+    // cuando el usuario no escribe nada), no es un comercio: no se aprende un
+    // mapeo "SUPERMERCADO → otra categoría" ni se ofrece mover las demás.
+    const cambioDeCategoria = !!updateData.category_id && existingTransaction.category_id !== updateData.category_id;
+    let descripcionEsCategoria = false;
+    if (cambioDeCategoria) {
+      const categoriasInvolucradas = await prisma.category.findMany({
+        where: { id: { in: [existingTransaction.category_id, transaction.category_id] } },
+        select: { name: true },
+      }).catch(() => [] as { name: string }[]);
+      const nombres = categoriasInvolucradas.map(c => c.name.trim().toLowerCase());
+      const descripcion = (existingTransaction.description || transaction.description || '').trim().toLowerCase();
+      descripcionEsCategoria = !descripcion || nombres.includes(descripcion);
+    }
+
     // ============================================
     // SISTEMA DE APRENDIZAJE: Guardar mapeo si cambió la categoría
     // ============================================
-    if (updateData.category_id && existingTransaction.category_id !== updateData.category_id) {
+    if (cambioDeCategoria && !descripcionEsCategoria) {
       // La descripción suele contener el nombre del comercio
       const merchantName = existingTransaction.description || transaction.description;
 
@@ -827,7 +876,7 @@ export const updateTransaction = async (req: Request, res: Response) => {
     // Aquí solo se CUENTAN y se le devuelven a la app para que pregunte. No se
     // tocan solas: cambiarle 8 transacciones sin avisar es peor que dejarlas.
     let similares: { cantidad: number; comercio: string; prefijo: string } | null = null;
-    if (updateData.category_id && existingTransaction.category_id !== updateData.category_id) {
+    if (cambioDeCategoria && !descripcionEsCategoria) {
       const prefijo = prefijoDeComercio(existingTransaction.description || '');
 
       if (prefijo) {

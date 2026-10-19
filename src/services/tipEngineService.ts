@@ -6,11 +6,26 @@ import crypto from 'crypto';
 
 import { logger } from '../utils/logger';
 import { OpenAiUsageService } from './openAiUsageService';
-import { calculateOpenAICost } from '../config/openaiPricing';
 
 // Configuración
 const TIP_COOLDOWN_HOURS = 72; // No enviar otro tip si recibió uno en las últimas 72 horas
 const MAX_TIPS_PER_WEEK = 2;
+// Un push se lee de un vistazo: más largo se corta en la pantalla bloqueada.
+const MAX_CONTENIDO_TIP = 140;
+const MAX_TITULO_TIP = 40;
+
+const SIMBOLOS: Record<string, string> = { DOP: 'RD$', 'RD$': 'RD$', RD: 'RD$', USD: 'US$', 'US$': 'US$', EUR: '€', MXN: 'MX$', COP: 'COP$' };
+
+/** "RD$12,500": símbolo (no "DOP") y sin centavos, como lo leería una persona. */
+function dineroTip(currency: string, monto: number): string {
+  const simbolo = SIMBOLOS[(currency || '').toUpperCase()] ?? (currency ? `${currency} ` : 'RD$');
+  return `${simbolo}${Math.round(monto).toLocaleString('es-DO')}`;
+}
+
+export interface Enfoque {
+  clave: string;
+  datos: string;
+}
 
 export interface UserFinancialContext {
   userId: string;
@@ -36,6 +51,7 @@ export interface UserFinancialContext {
   dayOfMonth: number;
   isEndOfMonth: boolean;
   isStartOfMonth: boolean;
+  diasParaFinDeMes: number;
 }
 
 export interface GeneratedTip {
@@ -104,8 +120,13 @@ export class TipEngineService {
       // 5. Recopilar contexto financiero del usuario
       const context = await this.gatherUserContext(userId);
 
-      // 6. Generar tip con IA
-      const tip = await this.generateTipWithAI(context);
+      // 6. Generar tip con IA (con otro tema que el del último tip)
+      const ultimoTip = await prisma.userTipHistory.findFirst({
+        where: { userId },
+        orderBy: { sentAt: 'desc' },
+        select: { category: true },
+      });
+      const tip = await this.generateTipWithAI(context, ultimoTip?.category);
 
       if (!tip) {
         return { sent: false, reason: 'No se pudo generar el tip' };
@@ -293,79 +314,156 @@ export class TipEngineService {
       currentMonth: months[now.getMonth()],
       dayOfMonth: now.getDate(),
       isEndOfMonth: now.getDate() >= 25,
-      isStartOfMonth: now.getDate() <= 5
+      isStartOfMonth: now.getDate() <= 5,
+      diasParaFinDeMes: endOfMonth.getDate() - now.getDate()
     };
+  }
+
+  /**
+   * Elige el ÚNICO tema del tip, según el caso y en orden de urgencia. Antes la
+   * IA recibía todo y mezclaba cuatro consejos en un push que no se leía entero.
+   * Se salta el tema del tip anterior para no repetir lo mismo cada vez.
+   */
+  static elegirEnfoque(ctx: UserFinancialContext, evitar?: string | null): Enfoque {
+    const m = (n: number) => dineroTip(ctx.currency, n);
+    const candidatos: Enfoque[] = [];
+
+    const excedido = [...ctx.budgets].filter(b => b.percentage >= 100).sort((a, b) => (b.spent - b.limit) - (a.spent - a.limit))[0];
+    if (excedido) {
+      candidatos.push({
+        clave: 'presupuesto_excedido',
+        datos: `Presupuesto "${excedido.name}": límite ${m(excedido.limit)}, lleva ${m(excedido.spent)}. YA SE PASÓ por ${m(excedido.spent - excedido.limit)}: ese dinero ya se gastó, NO es dinero que sobra ni que pueda usar. El tip es para no pasarse más lo que queda de mes.`,
+      });
+    }
+
+    const cerca = [...ctx.budgets].filter(b => b.percentage >= 80 && b.percentage < 100).sort((a, b) => b.percentage - a.percentage)[0];
+    if (cerca) {
+      candidatos.push({
+        clave: 'presupuesto_cerca',
+        datos: `Presupuesto "${cerca.name}": usado ${cerca.percentage.toFixed(0)}% (${m(cerca.spent)} de ${m(cerca.limit)}). Le quedan ${m(cerca.limit - cerca.spent)} y ${ctx.diasParaFinDeMes === 0 ? 'hoy es el último día del mes' : ctx.diasParaFinDeMes === 1 ? 'falta 1 día para que termine el mes' : `faltan ${ctx.diasParaFinDeMes} días para que termine el mes`}.`,
+      });
+    }
+
+    const estancada = [...ctx.goals]
+      .filter(g => g.daysSinceContribution !== null && g.daysSinceContribution >= 14)
+      .sort((a, b) => (b.daysSinceContribution ?? 0) - (a.daysSinceContribution ?? 0))[0];
+    if (estancada) {
+      candidatos.push({
+        clave: 'meta_estancada',
+        datos: `Meta "${estancada.name}": lleva ${m(estancada.current)} de ${m(estancada.target)} (${estancada.percentage.toFixed(0)}%), y ${estancada.daysSinceContribution} días sin aportar.`,
+      });
+    }
+
+    if (ctx.antExpensePercentage > 15) {
+      candidatos.push({
+        clave: 'gastos_hormiga',
+        datos: `Gastos pequeños (de ${m(500)} o menos) este mes: ${m(ctx.antExpenseTotal)}, el ${ctx.antExpensePercentage.toFixed(0)}% de todo lo que gastó.`,
+      });
+    }
+
+    const top = ctx.topExpenseCategories[0];
+    if (top && top.percentage >= 25) {
+      candidatos.push({
+        clave: 'categoria_top',
+        datos: `Su mayor gasto del mes es "${top.category}": ${m(top.amount)}, el ${top.percentage.toFixed(0)}% de lo que gastó.`,
+      });
+    }
+
+    if (ctx.totalIncome > 0) {
+      candidatos.push({
+        clave: 'ahorro_del_mes',
+        datos: ctx.totalIncome >= ctx.totalExpenses
+          ? `Este mes le entraron ${m(ctx.totalIncome)} y gastó ${m(ctx.totalExpenses)}: le quedan ${m(ctx.totalIncome - ctx.totalExpenses)} (${ctx.savingsRate.toFixed(0)}% de lo que ganó).`
+          : `Este mes le entraron ${m(ctx.totalIncome)} y gastó ${m(ctx.totalExpenses)}: está gastando ${m(ctx.totalExpenses - ctx.totalIncome)} más de lo que ganó.`,
+      });
+    }
+
+    candidatos.push({ clave: 'general', datos: 'Sin datos suficientes del mes: da un hábito sencillo y concreto para registrar o controlar gastos.' });
+
+    return candidatos.find(c => c.clave !== evitar) ?? candidatos[0];
   }
 
   /**
    * Genera un tip usando IA
    */
-  private static async generateTipWithAI(context: UserFinancialContext): Promise<GeneratedTip | null> {
-    try {
-      const prompt = this.buildPrompt(context);
-
-      const response = await openai.chat.completions.create({
-        model: 'gpt-5.4-mini',
-        messages: [
-          {
-            role: 'system',
-            content: `Eres Zenio, un asistente financiero amigable y directo. Tu tarea es generar UN solo tip financiero personalizado basado en los datos del usuario.
+  private static async generateTipWithAI(context: UserFinancialContext, evitar?: string | null): Promise<GeneratedTip | null> {
+    const enfoque = this.elegirEnfoque(context, evitar);
+    const prompt = this.buildPrompt(context, enfoque);
+    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+      {
+        role: 'system',
+        content: `Eres Zenio, el asistente financiero de FinZen. Escribes UN tip corto que llega como notificación push al celular.
 
 REGLAS:
-- Máximo 2 oraciones
-- Sé específico usando los datos proporcionados (montos, nombres de metas, categorías)
-- Tono amigable pero directo, tutea al usuario
-- El tip debe ser ACCIONABLE (algo que pueda hacer hoy)
-- Usa emojis con moderación (máximo 1)
-- Responde SOLO en formato JSON: {"title": "...", "content": "...", "category": "..."}`
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        temperature: 0.8,
-        max_completion_tokens: 200
-      });
+- Habla SOLO del tema que te dan. Nada de otros presupuestos, metas o consejos extra.
+- "content": UNA oración, máximo ${MAX_CONTENIDO_TIP} caracteres. Tutea, sé directo y di algo concreto que pueda hacer hoy o esta semana.
+- "title": máximo ${MAX_TITULO_TIP} caracteres, sin emojis.
+- Usa los montos EXACTAMENTE como vienen escritos (con su símbolo). No inventes cifras ni porcentajes.
+- Usa el nombre del presupuesto o de la meta tal como viene.
+- Si un presupuesto ya se pasó, lo pasado ya se gastó: NUNCA lo llames "extra", "sobrante" ni digas que lo use o lo guarde.
+- Responde SOLO en JSON: {"title": "...", "content": "..."}`,
+      },
+      { role: 'user', content: prompt },
+    ];
 
-      const content = response.choices[0]?.message?.content?.trim();
+    try {
+      // Hasta dos intentos: si el primero sale largo, se le pide más corto.
+      for (let intento = 1; intento <= 2; intento++) {
+        const response = await openai.chat.completions.create({
+          model: 'gpt-5.4-mini',
+          messages,
+          temperature: 0.8,
+          max_completion_tokens: 200,
+        });
 
-      // Log OpenAI usage
-      const cost = calculateOpenAICost(
-        'gpt-5.4-mini',
-        response.usage?.prompt_tokens,
-        response.usage?.completion_tokens
-      );
-      OpenAiUsageService.logUsageAsync({
-        userId: context.userId,
-        feature: 'tip_engine',
-        model: 'gpt-5.4-mini',
-        inputTokens: response.usage?.prompt_tokens,
-        outputTokens: response.usage?.completion_tokens,
-        status: 'success',
-      });
+        const content = response.choices[0]?.message?.content?.trim();
 
-      if (!content) {
-        logger.error('[TipEngine] Respuesta vacía de OpenAI');
-        return null;
+        // Log OpenAI usage
+        OpenAiUsageService.logUsageAsync({
+          userId: context.userId,
+          feature: 'tip_engine',
+          model: 'gpt-5.4-mini',
+          inputTokens: response.usage?.prompt_tokens,
+          outputTokens: response.usage?.completion_tokens,
+          status: 'success',
+        });
+
+        if (!content) {
+          logger.error('[TipEngine] Respuesta vacía de OpenAI');
+          return null;
+        }
+
+        // Parsear JSON de la respuesta
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          logger.error('[TipEngine] No se encontró JSON en respuesta:', content);
+          return null;
+        }
+
+        const crudo = JSON.parse(jsonMatch[0]) as Partial<GeneratedTip>;
+        // El título ya lleva 💡 delante (notifyTip): otro emoji sobra.
+        const title = String(crudo.title || '').replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200D\uFE0F]/gu, '').replace(/\s+/g, ' ').trim();
+        const texto = String(crudo.content || '').trim();
+
+        // Validar estructura
+        if (!title || !texto) {
+          logger.error('[TipEngine] Tip incompleto:', crudo);
+          return null;
+        }
+
+        if (texto.length <= MAX_CONTENIDO_TIP + 20 && title.length <= MAX_TITULO_TIP + 10) {
+          return { title, content: texto, category: enfoque.clave };
+        }
+
+        messages.push({ role: 'assistant', content: jsonMatch[0] });
+        messages.push({
+          role: 'user',
+          content: `Muy largo (${texto.length} caracteres). Reescríbelo en UNA oración de máximo ${MAX_CONTENIDO_TIP} caracteres, mismo tema. Solo el JSON.`,
+        });
       }
 
-      // Parsear JSON de la respuesta
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        logger.error('[TipEngine] No se encontró JSON en respuesta:', content);
-        return null;
-      }
-
-      const tip = JSON.parse(jsonMatch[0]) as GeneratedTip;
-
-      // Validar estructura
-      if (!tip.title || !tip.content || !tip.category) {
-        logger.error('[TipEngine] Tip incompleto:', tip);
-        return null;
-      }
-
-      return tip;
+      logger.error(`[TipEngine] Tip demasiado largo tras 2 intentos para ${context.userId}; no se envía`);
+      return null;
 
     } catch (error: any) {
       logger.error('[TipEngine] Error llamando a OpenAI:', error);
@@ -374,77 +472,19 @@ REGLAS:
   }
 
   /**
-   * Construye el prompt para la IA
+   * Construye el prompt para la IA: solo el tema elegido, con los montos ya
+   * escritos como los verá el usuario.
    */
-  private static buildPrompt(ctx: UserFinancialContext): string {
+  private static buildPrompt(ctx: UserFinancialContext, enfoque: Enfoque): string {
     const parts: string[] = [];
-
-    parts.push(`DATOS DE ${ctx.userName.toUpperCase()}:`);
-    parts.push(`- Moneda: ${ctx.currency}`);
-    parts.push(`- Mes actual: ${ctx.currentMonth} (día ${ctx.dayOfMonth})`);
+    parts.push(`Usuario: ${ctx.userName.split(' ')[0]}`);
+    parts.push(`Fecha: día ${ctx.dayOfMonth} de ${ctx.currentMonth}${ctx.isEndOfMonth ? ' (fin de mes)' : ctx.isStartOfMonth ? ' (inicio de mes)' : ''}`);
+    if (ctx.currentMonth === 'Diciembre') parts.push('Temporada navideña');
     parts.push('');
-
-    // Resumen financiero
-    parts.push('RESUMEN DEL MES:');
-    parts.push(`- Ingresos: ${ctx.currency}${ctx.totalIncome.toLocaleString()}`);
-    parts.push(`- Gastos: ${ctx.currency}${ctx.totalExpenses.toLocaleString()}`);
-    parts.push(`- Tasa de ahorro: ${ctx.savingsRate.toFixed(1)}%`);
+    parts.push(`TEMA DEL TIP: ${enfoque.clave}`);
+    parts.push(enfoque.datos);
     parts.push('');
-
-    // Top gastos
-    if (ctx.topExpenseCategories.length > 0) {
-      parts.push('TOP CATEGORÍAS DE GASTO:');
-      ctx.topExpenseCategories.slice(0, 3).forEach((cat, i) => {
-        parts.push(`${i + 1}. ${cat.category}: ${ctx.currency}${cat.amount.toLocaleString()} (${cat.percentage.toFixed(1)}%)`);
-      });
-      parts.push('');
-    }
-
-    // Presupuestos
-    if (ctx.budgets.length > 0) {
-      parts.push('PRESUPUESTOS:');
-      ctx.budgets.forEach(b => {
-        const status = b.percentage >= 100 ? '🔴 EXCEDIDO' : b.percentage >= 80 ? '🟡 CERCA' : '🟢 OK';
-        parts.push(`- ${b.name}: ${b.percentage.toFixed(0)}% usado (${ctx.currency}${b.spent.toLocaleString()}/${ctx.currency}${b.limit.toLocaleString()}) ${status}`);
-      });
-      parts.push('');
-    }
-
-    // Metas
-    if (ctx.goals.length > 0) {
-      parts.push('METAS:');
-      ctx.goals.forEach(g => {
-        const stagnant = g.daysSinceContribution !== null && g.daysSinceContribution >= 7
-          ? ` (⚠️ ${g.daysSinceContribution} días sin aportar)`
-          : '';
-        parts.push(`- ${g.name}: ${g.percentage.toFixed(0)}% (${ctx.currency}${g.current.toLocaleString()}/${ctx.currency}${g.target.toLocaleString()})${stagnant}`);
-      });
-      parts.push('');
-    }
-
-    // Gastos hormiga
-    if (ctx.antExpensePercentage > 15) {
-      parts.push(`GASTOS HORMIGA: ${ctx.currency}${ctx.antExpenseTotal.toLocaleString()} (${ctx.antExpensePercentage.toFixed(1)}% del gasto total)`);
-      parts.push('');
-    }
-
-    // Contexto especial
-    const specialContext: string[] = [];
-    if (ctx.isEndOfMonth) specialContext.push('Es fin de mes');
-    if (ctx.isStartOfMonth) specialContext.push('Es inicio de mes');
-    if (ctx.exceededBudgets.length > 0) specialContext.push(`Presupuestos excedidos: ${ctx.exceededBudgets.join(', ')}`);
-    if (ctx.stagnantGoals.length > 0) specialContext.push(`Metas estancadas: ${ctx.stagnantGoals.join(', ')}`);
-    if (ctx.currentMonth === 'Diciembre') specialContext.push('Temporada navideña');
-    if (ctx.currentMonth === 'Enero') specialContext.push('Año nuevo, buen momento para metas');
-
-    if (specialContext.length > 0) {
-      parts.push('CONTEXTO ESPECIAL:');
-      specialContext.forEach(c => parts.push(`- ${c}`));
-      parts.push('');
-    }
-
-    parts.push('Genera UN tip financiero personalizado basado en estos datos.');
-
+    parts.push('Escribe el tip sobre este tema y nada más.');
     return parts.join('\n');
   }
 
@@ -466,7 +506,7 @@ REGLAS:
     prompt: string;
   }> {
     const context = await this.gatherUserContext(userId);
-    const prompt = this.buildPrompt(context);
+    const prompt = this.buildPrompt(context, this.elegirEnfoque(context));
     const tip = await this.generateTipWithAI(context);
 
     return { context, tip, prompt };
