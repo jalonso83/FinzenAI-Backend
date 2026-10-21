@@ -148,7 +148,8 @@ export const volverAContar = async (req: Request, res: Response) => {
 
 export const compartidoDeCategoria = async (req: Request, res: Response) => {
   try {
-    return res.json({ compartido: await shared.compartidoDeCategoria(req.user!.id, req.params.categoryId) });
+    const transactionId = typeof req.query.transactionId === 'string' ? req.query.transactionId : undefined;
+    return res.json({ compartido: await shared.compartidoDeCategoria(req.user!.id, req.params.categoryId, transactionId) });
   } catch (error) {
     return manejar(res, error, 'compartido de categoría');
   }

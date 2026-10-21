@@ -1081,7 +1081,12 @@ export async function volverAContar(transactionId: string, userId: string) {
  * hay. Lo usan el formulario de transacción y Zenio para decir "Contado en
  * 'Súper casa' (compartido)".
  */
-export async function compartidoDeCategoria(userId: string, categoryId: string) {
+/**
+ * `transactionId` (opcional, al editar un gasto): dice además si ESE gasto
+ * propio sigue "por confirmar", para que el formulario ofrezca confirmarlo en
+ * vez de mostrar el interruptor como si ya estuviera confirmado.
+ */
+export async function compartidoDeCategoria(userId: string, categoryId: string, transactionId?: string) {
   const m = await prisma.sharedMember.findFirst({
     where: { userId, status: 'ACTIVE', group: { kind: 'BUDGET', categoryId, endedAt: null, pausedAt: null } },
     select: { groupId: true },
@@ -1090,5 +1095,15 @@ export async function compartidoDeCategoria(userId: string, categoryId: string) 
   const otros = await prisma.sharedMember.count({ where: { groupId: m.groupId, status: 'ACTIVE', userId: { not: userId } } });
   if (otros === 0) return null; // el dueño solo, sin nadie más: no es "compartido" todavía
   const budget = await presupuestoVigente(m.groupId);
-  return budget ? { groupId: m.groupId, budgetId: budget.id, name: budget.name } : null;
+  if (!budget) return null;
+
+  // Misma fuente que la lista de "por confirmar": así la ventana (período y
+  // día de entrada) es idéntica. Un gasto viejo de esa categoría no lo ve
+  // nadie, y decirle "los demás solo ven el monto" sería falso.
+  let gastoPorConfirmar = false;
+  if (transactionId) {
+    const pendientes = await porConfirmarDe(userId);
+    gastoPorConfirmar = pendientes.some((p) => p.id === transactionId && p.presupuesto.groupId === m.groupId);
+  }
+  return { groupId: m.groupId, budgetId: budget.id, name: budget.name, gastoPorConfirmar };
 }
