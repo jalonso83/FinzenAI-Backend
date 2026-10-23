@@ -56,7 +56,9 @@ export const getGmailAuthUrl = async (req: Request, res: Response) => {
 
     // Verificar si ya hay una conexión de Gmail activa
     const existingGmail = await prisma.emailConnection.findFirst({
-      where: { userId, provider: 'GMAIL', isActive: true }
+      // Una conexión REVOKED sigue activa a propósito (para mostrar el aviso),
+      // pero hay que dejarla pasar: el botón "Reconectar" entra por aquí.
+      where: { userId, provider: 'GMAIL', isActive: true, lastSyncStatus: { not: 'REVOKED' } }
     });
 
     if (existingGmail) {
@@ -159,7 +161,9 @@ export const getOutlookAuthUrl = async (req: Request, res: Response) => {
 
     // Verificar si ya hay una conexión de Outlook activa
     const existingOutlook = await prisma.emailConnection.findFirst({
-      where: { userId, provider: 'OUTLOOK', isActive: true }
+      // Una conexión REVOKED sigue activa a propósito (para mostrar el aviso),
+      // pero hay que dejarla pasar: el botón "Reconectar" entra por aquí.
+      where: { userId, provider: 'OUTLOOK', isActive: true, lastSyncStatus: { not: 'REVOKED' } }
     });
 
     if (existingOutlook) {

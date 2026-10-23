@@ -39,6 +39,16 @@ export class EmailSyncService {
     // Intercambiar codigo por tokens
     const tokens = await GmailService.exchangeCodeForTokens(authCode);
 
+    // Google deja desmarcar la casilla de "leer tus correos" en la pantalla de
+    // permisos y aun así devuelve tokens válidos. Antes la conexión se guardaba
+    // igual y cada sincronización fallaba con 403 para siempre. Este mensaje lo
+    // muestra la app tal cual.
+    if (!String(tokens.scope || '').includes('gmail.readonly')) {
+      throw new Error(
+        'No nos diste permiso para leer tus correos. Vuelve a conectar Gmail y marca la casilla que permite ver tus mensajes.'
+      );
+    }
+
     // Obtener email del usuario de Google
     const gmailEmail = await GmailService.getUserEmail(tokens.access_token);
 
@@ -849,6 +859,9 @@ export class EmailSyncService {
       if (this.isTokenRevokedError(error)) {
         await this.finalizeSyncLog(syncLog.id, result, 'FAILED', 'Acceso revocado por el proveedor');
         await this.handleRevokedConnection(connectionId);
+      } else if (this.isInsufficientScopeError(error)) {
+        await this.finalizeSyncLog(syncLog.id, result, 'FAILED', 'Sin permiso para leer correos');
+        await this.handleRevokedConnection(connectionId, 'sinPermiso');
       } else {
         await this.finalizeSyncLog(syncLog.id, result, 'FAILED', error.message);
         await this.updateConnectionStatus(connectionId, 'FAILED', error.message);
@@ -894,17 +907,36 @@ export class EmailSyncService {
   }
 
   /**
+   * ¿Conectó Gmail sin marcar la casilla de leer correos? Google responde 403
+   * "insufficient authentication scopes" en cada lectura. Se mira el mensaje y
+   * no solo el 403, porque otros 403 (p. ej. límite de uso) sí son pasajeros.
+   */
+  private static isInsufficientScopeError(error: any): boolean {
+    if (error?.response?.status !== 403) return false;
+    const err = error?.response?.data?.error ?? {};
+    if (/insufficient authentication scopes/i.test(String(err.message || ''))) return true;
+    const razones = Array.isArray(err.errors) ? err.errors.map((e: any) => e?.reason) : [];
+    return razones.includes('insufficientPermissions');
+  }
+
+  /**
    * Marca la conexión como REVOKED y avisa al usuario para que la reconecte.
    * REVOKED (no `isActive: false`) a propósito: así la conexión sigue visible en
    * la app con su aviso de "Reconectar" en vez de desaparecer sin explicación,
    * pero queda fuera de la cola del scheduler.
    */
-  private static async handleRevokedConnection(connectionId: string): Promise<void> {
+  private static async handleRevokedConnection(
+    connectionId: string,
+    motivo: 'revocado' | 'sinPermiso' = 'revocado'
+  ): Promise<void> {
+    const sinPermiso = motivo === 'sinPermiso';
     const connection = await prisma.emailConnection.update({
       where: { id: connectionId },
       data: {
         lastSyncStatus: 'REVOKED',
-        lastSyncError: 'Se revocó el acceso a tu correo. Vuelve a conectarlo para seguir importando.'
+        lastSyncError: sinPermiso
+          ? 'No tenemos permiso para leer tus correos. Vuelve a conectarlo y marca la casilla que permite ver tus mensajes.'
+          : 'Se revocó el acceso a tu correo. Vuelve a conectarlo para seguir importando.'
         // lastSyncAt NO se toca: dejarlo con la fecha del último sync REAL. Si se
         // actualizara, la app mostraría "última sync: hace 1 hora" y el usuario
         // creería que todo va bien mientras hace días que no importa nada.
@@ -912,12 +944,16 @@ export class EmailSyncService {
       select: { userId: true, email: true, provider: true }
     });
 
-    logger.error(`[EmailSync] Acceso revocado para ${connection.email} (user ${connection.userId}). Conexión marcada REVOKED.`);
+    logger.error(
+      `[EmailSync] ${sinPermiso ? 'Sin permiso de lectura' : 'Acceso revocado'} para ${connection.email} (user ${connection.userId}). Conexión marcada REVOKED.`
+    );
 
     try {
       await NotificationService.sendToUser(connection.userId, NotificationType.SYSTEM, {
-        title: 'Se desconectó tu correo',
-        body: `Perdimos el acceso a ${connection.email}. Vuelve a conectarlo para seguir importando tus gastos automáticamente.`,
+        title: sinPermiso ? 'Falta un permiso en tu correo' : 'Se desconectó tu correo',
+        body: sinPermiso
+          ? `No podemos leer los correos de ${connection.email}. Vuelve a conectarlo y marca la casilla que permite ver tus mensajes.`
+          : `Perdimos el acceso a ${connection.email}. Vuelve a conectarlo para seguir importando tus gastos automáticamente.`,
         data: { screen: 'EmailSync' }
       });
     } catch (notifyError) {

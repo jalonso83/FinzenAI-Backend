@@ -244,7 +244,7 @@ export class OutlookService {
         // Filtrar localmente por sender
         const filteredMessages = response.data.value.filter(msg =>
           senderEmails.some(email =>
-            msg.from.emailAddress.address.toLowerCase() === email.toLowerCase()
+            msg.from?.emailAddress?.address?.toLowerCase() === email.toLowerCase()
           )
         );
 
