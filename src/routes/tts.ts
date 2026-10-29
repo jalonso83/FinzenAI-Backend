@@ -11,6 +11,7 @@ import { openAiTtsService } from '../services/openAiTtsService';
 import { logger } from '../utils/logger';
 import { prisma } from '../lib/prisma';
 import { recordFeatureUsage } from '../lib/featureUsage';
+import { subscriptionService } from '../services/subscriptionService';
 
 const router: RouterType = Router();
 
@@ -43,6 +44,13 @@ router.post('/generate', apiLimiter, authenticateToken, async (req: Request, res
     });
 
     const currency = user?.currency || 'usd';
+
+    // La voz se paga en OpenAI: el plan se revisa AQUÍ y no solo en la app, o
+    // cualquier sesión FREE podría llamar esta ruta directo. Lee el plan
+    // efectivo (pagado, trial o concesión) vía `limits.textToSpeech`.
+    if (!user?.id || !(await subscriptionService.canUseFeature(user.id, 'textToSpeech'))) {
+      return res.status(403).json({ error: 'La voz de Zenio está disponible en los planes Plus y Pro', upgrade: true });
+    }
 
     // Uso REAL de una función premium (la voz de Zenio es de Plus y Pro).
     // Hasta ahora solo medíamos cuándo alguien NO PODÍA usar algo; esto mide

@@ -70,6 +70,33 @@ export const loginLimiter = rateLimit({
 });
 
 /**
+ * Login Email Limiter - Segunda barrera contra fuerza bruta, por CUENTA
+ * 10 intentos fallidos cada 15 minutos por email
+ *
+ * El limitador por IP no frena a quien reparte los intentos entre muchas IPs
+ * (botnets), y el panel admin de la landing llama a este endpoint desde los
+ * servidores de Vercel, así que ahí la IP que se ve es la de Vercel y no la del
+ * atacante. Contando por email, una cuenta concreta (p. ej. un admin de la
+ * whitelist) no admite más de 10 contraseñas malas por ventana, venga de donde
+ * venga. Solo cuenta los fallidos: quien entra bien no gasta cupo.
+ *
+ * Costo asumido: alguien que conozca un email puede bloquear su login 15 min.
+ */
+export const loginEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10, // 10 intentos fallidos
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: rateLimitHandler,
+  keyGenerator: (req: Request): string =>
+    `email:${String(req.body?.email ?? '').trim().toLowerCase()}`,
+  // Sin email no hay cuenta que proteger; el controlador responde 400.
+  skip: (req: Request): boolean =>
+    typeof req.body?.email !== 'string' || req.body.email.trim() === '',
+  skipSuccessfulRequests: true,
+});
+
+/**
  * Register Limiter - Previene creación masiva de cuentas
  * 10 intentos por hora por IP
  */

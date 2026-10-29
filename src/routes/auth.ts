@@ -5,6 +5,7 @@ import { skipOnboarding, completeOnboarding } from '../controllers/onboarding';
 import { authenticateToken } from '../middlewares/auth';
 import {
   loginLimiter,
+  loginEmailLimiter,
   registerLimiter,
   passwordResetLimiter,
   emailVerificationLimiter,
@@ -15,7 +16,7 @@ const router: Router = express.Router();
 
 // Rutas de autenticación (con rate limiting)
 router.post('/register', registerLimiter, register);
-router.post('/login', loginLimiter, login);
+router.post('/login', loginLimiter, loginEmailLimiter, login);
 // SSO: Sign in with Apple / Google. Cubre tanto login como registro nuevo
 // — el endpoint decide internamente vía linkeo automático por sub o email verificado.
 router.post('/apple', loginLimiter, appleSignIn);
