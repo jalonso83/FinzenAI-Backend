@@ -691,6 +691,57 @@ export class AdminService {
     };
   }
 
+  // ─── COBROS POR TIPO ─────────────────────────────────────
+  /**
+   * Clasifica a cada persona con un cobro exitoso en el período como nueva,
+   * renovación o reactivación. Sale de la tabla de pagos y no del evento
+   * `Subscribe`: Stripe dispara ese evento en CADA cobro (renovaciones
+   * incluidas) y RevenueCat solo en la primera compra, así que contarlo mezcla
+   * renovaciones web con altas nuevas.
+   *
+   * Cada cobro se compara con el anterior de la misma persona:
+   *  - nueva: no hay cobro exitoso previo.
+   *  - reactivacion: entre el anterior y este hubo un cobro FALLIDO, o el hueco
+   *    supera el período + 7 días de gracia (37 días mensual, 372 anual; el
+   *    período se infiere del monto anterior, ≥ $40 = anual).
+   *  - renovacion: todo lo demás.
+   * Una fila por persona: con dos cobros en el período gana el de mayor peso
+   * (nueva > reactivación > renovación).
+   */
+  private static async clasificarCobros(from: Date, to: Date) {
+    return prisma.$queryRawUnsafe<{ userId: string; tipo: 'nueva' | 'renovacion' | 'reactivacion' }[]>(
+      `WITH ok AS (
+         SELECT p."userId", p."createdAt",
+                LAG(p."createdAt") OVER w AS prev_at,
+                LAG(p.amount) OVER w AS prev_amount
+         FROM payments p
+         WHERE p.status = 'SUCCEEDED' AND p.amount > 0
+         WINDOW w AS (PARTITION BY p."userId" ORDER BY p."createdAt")
+       ), clasificados AS (
+         SELECT ok."userId",
+           CASE
+             WHEN ok.prev_at IS NULL THEN 'nueva'
+             WHEN EXISTS (
+               SELECT 1 FROM payments f
+               WHERE f."userId" = ok."userId" AND f.status = 'FAILED'
+                 AND f."createdAt" > ok.prev_at AND f."createdAt" < ok."createdAt"
+             ) THEN 'reactivacion'
+             WHEN ok."createdAt" - ok.prev_at >
+               (CASE WHEN ok.prev_amount >= 40 THEN INTERVAL '372 days' ELSE INTERVAL '37 days' END)
+               THEN 'reactivacion'
+             ELSE 'renovacion'
+           END AS tipo
+         FROM ok
+         WHERE ok."createdAt" >= $1 AND ok."createdAt" <= $2
+       )
+       SELECT DISTINCT ON ("userId") "userId", tipo
+       FROM clasificados
+       ORDER BY "userId", CASE tipo WHEN 'nueva' THEN 0 WHEN 'reactivacion' THEN 1 ELSE 2 END`,
+      from,
+      to,
+    );
+  }
+
   // ─── REVENUE ANALYTICS ───────────────────────────────────
   static async getRevenueAnalytics(query: { from?: string; to?: string }) {
     const { from, to, prevFrom, prevTo } = parseDateRange(query);
@@ -710,6 +761,9 @@ export class AdminService {
       currentActiveSubs,
       stripeRevenueTotal,
       revenuecatRevenueTotal,
+      cobrosDelPeriodo,
+      cobrosDelPeriodoAnterior,
+      suscriptoresDePago,
     ] = await Promise.all([
       // Subscriptions by status
       prisma.subscription.groupBy({
@@ -819,7 +873,41 @@ export class AdminService {
           AND p."createdAt" <= ${to}
           AND s."paymentProvider" = 'APPLE'
       `,
+
+      AdminService.clasificarCobros(from, to),
+      AdminService.clasificarCobros(prevFrom, prevTo),
+
+      // Suscriptores de pago de hoy (sin trials), con su primer y último cobro.
+      prisma.$queryRawUnsafe<{
+        userId: string; name: string; lastName: string; email: string;
+        plan: string; status: string; paymentProvider: string | null;
+        cancelAtPeriodEnd: boolean; currentPeriodEnd: Date | null;
+        firstPaymentAt: Date | null; lastPaymentAt: Date | null;
+      }[]>(`
+        SELECT u.id AS "userId", u.name, u."lastName", u.email,
+               s.plan::text AS plan, s.status::text AS status, s."paymentProvider"::text AS "paymentProvider",
+               s."cancelAtPeriodEnd", s."currentPeriodEnd",
+               MIN(p."createdAt") AS "firstPaymentAt", MAX(p."createdAt") AS "lastPaymentAt"
+        FROM subscriptions s
+        JOIN users u ON u.id = s."userId"
+        LEFT JOIN payments p ON p."userId" = s."userId" AND p.status = 'SUCCEEDED' AND p.amount > 0
+        WHERE s.plan IN ('PREMIUM', 'PRO') AND s.status IN ('ACTIVE', 'PAST_DUE')
+        GROUP BY u.id, s.id
+        ORDER BY MIN(p."createdAt") DESC NULLS LAST
+      `),
     ]);
+
+    const contarPorTipo = (filas: { tipo: string }[], tipo: string) =>
+      filas.filter((f) => f.tipo === tipo).length;
+    const tipoEnPeriodo = new Map(cobrosDelPeriodo.map((c) => [c.userId, c.tipo]));
+    const subscriptionsByKind = {
+      nuevas: contarPorTipo(cobrosDelPeriodo, 'nueva'),
+      renovaciones: contarPorTipo(cobrosDelPeriodo, 'renovacion'),
+      reactivaciones: contarPorTipo(cobrosDelPeriodo, 'reactivacion'),
+      nuevasChange: pctChange(contarPorTipo(cobrosDelPeriodo, 'nueva'), contarPorTipo(cobrosDelPeriodoAnterior, 'nueva')),
+      renovacionesChange: pctChange(contarPorTipo(cobrosDelPeriodo, 'renovacion'), contarPorTipo(cobrosDelPeriodoAnterior, 'renovacion')),
+      reactivacionesChange: pctChange(contarPorTipo(cobrosDelPeriodo, 'reactivacion'), contarPorTipo(cobrosDelPeriodoAnterior, 'reactivacion')),
+    };
 
     // Calculate MRR from active subscriptions, normalized for billing period
     let mrrCurrent = 0;
@@ -910,6 +998,12 @@ export class AdminService {
         stripe: Math.round((stripeRevenueTotal[0]?.total || 0) * 100) / 100,
         revenuecat: Math.round((revenuecatRevenueTotal[0]?.total || 0) * 100) / 100,
       },
+      subscriptionsByKind,
+      paidSubscribers: suscriptoresDePago.map((s) => ({
+        ...s,
+        // Qué fue su cobro en el período, o null si no pagó en él.
+        tipoEnPeriodo: tipoEnPeriodo.get(s.userId) ?? null,
+      })),
       period: { from, to },
     };
   }
