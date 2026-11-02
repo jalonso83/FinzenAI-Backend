@@ -13,6 +13,8 @@ import { historialPrimeraSyncDias } from '../config/trial';
 import { subscriptionService } from './subscriptionService';
 import { CardExclusionService, CARD_EXCLUDED_SKIPPED } from './cardExclusionService';
 import { avisarGastosPorConfirmar } from './sharedService';
+import { getTimezoneByCountry, diaLocalKey, sumarMeses, inicioDiaLocalUtc } from '../utils/timezone';
+import { randomUUID } from 'crypto';
 
 import { logger } from '../utils/logger';
 export interface SyncResult {
@@ -22,6 +24,43 @@ export interface SyncResult {
   emailsSkipped: number;
   transactionsCreated: number;
   errors: string[];
+  /** La búsqueda llegó al tope de correos y quedaron más sin leer. */
+  quedanMas?: boolean;
+  /** No corrió: esa conexión ya se estaba sincronizando. */
+  omitida?: boolean;
+}
+
+/**
+ * Tope de correos por lectura. Antes eran 100 en una sola página, y en la
+ * primera lectura eso cortaba el historial sin avisar (ver GmailService.
+ * searchBankEmails). Cada correo nuevo pasa por la IA, así que el tope sigue
+ * haciendo falta: con 500 cabe un trimestre de alguien que usa mucho la tarjeta
+ * y la lectura no se va a media hora.
+ */
+const MAX_CORREOS_POR_LECTURA = 500;
+
+/**
+ * La primera lectura va con menos: la persona la está mirando en vivo justo
+ * después de conectar, y 500 correos con IA son 20-40 minutos. 200 duplica lo
+ * de antes y cubre los 90 días de casi todos; lo que falte lo completa "Buscar
+ * más atrás", que sigue desde el correo más viejo que ya entró.
+ */
+const MAX_CORREOS_PRIMERA_LECTURA = 200;
+
+/** Meses máximos de "Buscar más atrás". */
+export const MAX_MESES_HACIA_ATRAS = 12;
+
+/** Aproximado: el log no guarda si quedó algo, solo cuántos encontró. Dar justo
+ *  con uno de los dos topes casi siempre es haberse cortado ahí. */
+const llegoAlTope = (encontrados: number) =>
+  encontrados === MAX_CORREOS_PRIMERA_LECTURA || encontrados >= MAX_CORREOS_POR_LECTURA;
+
+/** Una búsqueda "Buscar más atrás": qué logs abrió y si ya terminó entera. */
+interface LoteHaciaAtras {
+  userId: string;
+  logIds: string[];
+  terminado: boolean;
+  creado: number;
 }
 
 export class EmailSyncService {
@@ -209,6 +248,8 @@ export class EmailSyncService {
      *  la app lo trajera cocido, cambiar el historial desde el servidor la
      *  dejaría mintiendo. */
     historialDias: number;
+    /** La corrida llegó al tope de correos: puede haber más por leer. */
+    quedanMas: boolean;
   }> {
     const ultima = await prisma.emailSyncLog.findFirst({
       where: { emailConnection: { userId } },
@@ -232,6 +273,7 @@ export class EmailSyncService {
         transaccionesCreadas: 0,
         terminado: false,
         historialDias,
+        quedanMas: false,
       };
     }
 
@@ -242,6 +284,49 @@ export class EmailSyncService {
       transaccionesCreadas: ultima.transactionsCreated,
       terminado: ultima.status !== 'IN_PROGRESS',
       historialDias,
+      quedanMas: llegoAlTope(ultima.emailsFound),
+    };
+  }
+
+  /**
+   * Avance de una búsqueda "Buscar más atrás", sumando todas sus corridas.
+   *
+   * Con Gmail y Outlook la búsqueda corre una conexión tras otra, cada una con
+   * su log, y el avance normal solo mira el último: la app daba "Listo" al
+   * terminar la primera y enseñaba solo sus números, o contaba como suyo el log
+   * de la sync de cada hora. El lote dice exactamente qué logs son de esta
+   * búsqueda y cuándo terminó entera.
+   *
+   * Devuelve null si el lote no existe o no es de este usuario.
+   */
+  static async getProgresoLote(userId: string, loteId: string) {
+    const lote = this.lotesHaciaAtras.get(loteId);
+    if (!lote || lote.userId !== userId) return null;
+
+    const logs = lote.logIds.length
+      ? await prisma.emailSyncLog.findMany({
+          where: { id: { in: lote.logIds } },
+          select: { status: true, emailsFound: true, emailsProcessed: true, transactionsCreated: true },
+        })
+      : [];
+
+    const algunaBien = logs.some((l) => l.status === 'SUCCESS');
+    const algunaMal = logs.some((l) => l.status === 'FAILED');
+    // Terminada, cuenta como buena si alguna conexión salió bien: lo que entró,
+    // entró. Si no corrió ninguna (todas omitidas) o todas fallaron, es fallo.
+    const estado: 'IN_PROGRESS' | 'SUCCESS' | 'FAILED' = !lote.terminado
+      ? 'IN_PROGRESS'
+      : algunaBien ? 'SUCCESS' : 'FAILED';
+
+    return {
+      estado,
+      correosEncontrados: logs.reduce((s, l) => s + l.emailsFound, 0),
+      correosProcesados: logs.reduce((s, l) => s + l.emailsProcessed, 0),
+      transaccionesCreadas: logs.reduce((s, l) => s + l.transactionsCreated, 0),
+      terminado: lote.terminado,
+      historialDias: historialPrimeraSyncDias(),
+      quedanMas: logs.some((l) => llegoAlTope(l.emailsFound)),
+      conexionesConFallo: algunaMal && algunaBien,
     };
   }
 
@@ -391,7 +476,25 @@ export class EmailSyncService {
    */
   private static sincronizacionesEnCurso = new Set<string>();
 
-  static async syncUserEmails(connectionId: string): Promise<SyncResult> {
+  /** Búsquedas "Buscar más atrás" por id de lote. En memoria por lo mismo que la
+   *  guarda de arriba: si el proceso muere la búsqueda muere con él, y la app
+   *  recibe "no pudimos terminar" en vez de esperar a algo que ya no corre. */
+  private static lotesHaciaAtras = new Map<string, LoteHaciaAtras>();
+
+  /** ¿Alguna de estas conexiones se está sincronizando ahora mismo? */
+  static algunaEnCurso(connectionIds: string[]): boolean {
+    return connectionIds.some((id) => this.sincronizacionesEnCurso.has(id));
+  }
+
+  /**
+   * @param haciaAtras "Buscar más atrás": lee solo el tramo [desde, hasta) y no
+   *   toca `lastSyncAt`, porque de esa fecha arranca la sync de cada hora y
+   *   moverla a "ahora" haría que se saltara lo que llegó entre medias.
+   */
+  static async syncUserEmails(
+    connectionId: string,
+    haciaAtras?: { desde: Date; hasta?: Date; loteId?: string }
+  ): Promise<SyncResult> {
     const result: SyncResult = {
       success: false,
       emailsFound: 0,
@@ -406,6 +509,7 @@ export class EmailSyncService {
     if (this.sincronizacionesEnCurso.has(connectionId)) {
       logger.log(`[EmailSync] Conexión ${connectionId} ya se está sincronizando, se ignora la petición duplicada`);
       result.success = true;
+      result.omitida = true;
       return result;
     }
     this.sincronizacionesEnCurso.add(connectionId);
@@ -418,6 +522,9 @@ export class EmailSyncService {
         status: 'IN_PROGRESS'
       }
     });
+    if (haciaAtras?.loteId) {
+      this.lotesHaciaAtras.get(haciaAtras.loteId)?.logIds.push(syncLog.id);
+    }
 
     try {
       // Obtener conexion con filtros y suscripción del usuario
@@ -476,9 +583,22 @@ export class EmailSyncService {
 
       // Asegurar token valido según el proveedor
       const isOutlook = connection.provider === 'OUTLOOK';
-      const accessToken = isOutlook
+      let accessToken = isOutlook
         ? await OutlookService.ensureValidToken(connection)
         : await GmailService.ensureValidToken(connection);
+
+      // El token dura una hora y `ensureValidToken` solo lo renueva si le quedan
+      // menos de 5 minutos. Con lecturas de cientos de correos (3-5 s cada uno)
+      // una corrida puede durar más que lo que le queda, y desde ahí cada correo
+      // daría 401 en silencio. Se revisa cada pocos correos, releyendo la fila
+      // porque el vencimiento que trae `connection` ya no es el vigente.
+      const renovarTokenSiHaceFalta = async () => {
+        const fresca = await prisma.emailConnection.findUnique({ where: { id: connectionId } });
+        if (!fresca) return;
+        accessToken = isOutlook
+          ? await OutlookService.ensureValidToken(fresca)
+          : await GmailService.ensureValidToken(fresca);
+      };
 
       // Conexión sin NINGÚN filtro de banco (ni activo ni apagado): nunca se le
       // crearon. Pasó con conexiones del 16 y 17 de sept de 2026 cuyo país no
@@ -512,7 +632,7 @@ export class EmailSyncService {
         logger.error(`[EmailSync] Conexión ${connectionId} sin remitentes de banco activos: no se busca nada`);
         result.success = true;
         await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS');
-        await this.updateConnectionStatus(connectionId, 'SUCCESS');
+        await this.updateConnectionStatus(connectionId, 'SUCCESS', undefined, !haciaAtras);
         return result;
       }
 
@@ -533,13 +653,17 @@ export class EmailSyncService {
       //
       // Syncs siguientes: solo desde la última, para no repetir trabajo.
       const inicioHistorial = new Date(Date.now() - historialPrimeraSyncDias() * 24 * 60 * 60 * 1000);
-      const afterDate = importedCount === 0 ? inicioHistorial : (connection.lastSyncAt || inicioHistorial);
+      const afterDate = haciaAtras
+        ? haciaAtras.desde
+        : importedCount === 0 ? inicioHistorial : (connection.lastSyncAt || inicioHistorial);
 
       // En la primera lectura entran hasta 90 días de golpe, y entre ellos puede
       // estar la tarjeta corporativa que el usuario va a apagar al terminar. Si
       // se mandaran alertas de presupuesto ahora, le llegaría "te pasaste" por
-      // gastos que no son suyos, y una notificación no se puede deshacer.
-      const esPrimeraLectura = importedCount === 0;
+      // gastos que no son suyos, y una notificación no se puede deshacer. Lo
+      // mismo con "Buscar más atrás": son gastos de hace meses.
+      const esPrimeraLectura = importedCount === 0 || !!haciaAtras;
+      const topeCorreos = importedCount === 0 && !haciaAtras ? MAX_CORREOS_PRIMERA_LECTURA : MAX_CORREOS_POR_LECTURA;
 
       // Buscar emails según el proveedor
       let messages: any[] = [];
@@ -550,18 +674,22 @@ export class EmailSyncService {
           [...new Set(allSenderEmails)],
           [...new Set(allSubjectKeywords)],
           afterDate,
-          100
+          topeCorreos,
+          { beforeDate: haciaAtras?.hasta }
         );
         messages = searchResult.messages || [];
+        result.quedanMas = !!searchResult.hayMas;
       } else {
         const searchResult = await GmailService.searchBankEmails(
           accessToken,
           [...new Set(allSenderEmails)],
           [...new Set(allSubjectKeywords)],
           afterDate,
-          100
+          topeCorreos,
+          { beforeDate: haciaAtras?.hasta, afterExacto: !!haciaAtras }
         );
         messages = searchResult.messages || [];
+        result.quedanMas = !!searchResult.nextPageToken;
       }
 
       result.emailsFound = messages.length;
@@ -579,7 +707,7 @@ export class EmailSyncService {
       if (messages.length === 0) {
         result.success = true;
         await this.finalizeSyncLog(syncLog.id, result, 'SUCCESS');
-        await this.updateConnectionStatus(connectionId, 'SUCCESS');
+        await this.updateConnectionStatus(connectionId, 'SUCCESS', undefined, !haciaAtras);
         return result;
       }
 
@@ -598,6 +726,10 @@ export class EmailSyncService {
       let revisados = 0;
 
       for (const message of messages) {
+        // Cada 20 correos (~1-2 min): muy por dentro del margen de 5 minutos.
+        if (revisados > 0 && revisados % 20 === 0) {
+          await renovarTokenSiHaceFalta();
+        }
         revisados++;
         try {
           // Verificar si ya fue procesado (usamos gmailMessageId para ambos proveedores por compatibilidad)
@@ -809,7 +941,7 @@ export class EmailSyncService {
       if (result.transactionsCreated > 0) {
         await avisarGastosPorConfirmar(connection.userId, inicioSync);
       }
-      await this.updateConnectionStatus(connectionId, 'SUCCESS');
+      await this.updateConnectionStatus(connectionId, 'SUCCESS', undefined, !haciaAtras);
 
       // ========== GAMIFICACIÓN: Bonus diario por sync activo ==========
       try {
@@ -864,7 +996,7 @@ export class EmailSyncService {
         await this.handleRevokedConnection(connectionId, 'sinPermiso');
       } else {
         await this.finalizeSyncLog(syncLog.id, result, 'FAILED', error.message);
-        await this.updateConnectionStatus(connectionId, 'FAILED', error.message);
+        await this.updateConnectionStatus(connectionId, 'FAILED', error.message, !haciaAtras);
       }
     } finally {
       // En `finally` y no al final del try: si la sincronización falla, la
@@ -1183,12 +1315,13 @@ export class EmailSyncService {
   private static async updateConnectionStatus(
     connectionId: string,
     status: EmailSyncStatus,
-    error?: string
+    error?: string,
+    tocarUltimaSync: boolean = true
   ): Promise<void> {
     await prisma.emailConnection.update({
       where: { id: connectionId },
       data: {
-        lastSyncAt: new Date(),
+        ...(tocarUltimaSync && { lastSyncAt: new Date() }),
         lastSyncStatus: status,
         lastSyncError: error || null
       }
@@ -1305,6 +1438,116 @@ export class EmailSyncService {
     }
 
     return { results, totalTransactions };
+  }
+
+  /**
+   * Día 1 del mes que queda `meses` atrás, a medianoche en la zona del usuario.
+   * El 19 de noviembre con 5 meses es el 1 de junio: se resta y luego se baja al
+   * día 1, que es como la persona piensa "cinco meses para atrás".
+   */
+  static inicioBusquedaHaciaAtras(meses: number, country: string | null | undefined, ahora: Date = new Date()): Date {
+    const tz = getTimezoneByCountry(country);
+    const mesDestino = sumarMeses(diaLocalKey(tz, ahora), -meses).slice(0, 8) + '01';
+    return inicioDiaLocalUtc(tz, mesDestino);
+  }
+
+  /**
+   * "Buscar más atrás": lee el tramo de correo que quedó antes de lo que ya
+   * tiene importado la persona, hasta el día 1 de hace `meses` meses.
+   *
+   * Arranca y devuelve enseguida; la lectura sigue en segundo plano y la app la
+   * sigue por /progress, igual que la primera sincronización. Lanza un Error con
+   * `codigo` para los casos que la app tiene que explicar.
+   */
+  static async buscarMasAtras(userId: string, meses: number): Promise<{
+    desde: Date;
+    conexiones: number;
+    yaCubierto: boolean;
+    /** Para seguir el avance: /progress?lote=<id>. Null si no arrancó nada. */
+    lote: string | null;
+  }> {
+    const fallo = (codigo: string, mensaje: string) => Object.assign(new Error(mensaje), { codigo });
+
+    if (!Number.isInteger(meses) || meses < 1 || meses > MAX_MESES_HACIA_ATRAS) {
+      throw fallo('MESES_INVALIDOS', `Elige entre 1 y ${MAX_MESES_HACIA_ATRAS} meses`);
+    }
+
+    const conexiones = await prisma.emailConnection.findMany({
+      where: { userId, isActive: true, lastSyncStatus: { not: 'REVOKED' } },
+      include: { user: { select: { country: true } } },
+    });
+    if (conexiones.length === 0) {
+      throw fallo('SIN_CONEXION', 'No hay correos conectados');
+    }
+
+    // Una a la vez: con la de cada hora o con otra búsqueda hacia atrás. Se mira
+    // la guarda en memoria, que es la que de verdad sabe si algo corre; el
+    // `lastSyncStatus` de la fila puede quedarse en IN_PROGRESS si el proceso
+    // murió a mitad.
+    if (this.algunaEnCurso(conexiones.map((c) => c.id))) {
+      throw fallo('EN_CURSO', 'Ya estamos revisando tu correo. Espera a que termine.');
+    }
+
+    const desde = this.inicioBusquedaHaciaAtras(meses, conexiones[0].user.country);
+
+    // Cada conexión se lee solo por delante de lo que ya tiene: hasta su correo
+    // importado más viejo. Sin esto la búsqueda empezaría por lo más nuevo y el
+    // tope se gastaría en correos que ya están.
+    const tramos: { connectionId: string; hasta?: Date }[] = [];
+    for (const c of conexiones) {
+      const masViejo = await prisma.importedBankEmail.findFirst({
+        where: { emailConnectionId: c.id },
+        orderBy: { receivedAt: 'asc' },
+        select: { receivedAt: true },
+      });
+      const hasta = masViejo?.receivedAt;
+      if (hasta && hasta <= desde) continue; // esa conexión ya llega hasta ahí
+      // Un segundo de margen: `before` deja fuera el propio instante, y si hay
+      // dos correos en el mismo segundo el segundo no se pierde. El repetido lo
+      // descarta el @@unique.
+      tramos.push({ connectionId: c.id, hasta: hasta ? new Date(hasta.getTime() + 1000) : undefined });
+    }
+
+    if (tramos.length === 0) {
+      return { desde, conexiones: conexiones.length, yaCubierto: true, lote: null };
+    }
+
+    // Los lotes viejos se limpian aquí, al crear uno nuevo: una búsqueda no dura
+    // más de una hora (dos conexiones de 500 correos + reintentos) y la app deja
+    // de preguntar a los 30 minutos.
+    const ahora = Date.now();
+    for (const [id, l] of this.lotesHaciaAtras) {
+      if (l.terminado && ahora - l.creado > 2 * 60 * 60 * 1000) this.lotesHaciaAtras.delete(id);
+    }
+    const loteId = randomUUID();
+    const lote: LoteHaciaAtras = { userId, logIds: [], terminado: false, creado: ahora };
+    this.lotesHaciaAtras.set(loteId, lote);
+
+    // En serie y sin await; la app sigue el lote por /progress?lote=.
+    void (async () => {
+      let transacciones = 0;
+      for (const t of tramos) {
+        try {
+          let r = await this.syncUserEmails(t.connectionId, { desde, hasta: t.hasta, loteId });
+          // Si al llegarle el turno la tomó la sync de cada hora, se espera a que
+          // termine en vez de saltarla en silencio. Hasta ~20 minutos.
+          for (let intento = 0; r.omitida && intento < 40; intento++) {
+            await new Promise((ok) => setTimeout(ok, 30_000));
+            r = await this.syncUserEmails(t.connectionId, { desde, hasta: t.hasta, loteId });
+          }
+          if (r.omitida) {
+            logger.error(`[EmailSync] Búsqueda hacia atrás de ${t.connectionId} omitida: la conexión siguió ocupada`);
+          }
+          transacciones += r.transactionsCreated;
+        } catch (error) {
+          logger.error(`[EmailSync] Falló la búsqueda hacia atrás de ${t.connectionId}:`, error);
+        }
+      }
+      lote.terminado = true;
+      recordFeatureUsage(userId, 'email_sync', 'buscar_mas_atras', { meses, transacciones });
+    })();
+
+    return { desde, conexiones: tramos.length, yaCubierto: false, lote: loteId };
   }
 
   /**

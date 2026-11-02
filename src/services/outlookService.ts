@@ -187,8 +187,12 @@ export class OutlookService {
     senderEmails: string[],
     subjectKeywords: string[],
     afterDate?: Date,
-    maxResults: number = 100
-  ): Promise<{ messages: OutlookMessage[] }> {
+    maxResults: number = 100,
+    opciones: {
+      /** Solo correos recibidos ANTES de este instante. */
+      beforeDate?: Date;
+    } = {}
+  ): Promise<{ messages: OutlookMessage[]; hayMas?: boolean }> {
     // Construir filtro OData para Microsoft Graph
     // Formato: from/emailAddress/address eq 'email@domain.com'
     const senderFilters = senderEmails.map(email =>
@@ -201,31 +205,51 @@ export class OutlookService {
       const dateStr = afterDate.toISOString();
       filter += ` and receivedDateTime ge ${dateStr}`;
     }
+    if (opciones.beforeDate) {
+      filter += ` and receivedDateTime lt ${opciones.beforeDate.toISOString()}`;
+    }
 
     try {
-      const response = await axios.get<OutlookListResponse>(
-        'https://graph.microsoft.com/v1.0/me/messages',
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: {
-            '$filter': filter,
-            '$top': maxResults,
-            '$select': 'id,conversationId,subject,bodyPreview,body,from,receivedDateTime,isRead',
-            '$orderby': 'receivedDateTime desc'
+      // Paginado con @odata.nextLink: el enlace ya trae filtro y orden, así que
+      // las páginas siguientes se piden tal cual, sin parámetros.
+      const messages: OutlookMessage[] = [];
+      let siguiente: string | undefined;
+      let primera = true;
+      do {
+        const response = await axios.get<OutlookListResponse>(
+          primera ? 'https://graph.microsoft.com/v1.0/me/messages' : siguiente!,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            ...(primera && {
+              params: {
+                '$filter': filter,
+                '$top': Math.min(100, maxResults),
+                '$select': 'id,conversationId,subject,bodyPreview,body,from,receivedDateTime,isRead',
+                '$orderby': 'receivedDateTime desc'
+              }
+            })
           }
-        }
-      );
+        );
+        primera = false;
+        messages.push(...(response.data.value || []));
+        siguiente = response.data['@odata.nextLink'];
+      } while (siguiente && messages.length < maxResults);
 
-      return { messages: response.data.value || [] };
+      return { messages: messages.slice(0, maxResults), hayMas: !!siguiente };
 
     } catch (error: any) {
-      // Si el filtro es muy complejo, intentar sin filtro de sender (buscar todos y filtrar después)
+      // Si el filtro es muy complejo, intentar sin filtro de sender (buscar todos y filtrar después).
+      // Este camino NO pagina a propósito: recorre la bandeja entera, no solo
+      // los correos del banco, y paginarlo sería leer mucho más correo ajeno.
       if (error.response?.status === 400) {
         logger.warn('[OutlookService] Complex filter failed, fetching recent emails and filtering locally');
 
         let dateFilter = '';
         if (afterDate) {
           dateFilter = `receivedDateTime ge ${afterDate.toISOString()}`;
+        }
+        if (opciones.beforeDate) {
+          dateFilter += `${dateFilter ? ' and ' : ''}receivedDateTime lt ${opciones.beforeDate.toISOString()}`;
         }
 
         const response = await axios.get<OutlookListResponse>(
@@ -234,7 +258,9 @@ export class OutlookService {
             headers: { Authorization: `Bearer ${accessToken}` },
             params: {
               ...(dateFilter && { '$filter': dateFilter }),
-              '$top': maxResults * 2, // Obtener más para compensar el filtrado local
+              // Obtener más para compensar el filtrado local. Topado en 200 como
+              // antes del paginado: con el tope nuevo serían 1000 correos ajenos.
+              '$top': Math.min(maxResults, 100) * 2,
               '$select': 'id,conversationId,subject,bodyPreview,body,from,receivedDateTime,isRead',
               '$orderby': 'receivedDateTime desc'
             }

@@ -313,6 +313,27 @@ export const getSyncProgress = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'No autorizado' });
     }
 
+    // `?lote=` sigue una búsqueda "Buscar más atrás" entera, sumando sus
+    // conexiones. Si el lote ya no existe (el proceso se reinició y la búsqueda
+    // murió con él) se responde como terminada con fallo, para que la app lo
+    // diga en vez de esperar a algo que ya no corre.
+    const loteId = typeof req.query.lote === 'string' ? req.query.lote : undefined;
+    if (loteId) {
+      const lote = await EmailSyncService.getProgresoLote(userId, loteId);
+      if (!lote) {
+        return res.json({
+          success: true,
+          estado: 'FAILED',
+          correosEncontrados: 0,
+          correosProcesados: 0,
+          transaccionesCreadas: 0,
+          terminado: true,
+          quedanMas: false,
+        });
+      }
+      return res.json({ success: true, ...lote });
+    }
+
     const progreso = await EmailSyncService.getSyncProgress(userId);
     return res.json({ success: true, ...progreso });
   } catch (error: any) {
@@ -358,6 +379,46 @@ export const triggerSync = async (req: Request, res: Response) => {
       error: 'Error en sincronizacion',
       message: error.message
     });
+  }
+};
+
+/**
+ * "Buscar más atrás": lee el correo de hasta `meses` meses atrás (día 1 del mes).
+ * POST /api/email-sync/buscar-atras  { meses: 1..12 }
+ *
+ * Responde enseguida (202) y la lectura sigue en segundo plano; la app la sigue
+ * por /progress. Si lo pedido ya estaba leído, 200 con `yaCubierto: true`.
+ */
+export const buscarMasAtras = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    const meses = Number(req.body?.meses);
+    const { desde, conexiones, yaCubierto, lote } = await EmailSyncService.buscarMasAtras(userId, meses);
+
+    return res.status(yaCubierto ? 200 : 202).json({
+      success: true,
+      desde: desde.toISOString(),
+      conexiones,
+      yaCubierto,
+      lote,
+    });
+  } catch (error: any) {
+    const codigo = error?.codigo as string | undefined;
+    if (codigo === 'MESES_INVALIDOS') {
+      return res.status(400).json({ error: codigo, message: error.message });
+    }
+    if (codigo === 'SIN_CONEXION') {
+      return res.status(404).json({ error: codigo, message: error.message });
+    }
+    if (codigo === 'EN_CURSO') {
+      return res.status(409).json({ error: codigo, message: error.message });
+    }
+    logger.error('[EmailSync] Error en buscar más atrás:', error);
+    return res.status(500).json({ error: 'Error buscando más atrás', message: error.message });
   }
 };
 

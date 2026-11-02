@@ -155,7 +155,14 @@ export class GmailService {
     senderEmails: string[],
     subjectKeywords: string[],
     afterDate?: Date,
-    maxResults: number = 100
+    maxResults: number = 100,
+    opciones: {
+      /** Solo correos recibidos ANTES de este instante. */
+      beforeDate?: Date;
+      /** `afterDate` al segundo y no por día. La búsqueda hacia atrás lo usa
+       *  para pararse justo en el día 1 del mes que pidió el usuario. */
+      afterExacto?: boolean;
+    } = {}
   ): Promise<GmailListResponse> {
     // Construir query de busqueda - SOLO por sender, sin requerir keywords
     // Los keywords se usaban para filtrar pero hacian la busqueda muy restrictiva
@@ -164,19 +171,47 @@ export class GmailService {
     let query = `(${senderQuery})`;
 
     if (afterDate) {
-      const dateStr = afterDate.toISOString().split('T')[0].replace(/-/g, '/');
-      query += ` after:${dateStr}`;
+      // Por defecto va por día, no al segundo, a propósito: la sync de cada hora
+      // busca desde `lastSyncAt`, y Gmail fecha el correo cuando llega, no cuando
+      // termina de indexarlo. El día de solape lo absorbe el @@unique de
+      // ImportedBankEmail; afinar al segundo podría dejar correos fuera.
+      if (opciones.afterExacto) {
+        query += ` after:${Math.floor(afterDate.getTime() / 1000)}`;
+      } else {
+        const dateStr = afterDate.toISOString().split('T')[0].replace(/-/g, '/');
+        query += ` after:${dateStr}`;
+      }
     }
 
-    const response = await axios.get('https://gmail.googleapis.com/gmail/v1/users/me/messages', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      params: {
-        q: query,
-        maxResults
-      }
-    });
+    if (opciones.beforeDate) {
+      query += ` before:${Math.floor(opciones.beforeDate.getTime() / 1000)}`;
+    }
 
-    return response.data;
+    // Paginado. Antes se pedía una sola página de 100 y lo demás se perdía: Gmail
+    // devuelve primero lo más nuevo, y como las syncs siguientes buscan solo desde
+    // la última, los correos más viejos de la primera lectura no volvían nunca. A
+    // 2026-11-02, 42 de 147 primeras lecturas habían chocado justo con 100.
+    const messages: GmailListResponse['messages'] = [];
+    let pageToken: string | undefined;
+    do {
+      const response = await axios.get<GmailListResponse>('https://gmail.googleapis.com/gmail/v1/users/me/messages', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: {
+          q: query,
+          // Gmail no da más de 500 por página.
+          maxResults: Math.min(500, maxResults - messages.length),
+          ...(pageToken && { pageToken })
+        }
+      });
+      messages.push(...(response.data.messages || []));
+      pageToken = response.data.nextPageToken;
+    } while (pageToken && messages.length < maxResults);
+
+    return {
+      messages: messages.slice(0, maxResults),
+      nextPageToken: pageToken,
+      resultSizeEstimate: messages.length
+    };
   }
 
   /**

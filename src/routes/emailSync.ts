@@ -9,6 +9,7 @@ import {
   getConnectionStatus,
   getSyncProgress,
   triggerSync,
+  buscarMasAtras,
   disconnectEmail,
   getImportHistory,
   getSyncLogs,
@@ -58,6 +59,9 @@ router.get('/progress', authenticateToken, requirePlan('PRO'), getSyncProgress);
 
 // Iniciar sincronizacion manual
 router.post('/sync', authenticateToken, requirePlan('PRO'), triggerSync);
+
+// "Buscar más atrás": leer el correo de hasta 12 meses atrás (corre en segundo plano)
+router.post('/buscar-atras', authenticateToken, requirePlan('PRO'), buscarMasAtras);
 
 // Desconectar email (con connectionId específico o cualquiera)
 router.delete('/disconnect/:connectionId?', authenticateToken, requirePlan('PRO'), disconnectEmail);
