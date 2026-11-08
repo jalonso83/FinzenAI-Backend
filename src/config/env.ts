@@ -97,6 +97,8 @@ export const ENV = {
 
   // === EXCHANGE RATES ===
   EXCHANGE_RATE_API_KEY: getOptionalEnv('EXCHANGE_RATE_API_KEY', ''),
+  // % que los bancos cobran sobre la venta del Banco Central en consumos con tarjeta
+  EXCHANGE_RATE_MARGIN_PCT: getOptionalEnv('EXCHANGE_RATE_MARGIN_PCT', '1'),
 
   // === SERVER ===
   PORT: getOptionalEnv('PORT', '3001'),

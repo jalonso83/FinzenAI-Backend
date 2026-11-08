@@ -3,11 +3,17 @@ import axios from 'axios';
 import { prisma } from '../lib/prisma';
 import { ENV } from '../config/env';
 import { logger } from '../utils/logger';
+import { ExchangeRateService } from './exchangeRateService';
 
 /**
  * Exchange Rate Scheduler
  * Descarga tasas de cambio de ExchangeRate-API una vez al día a medianoche.
  * Almacena todas las tasas en la tabla exchange_rates para consulta local.
+ *
+ * El dólar NO se guarda a tasa de mercado: se usa la venta del Banco Central más
+ * EXCHANGE_RATE_MARGIN_PCT (1% por defecto), que es como los bancos dominicanos
+ * cobran los consumos con tarjeta. Con la de mercado los montos no cuadraban con
+ * el estado de cuenta (nov-2026: mercado 60.52, BCRD venta 60.76, BHD 61.40).
  *
  * API: https://v6.exchangerate-api.com/v6/{API_KEY}/latest/USD
  * Plan gratis: 1,500 req/mes — usamos ~30/mes (1/día)
@@ -93,12 +99,17 @@ export class ExchangeRateScheduler {
         throw new Error(`API returned: ${response.data.result}`);
       }
 
-      const rates = response.data.conversion_rates;
-      const dopPerUsd = rates['DOP'];
+      const apiRates = response.data.conversion_rates;
+      const midDopPerUsd = apiRates['DOP'];
 
-      if (!dopPerUsd) {
+      if (!midDopPerUsd) {
         throw new Error('DOP rate not found in API response');
       }
+
+      // El peso se ancla a lo que cobra la tarjeta, no al mercado: las demás monedas
+      // salen de su cruce con el dólar, así que todas quedan con el mismo ajuste.
+      const { dopPerUsd, source } = await this.cardDopPerUsd(midDopPerUsd);
+      const rates = { ...apiRates, DOP: dopPerUsd };
 
       // Fecha de hoy (sin hora) para el campo date
       const today = new Date();
@@ -123,13 +134,13 @@ export class ExchangeRateScheduler {
           update: {
             rateToDop,
             rateToUsd,
-            source: 'ExchangeRate-API'
+            source
           },
           create: {
             currency,
             rateToDop,
             rateToUsd,
-            source: 'ExchangeRate-API',
+            source,
             date: today
           }
         });
@@ -151,6 +162,30 @@ export class ExchangeRateScheduler {
       }
 
       return 0;
+    }
+  }
+
+  /**
+   * Pesos por dólar que cobra una tarjeta: venta del BCRD + margen del banco.
+   * Si el BCRD no responde o da un número raro, cae a la tasa de mercado + margen
+   * (queda ~0.4% por debajo, pero mejor que dejar el día sin tasa).
+   */
+  private static async cardDopPerUsd(midDopPerUsd: number): Promise<{ dopPerUsd: number; source: string }> {
+    const parsed = parseFloat(ENV.EXCHANGE_RATE_MARGIN_PCT);
+    const marginPct = Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 1;
+    const factor = 1 + marginPct / 100;
+
+    try {
+      const bcrd = await ExchangeRateService.fetchBcrdRate();
+      // La venta del BCRD y el mercado no se separan más de ~1%; un 5% es la página rota
+      if (Math.abs(bcrd.sell / midDopPerUsd - 1) > 0.05) {
+        throw new Error(`BCRD sell ${bcrd.sell} too far from market ${midDopPerUsd}`);
+      }
+      logger.log(`[ExchangeRateScheduler] BCRD venta ${bcrd.sell} (${bcrd.publishedLabel ?? 's/f'}) +${marginPct}%`);
+      return { dopPerUsd: bcrd.sell * factor, source: `BCRD venta +${marginPct}%` };
+    } catch (error: any) {
+      logger.error('[ExchangeRateScheduler] BCRD rate unavailable, using market rate:', error.message);
+      return { dopPerUsd: midDopPerUsd * factor, source: `ExchangeRate-API +${marginPct}%` };
     }
   }
 
@@ -182,6 +217,18 @@ export class ExchangeRateScheduler {
         }
       } else {
         logger.log(`[ExchangeRateScheduler] ${count} rates found in DB`);
+
+        // La última tasa es de antes del ancla al BCRD (fuente vieja): se rehace al
+        // arrancar en vez de esperar a medianoche. Solo pasa una vez tras el deploy.
+        const latestUsd = await prisma.exchangeRate.findFirst({
+          where: { currency: 'USD' },
+          orderBy: { date: 'desc' },
+          select: { source: true }
+        });
+        if (latestUsd?.source === 'ExchangeRate-API') {
+          logger.log('[ExchangeRateScheduler] Latest rates are market-only, re-syncing...');
+          await this.syncRates();
+        }
       }
     } catch (error: any) {
       logger.error('[ExchangeRateScheduler] Error checking rates:', error.message);

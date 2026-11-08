@@ -75,6 +75,38 @@ export class ExchangeRateService {
   }
 
   /**
+   * Lee la tasa de referencia publicada en la portada del BCRD, sin cache ni tasa
+   * por defecto: si la página cambia o no responde, lanza error y quien llama decide.
+   * Anclado a las etiquetas del recuadro "Tipo de cambio" para no agarrar otro número.
+   */
+  static async fetchBcrdRate(): Promise<{ buy: number; sell: number; publishedLabel: string | null }> {
+    const response = await axios.get<string>(BCRD_URL, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      timeout: 15000,
+      responseType: 'text'
+    });
+
+    const html = response.data;
+    const buyMatch = html.match(/<small>\s*Compra\s*<\/small>\s*<h5>\s*(\d{2,3}\.\d{2,4})/i);
+    const sellMatch = html.match(/<small>\s*Venta\s*<\/small>\s*<h5>\s*(\d{2,3}\.\d{2,4})/i);
+    if (!buyMatch || !sellMatch) {
+      throw new Error('Could not extract exchange rates from BCRD page');
+    }
+
+    const buy = parseFloat(buyMatch[1]);
+    const sell = parseFloat(sellMatch[1]);
+    if (!(buy > 0) || !(sell >= buy)) {
+      throw new Error(`Unexpected BCRD rates: buy ${buy}, sell ${sell}`);
+    }
+
+    // Fecha que la página dice que corresponde la tasa (ej: "6 de Noviembre 2026"), solo para logs
+    const labelMatch = html.match(/Tipo de cambio<\/strong><br \/><small><span[^>]*>([^<]+)<\/span>/i);
+    return { buy, sell, publishedLabel: labelMatch ? labelMatch[1].trim() : null };
+  }
+
+  /**
    * Convierte un monto de USD a DOP
    * Usa la tasa de venta (lo que pagarías por dólares)
    */
