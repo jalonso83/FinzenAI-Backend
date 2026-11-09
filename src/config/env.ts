@@ -100,6 +100,10 @@ export const ENV = {
   // % que los bancos cobran sobre la venta del Banco Central en consumos con tarjeta
   EXCHANGE_RATE_MARGIN_PCT: getOptionalEnv('EXCHANGE_RATE_MARGIN_PCT', '1'),
 
+  // === COMISIONES ===
+  // Fecha (YYYY-MM-DD) en que Apple aprobó el Small Business Program; vacío = 30%
+  APPLE_SMALL_BUSINESS_SINCE: getOptionalEnv('APPLE_SMALL_BUSINESS_SINCE', ''),
+
   // === SERVER ===
   PORT: getOptionalEnv('PORT', '3001'),
   NODE_ENV: getOptionalEnv('NODE_ENV', 'development'),

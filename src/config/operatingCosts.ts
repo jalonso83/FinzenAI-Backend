@@ -52,8 +52,13 @@ export const PAYMENT_FEES = {
   },
   revenueCat: {
     apple: 0.30,          // 30% Apple platform fee
-    revenueCat: 0.01,     // 1% RevenueCat sobre gross
-    // Total efectivo sobre gross: 31%
+    // Small Business Program: 15% para cobros desde la fecha en que Apple apruebe
+    // (APPLE_SMALL_BUSINESS_SINCE en Railway). Solicitado 2026-11-02, no es retroactivo.
+    appleSmallBusiness: 0.15,
+    revenueCat: 0.01,     // 1% RevenueCat sobre gross...
+    // ...solo cuando lo cobrado por la tienda en el mes pasa de US$2,500 (plan de 2023:
+    // gratis por debajo). Hoy estamos muy por debajo, así que su 1% es 0.
+    revenueCatFreeUnderMonthly: 2500,
   },
 };
 

@@ -8,6 +8,7 @@ import {
   PAYMENT_FEES,
 } from '../config/operatingCosts';
 import { logger } from '../utils/logger';
+import { ENV } from '../config/env';
 
 interface UsersListQuery {
   page?: string;
@@ -28,24 +29,55 @@ interface DateRange {
   prevTo: Date;
 }
 
-function parseDateRange(query: { from?: string; to?: string }): DateRange {
-  const toRaw = query.to ? new Date(query.to) : new Date();
-  if (isNaN(toRaw.getTime())) throw new Error('Invalid "to" date parameter');
-  toRaw.setHours(23, 59, 59, 999);
+// Los días del filtro son días de RD (UTC-4 todo el año, sin horario de verano).
+// Antes se cortaban en la TZ del proceso (UTC en Railway): el rango "12-jul"
+// empezaba a las 8 p. m. del 11 en RD y no casaba con las gráficas, que rotulan
+// cada día en hora RD (un mes salía con 32 días).
+const RD_OFFSET = '-04:00';
 
-  const fromRaw = query.from
-    ? new Date(query.from)
-    : new Date(toRaw.getTime() - 30 * 24 * 60 * 60 * 1000);
-  if (isNaN(fromRaw.getTime())) throw new Error('Invalid "from" date parameter');
-  fromRaw.setHours(0, 0, 0, 0);
+/** Fecha (YYYY-MM-DD) que marca el calendario de RD en ese instante. */
+function rdDateOf(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Santo_Domingo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+function rdDayStart(day: string): Date {
+  return new Date(`${day}T00:00:00.000${RD_OFFSET}`);
+}
+
+function rdDayEnd(day: string): Date {
+  return new Date(`${day}T23:59:59.999${RD_OFFSET}`);
+}
+
+/** El dashboard manda YYYY-MM-DD; si llega un ISO completo se toma su día en RD. */
+function toRdDay(raw: string, param: 'from' | 'to'): string {
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : (() => {
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? '' : rdDateOf(d);
+  })();
+  if (!day || isNaN(rdDayStart(day).getTime())) throw new Error(`Invalid "${param}" date parameter`);
+  return day;
+}
+
+function parseDateRange(query: { from?: string; to?: string }): DateRange {
+  const toDay = query.to ? toRdDay(query.to, 'to') : rdDateOf(new Date());
+  const toRaw = rdDayEnd(toDay);
+
+  const fromDay = query.from
+    ? toRdDay(query.from, 'from')
+    : rdDateOf(new Date(toRaw.getTime() - 30 * 24 * 60 * 60 * 1000));
+  const fromRaw = rdDayStart(fromDay);
 
   if (fromRaw >= toRaw) throw new Error('"from" must be before "to"');
 
+  // Período anterior: la misma cantidad de días, terminando el día antes de `from`
   const rangeDuration = toRaw.getTime() - fromRaw.getTime();
   const prevTo = new Date(fromRaw.getTime() - 1);
-  prevTo.setHours(23, 59, 59, 999);
-  const prevFrom = new Date(prevTo.getTime() - rangeDuration);
-  prevFrom.setHours(0, 0, 0, 0);
+  const prevFrom = rdDayStart(rdDateOf(new Date(prevTo.getTime() - rangeDuration)));
 
   return { from: fromRaw, to: toRaw, prevFrom, prevTo };
 }
@@ -531,10 +563,11 @@ export class AdminService {
     ] = await Promise.all([
       // Registrations by day
       prisma.$queryRawUnsafe<{ day: string; count: bigint }[]>(`
-        SELECT DATE("createdAt") as day, COUNT(*)::bigint as count
+        -- Día de RD, como el filtro de fechas (createdAt guarda UTC sin zona)
+        SELECT DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santo_Domingo') as day, COUNT(*)::bigint as count
         FROM users
         WHERE "createdAt" >= $1 AND "createdAt" <= $2
-        GROUP BY DATE("createdAt")
+        GROUP BY 1
         ORDER BY day ASC
       `, from, to),
 
@@ -629,7 +662,8 @@ export class AdminService {
       d30: bigint | null;
     }[]>(`
       WITH cohort AS (
-        SELECT id, "createdAt", DATE_TRUNC('week', "createdAt") as cohort_week
+        -- Semana de RD (lunes 00:00 hora RD), como el filtro de fechas
+        SELECT id, "createdAt", DATE_TRUNC('week', "createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santo_Domingo') as cohort_week
         FROM users
         WHERE "createdAt" >= $1 AND "createdAt" <= $2
       )
@@ -640,13 +674,13 @@ export class AdminService {
         -- semana) y excluyendo eventos de sistema (jobs/scheduler). Devuelve NULL
         -- cuando la cohorte completa aún no cumplió la ventana → "no observable",
         -- no 0%. Madurez: NOW() >= fin de la semana (cohort_week + 7d) + N días.
-        (CASE WHEN c.cohort_week + interval '7 days' + interval '1 day' > NOW() THEN NULL
+        (CASE WHEN (c.cohort_week AT TIME ZONE 'America/Santo_Domingo') + interval '7 days' + interval '1 day' > NOW() THEN NULL
           ELSE COUNT(DISTINCT CASE WHEN ge."createdAt" >= c."createdAt" + interval '1 day' THEN c.id END) END)::bigint as d1,
-        (CASE WHEN c.cohort_week + interval '7 days' + interval '7 days' > NOW() THEN NULL
+        (CASE WHEN (c.cohort_week AT TIME ZONE 'America/Santo_Domingo') + interval '7 days' + interval '7 days' > NOW() THEN NULL
           ELSE COUNT(DISTINCT CASE WHEN ge."createdAt" >= c."createdAt" + interval '7 days' THEN c.id END) END)::bigint as d7,
-        (CASE WHEN c.cohort_week + interval '7 days' + interval '14 days' > NOW() THEN NULL
+        (CASE WHEN (c.cohort_week AT TIME ZONE 'America/Santo_Domingo') + interval '7 days' + interval '14 days' > NOW() THEN NULL
           ELSE COUNT(DISTINCT CASE WHEN ge."createdAt" >= c."createdAt" + interval '14 days' THEN c.id END) END)::bigint as d14,
-        (CASE WHEN c.cohort_week + interval '7 days' + interval '30 days' > NOW() THEN NULL
+        (CASE WHEN (c.cohort_week AT TIME ZONE 'America/Santo_Domingo') + interval '7 days' + interval '30 days' > NOW() THEN NULL
           ELSE COUNT(DISTINCT CASE WHEN ge."createdAt" >= c."createdAt" + interval '30 days' THEN c.id END) END)::bigint as d30
       FROM cohort c
       LEFT JOIN gamification_events ge ON ge."userId" = c.id
@@ -821,8 +855,10 @@ export class AdminService {
       prisma.$queryRawUnsafe<{ month: string; premium: string; pro: string }[]>(`
         WITH months AS (
           SELECT generate_series(
-            DATE_TRUNC('month', $1::timestamp),
-            DATE_TRUNC('month', $2::timestamp),
+            -- Meses de RD: con el filtro en hora RD, "hasta 31-ago" termina el 1-sep
+            -- 03:59 UTC y en UTC agregaba una barra de septiembre completa
+            DATE_TRUNC('month', $1::timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santo_Domingo'),
+            DATE_TRUNC('month', $2::timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santo_Domingo'),
             '1 month'::interval
           ) as month
         )
@@ -840,7 +876,7 @@ export class AdminService {
           ), 0)::text as pro
         FROM months m
         LEFT JOIN payments p ON p.status = 'SUCCEEDED'
-          AND DATE_TRUNC('month', p."createdAt") = m.month
+          AND DATE_TRUNC('month', p."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santo_Domingo') = m.month
         LEFT JOIN subscriptions s ON s."userId" = p."userId"
           AND s.status IN ('ACTIVE', 'TRIALING')
         GROUP BY m.month
@@ -1491,6 +1527,78 @@ export class AdminService {
     return agg._sum.costUSD ? Number(agg._sum.costUSD) : 0;
   }
 
+  // ─── COMISIONES DE PAGO ─────────────────────────────────
+  private static async cobrosConProveedor(desde: Date, hasta: Date) {
+    return prisma.$queryRawUnsafe<{ amount: number; createdAt: Date; provider: 'STRIPE' | 'APPLE' }[]>(`
+      SELECT p.amount, p."createdAt", s."paymentProvider" as provider
+      FROM payments p
+      INNER JOIN subscriptions s ON s.id = p."subscriptionId"
+      WHERE p.status = 'SUCCEEDED'
+        AND p."createdAt" >= $1 AND p."createdAt" <= $2
+        AND s."paymentProvider" IN ('STRIPE', 'APPLE')
+    `, desde, hasta);
+  }
+
+  /** Apple cobra 15% desde la aprobación del Small Business Program (no hacia atrás). */
+  private static tasaApple(fecha: Date): number {
+    const desde = ENV.APPLE_SMALL_BUSINESS_SINCE;
+    if (DATE_ONLY_RE.test(desde) && fecha >= rdDayStart(desde)) {
+      return PAYMENT_FEES.revenueCat.appleSmallBusiness;
+    }
+    return PAYMENT_FEES.revenueCat.apple;
+  }
+
+  /** Comisión de la pasarela sobre un cobro (Stripe 2.9% + $0.30, o la de Apple). */
+  private static comisionDeCobro(c: { amount: number; createdAt: Date; provider: string }): number {
+    return c.provider === 'STRIPE'
+      ? c.amount * PAYMENT_FEES.stripe.percentage + PAYMENT_FEES.stripe.fixed
+      : c.amount * AdminService.tasaApple(c.createdAt);
+  }
+
+  /** RevenueCat cobra su 1% solo si lo cobrado por la tienda en el mes pasa del umbral. */
+  private static comisionRevenueCat(brutoTiendaMes: number): number {
+    return brutoTiendaMes > PAYMENT_FEES.revenueCat.revenueCatFreeUnderMonthly
+      ? brutoTiendaMes * PAYMENT_FEES.revenueCat.revenueCat
+      : 0;
+  }
+
+  /**
+   * Comisiones de los 30 días que terminan en `to`, tal cual (sin proyectar).
+   * Antes se multiplicaba lo del período por 30/días: una semana con un anual daba
+   * US$151 y la siguiente, sin cobros por Apple, US$0.
+   * Un cobro anual (≥ US$40, misma regla que clasificarCobros) aporta 1/12 de su
+   * comisión cada mes de los 12 que cubre, como el MRR; si no, el mes en que cae salta.
+   */
+  private static async comisionesUltimos30Dias(to: Date) {
+    const DIA = 24 * 60 * 60 * 1000;
+    const desde30 = new Date(to.getTime() - 30 * DIA + 1);
+    const cobros = await AdminService.cobrosConProveedor(new Date(to.getTime() - 365 * DIA + 1), to);
+
+    let stripe = 0, apple = 0, brutoStripe = 0, brutoApple = 0, brutoAppleDelMes = 0;
+    for (const c of cobros) {
+      const anual = c.amount >= 40;
+      const enElMes = c.createdAt >= desde30;
+      if (c.provider === 'APPLE' && enElMes) brutoAppleDelMes += c.amount;
+      if (!anual && !enElMes) continue;
+      const peso = anual ? 1 / 12 : 1;
+      const comision = AdminService.comisionDeCobro(c) * peso;
+      if (c.provider === 'STRIPE') {
+        stripe += comision;
+        brutoStripe += c.amount * peso;
+      } else {
+        apple += comision;
+        brutoApple += c.amount * peso;
+      }
+    }
+
+    return {
+      stripe,
+      // "RevenueCat + Apple": la de Apple más el 1% de RevenueCat si aplica
+      apple: apple + AdminService.comisionRevenueCat(brutoAppleDelMes),
+      bruto: brutoStripe + brutoApple,
+    };
+  }
+
   static async getUnitEconomics(query: { from?: string; to?: string }) {
     const { from, to } = parseDateRange(query);
 
@@ -1498,10 +1606,17 @@ export class AdminService {
     const periodDays = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000));
     const monthlyScale = 30 / periodDays;
 
-    // Marketing REAL del período (reemplaza el antiguo fijo de $175), escalado a
-    // equivalente mensual como los demás costos. Se fusiona en el bucket "fijo" para
-    // preservar exactamente el tratamiento previo (el marketing ya vivía ahí).
-    const marketingMonthly = (await this.marketingCostInPeriod(from, to)) * monthlyScale;
+    // Marketing REAL de los 30 días que terminan en `to` (campañas por fecha de inicio),
+    // sin proyectar: escalar el período hacía que una semana con una campaña diera
+    // US$187 y la siguiente US$0. Se fusiona en el bucket "fijo" como antes.
+    // campaignDate es una fecha de calendario guardada a las 00:00 UTC: los bordes van
+    // en UTC de los días RD (con instantes RD se perdía la campaña del primer día).
+    const diaFinal = rdDateOf(to);
+    const diaInicial = rdDateOf(new Date(rdDayStart(diaFinal).getTime() - 29 * 24 * 60 * 60 * 1000));
+    const marketingMonthly = await this.marketingCostInPeriod(
+      new Date(`${diaInicial}T00:00:00.000Z`),
+      new Date(`${diaFinal}T23:59:59.999Z`),
+    );
     const fixedMonthly = TOTAL_FIXED_MONTHLY + marketingMonthly;
     const marketingItem = {
       name: 'Marketing',
@@ -1516,8 +1631,7 @@ export class AdminService {
       totalActiveSubs,
       currentMrrByPlan,
       openAICostInPeriod,
-      stripePayments,
-      revenueCatPayments,
+      comisiones,
     ] = await Promise.all([
       // Users with ≥1 tx in period (active users denominator)
       prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
@@ -1546,25 +1660,8 @@ export class AdminService {
         _sum: { totalCost: true },
       }),
 
-      // Stripe payments in period (for fees calc)
-      prisma.$queryRawUnsafe<{ amount: number }[]>(`
-        SELECT p.amount
-        FROM payments p
-        INNER JOIN subscriptions s ON s.id = p."subscriptionId"
-        WHERE p.status = 'SUCCEEDED'
-          AND p."createdAt" >= $1 AND p."createdAt" <= $2
-          AND s."paymentProvider" = 'STRIPE'
-      `, from, to),
-
-      // RevenueCat (Apple) payments in period
-      prisma.$queryRawUnsafe<{ amount: number }[]>(`
-        SELECT p.amount
-        FROM payments p
-        INNER JOIN subscriptions s ON s.id = p."subscriptionId"
-        WHERE p.status = 'SUCCEEDED'
-          AND p."createdAt" >= $1 AND p."createdAt" <= $2
-          AND s."paymentProvider" = 'APPLE'
-      `, from, to),
+      // Comisiones de pago: últimos 30 días reales (no el período escalado)
+      this.comisionesUltimos30Dias(to),
     ]);
 
     // ── MRR del período (mensual recurrente actual) ────────────────
@@ -1582,23 +1679,15 @@ export class AdminService {
         : planConfig.price.monthly;
     });
 
-    // ── Variable costs (cash basis del período, escalados a mensual) ─
+    // ── Variable costs ─────────────────────────────────────────────
+    // OpenAI se consume de a poco todos los días: lo del período escalado a mensual
+    // sí representa el mes. Las comisiones caen en cobros sueltos y van con los
+    // últimos 30 días reales (ver comisionesUltimos30Dias).
     const openAICostPeriod = Number(openAICostInPeriod._sum.totalCost ?? 0);
     const openAICostMonthly = openAICostPeriod * monthlyScale;
 
-    // Stripe fees: 2.9% × amount + $0.30 por payment
-    const stripeFeesPeriod = stripePayments.reduce(
-      (sum, p) => sum + (p.amount * PAYMENT_FEES.stripe.percentage + PAYMENT_FEES.stripe.fixed),
-      0
-    );
-    const stripeFeesMonthly = stripeFeesPeriod * monthlyScale;
-
-    // RevenueCat fees: 30% Apple + 1% RC = 31% del gross
-    const rcFeesPeriod = revenueCatPayments.reduce(
-      (sum, p) => sum + p.amount * (PAYMENT_FEES.revenueCat.apple + PAYMENT_FEES.revenueCat.revenueCat),
-      0
-    );
-    const rcFeesMonthly = rcFeesPeriod * monthlyScale;
+    const stripeFeesMonthly = comisiones.stripe;
+    const rcFeesMonthly = comisiones.apple;
 
     const totalVariableMonthly = openAICostMonthly + stripeFeesMonthly + rcFeesMonthly;
 
@@ -1643,11 +1732,9 @@ export class AdminService {
     // lo cual era incorrecto porque OpenAI lo consumen también los free users.
     const openAIPerActiveUser = activeUsers > 0 ? openAICostMonthly / activeUsers : 0;
 
-    // Tasa de fees observada (Stripe ~3%, Apple+RC ~31%) ponderada por revenue real
-    const totalRevenuePeriod =
-      stripePayments.reduce((s, p) => s + p.amount, 0) +
-      revenueCatPayments.reduce((s, p) => s + p.amount, 0);
-    const totalFeesPeriod = stripeFeesPeriod + rcFeesPeriod;
+    // Tasa de fees observada (Stripe ~3%, Apple 30%/15%) ponderada por revenue real
+    const totalRevenuePeriod = comisiones.bruto;
+    const totalFeesPeriod = stripeFeesMonthly + rcFeesMonthly;
     const blendedFeeRate = totalRevenuePeriod > 0
       ? totalFeesPeriod / totalRevenuePeriod
       : PAYMENT_FEES.stripe.percentage; // fallback: solo Stripe %
@@ -1760,8 +1847,7 @@ export class AdminService {
       grossTotalAgg,
       incomeThisMonthAgg,
       openAIThisMonthAgg,
-      stripePaymentsThisMonth,
-      rcPaymentsThisMonth,
+      cobrosThisMonth,
     ] = await Promise.all([
       // 1) Ingreso Bruto Total: TODOS los pagos exitosos sin filtro de fecha.
       // Es el dinero total que ha entrado a la empresa desde su existencia.
@@ -1785,39 +1871,22 @@ export class AdminService {
         _sum: { totalCost: true },
       }),
 
-      // 4) Stripe payments del mes (para fees)
-      prisma.$queryRawUnsafe<{ amount: number }[]>(`
-        SELECT p.amount
-        FROM payments p
-        INNER JOIN subscriptions s ON s.id = p."subscriptionId"
-        WHERE p.status = 'SUCCEEDED'
-          AND p."createdAt" >= $1 AND p."createdAt" <= $2
-          AND s."paymentProvider" = 'STRIPE'
-      `, startOfMonth, endOfMonth),
-
-      // 5) RevenueCat payments del mes (para fees)
-      prisma.$queryRawUnsafe<{ amount: number }[]>(`
-        SELECT p.amount
-        FROM payments p
-        INNER JOIN subscriptions s ON s.id = p."subscriptionId"
-        WHERE p.status = 'SUCCEEDED'
-          AND p."createdAt" >= $1 AND p."createdAt" <= $2
-          AND s."paymentProvider" = 'APPLE'
-      `, startOfMonth, endOfMonth),
+      // 4) Cobros del mes por pasarela (para fees). Aquí es caja del mes: un anual
+      // cuenta completo el mes en que se cobró, sin repartir.
+      AdminService.cobrosConProveedor(startOfMonth, endOfMonth),
     ]);
 
     const grossIncomeTotal = Number(grossTotalAgg._sum.amount ?? 0);
     const incomeThisMonth = Number(incomeThisMonthAgg._sum.amount ?? 0);
     const openAIThisMonth = Number(openAIThisMonthAgg._sum.totalCost ?? 0);
 
-    const stripeFeesThisMonth = stripePaymentsThisMonth.reduce(
-      (sum, p) => sum + (p.amount * PAYMENT_FEES.stripe.percentage + PAYMENT_FEES.stripe.fixed),
-      0
-    );
-    const rcFeesThisMonth = rcPaymentsThisMonth.reduce(
-      (sum, p) => sum + p.amount * (PAYMENT_FEES.revenueCat.apple + PAYMENT_FEES.revenueCat.revenueCat),
-      0
-    );
+    const stripeFeesThisMonth = cobrosThisMonth
+      .filter(c => c.provider === 'STRIPE')
+      .reduce((sum, c) => sum + AdminService.comisionDeCobro(c), 0);
+    const cobrosAppleThisMonth = cobrosThisMonth.filter(c => c.provider === 'APPLE');
+    const rcFeesThisMonth =
+      cobrosAppleThisMonth.reduce((sum, c) => sum + AdminService.comisionDeCobro(c), 0) +
+      AdminService.comisionRevenueCat(cobrosAppleThisMonth.reduce((sum, c) => sum + c.amount, 0));
     const variableExpensesThisMonth = openAIThisMonth + stripeFeesThisMonth + rcFeesThisMonth;
     // Marketing REAL del mes en curso (suma de campañas con fecha en el período),
     // fusionado en el gasto fijo — reemplaza el antiguo monto fijo de $175.
@@ -2252,6 +2321,15 @@ export class AdminService {
       return Number(result[0]?.cnt ?? 0);
     };
 
+    // Suscripciones = altas nuevas (primer cobro exitoso de la persona), con la misma
+    // regla que "Nuevas" en Revenue. NO sale del evento `Subscribe`: Stripe lo dispara
+    // en cada cobro (renovaciones incluidas, a propósito para Meta), así que el embudo
+    // contaba renovaciones web como suscripciones.
+    const contarSuscripcionesNuevas = async (rangeFrom: Date, rangeTo: Date): Promise<number> => {
+      const cobros = await AdminService.clasificarCobros(rangeFrom, rangeTo);
+      return cobros.filter(c => c.tipo === 'nueva').length;
+    };
+
     const [
       pageViews,           // unique visitors
       leads,               // raw clicks (Lead = click en CTA, sí queremos contar todos)
@@ -2265,11 +2343,11 @@ export class AdminService {
       countUniqueVisitors(from, to),
       countRawEvents('Lead', from, to),
       countUniqueUsersByEvent('CompleteRegistration', from, to),
-      countUniqueUsersByEvent('Subscribe', from, to),
+      contarSuscripcionesNuevas(from, to),
       countUniqueVisitors(prevFrom, prevTo),
       countRawEvents('Lead', prevFrom, prevTo),
       countUniqueUsersByEvent('CompleteRegistration', prevFrom, prevTo),
-      countUniqueUsersByEvent('Subscribe', prevFrom, prevTo),
+      contarSuscripcionesNuevas(prevFrom, prevTo),
     ]);
 
     // Funnel — counts en cada etapa con conversion rates
@@ -2338,7 +2416,38 @@ export class AdminService {
       if (row.eventName === 'PageView') entry.pageViews = cnt;
       else if (row.eventName === 'Lead') entry.leads = cnt;
       else if (row.eventName === 'CompleteRegistration') entry.registrations = cnt;
-      else if (row.eventName === 'Subscribe') entry.subscriptions = cnt;
+    }
+
+    // Suscripciones por día: primer cobro exitoso de cada persona (ver
+    // contarSuscripcionesNuevas), con el mismo corte de día RD que los eventos.
+    const altasPorDiaRaw = await prisma.$queryRawUnsafe<{ day: string; cnt: bigint }[]>(
+      `
+      SELECT
+        TO_CHAR(DATE_TRUNC('day', primero AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santo_Domingo'), 'YYYY-MM-DD') as day,
+        COUNT(*)::bigint as cnt
+      FROM (
+        SELECT "userId", MIN("createdAt") as primero
+        FROM payments
+        WHERE status = 'SUCCEEDED' AND amount > 0
+        GROUP BY "userId"
+      ) f
+      WHERE primero >= $1 AND primero <= $2
+      GROUP BY day
+      `,
+      from,
+      to,
+    );
+    for (const row of altasPorDiaRaw) {
+      if (!eventsByDayMap.has(row.day)) {
+        eventsByDayMap.set(row.day, {
+          day: row.day,
+          pageViews: 0,
+          leads: 0,
+          registrations: 0,
+          subscriptions: 0,
+        });
+      }
+      eventsByDayMap.get(row.day)!.subscriptions = Number(row.cnt);
     }
     const eventsByDay = Array.from(eventsByDayMap.values()).sort((a, b) =>
       a.day.localeCompare(b.day),
