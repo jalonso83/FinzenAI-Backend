@@ -194,6 +194,23 @@ AGENT_SEGMENTS.push(
     params: [...STANDARD_PARAMS],
     buildFilters: (p) => baseFilters('near_paywall', p),
   },
+  {
+    slug: 'trial_expired_email',
+    name: 'Prueba vencida, usó el correo',
+    description:
+      'Se le venció la prueba, no pagó (sigue en FREE) y durante la prueba usó Gastos en automático. Al vencer perdió ' +
+      'la conexión de correo: es quien más claro tiene qué recupera pagando.',
+    params: [...STANDARD_PARAMS],
+    buildFilters: (p) => baseFilters('trial_expired_email', p),
+  },
+  {
+    slug: 'trial_expired_no_email',
+    name: 'Prueba vencida, sin correo',
+    description:
+      'Se le venció la prueba, no pagó (sigue en FREE) y nunca conectó su correo. No conoció la función Pro principal.',
+    params: [...STANDARD_PARAMS],
+    buildFilters: (p) => baseFilters('trial_expired_no_email', p),
+  },
 );
 
 export function getAgentSegment(slug: string): AgentSegmentDef | undefined {

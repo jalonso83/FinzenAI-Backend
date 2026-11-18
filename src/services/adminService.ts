@@ -1,6 +1,5 @@
 import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
-import { PLAN_PRICES } from '../config/adminConfig';
 import { getPlanFromPriceId, PLANS } from '../config/stripe';
 import {
   FIXED_OPERATING_COSTS,
@@ -445,14 +444,10 @@ export class AdminService {
       planCounts[p.plan] = p._count.plan;
     });
 
-    // MRR: solo suscripciones ACTIVE (pagando), NO TRIALING
-    const paidSubs = planDistribution.filter(p => true); // planDistribution incluye TRIALING
-    // Necesitamos contar solo ACTIVE para MRR
-    const activePremium = await prisma.subscription.count({ where: { plan: 'PREMIUM', status: 'ACTIVE' } });
-    const activePro = await prisma.subscription.count({ where: { plan: 'PRO', status: 'ACTIVE' } });
-    const mrrEstimated =
-      activePremium * PLAN_PRICES.PREMIUM +
-      activePro * PLAN_PRICES.PRO;
+    // MRR: solo suscripciones ACTIVE (pagando), NO TRIALING, con los anuales a 1/12.
+    // Antes era activas × precio mensual: un anual contaba US$9.99 y no US$8.33,
+    // y este número es el que lee Kaizen (Agent API → mrr_usd).
+    const mrrEstimated = (await AdminService.mrrDeSuscripciones()).total;
 
     // DAU: average unique users per day over the last 7 days (fixed window).
     // Divide by 7 (not by days-with-activity) so silent days drag the average down.
@@ -837,19 +832,12 @@ export class AdminService {
         _sum: { amount: true },
       }),
 
-      // Current MRR by plan (basado en suscripciones activas y su tipo de facturación)
-      prisma.subscription.findMany({
-        where: { status: 'ACTIVE', plan: { not: 'FREE' } },
-        select: { plan: true, stripePriceId: true },
-      }),
+      // MRR actual por plan (anuales a 1/12, incluidos los de Apple)
+      AdminService.mrrDeSuscripciones(),
 
-      // Previous MRR by plan (basado en suscripciones activas al inicio del período anterior)
-      prisma.$queryRawUnsafe<{ plan: string; stripePriceId: string | null }[]>(`
-        SELECT DISTINCT s.plan, s."stripePriceId"
-        FROM subscriptions s
-        WHERE s.status = 'ACTIVE' AND s.plan != 'FREE'
-          AND s."createdAt" < $1
-      `, prevTo),
+      // MRR al cierre del período anterior. Antes era un SELECT DISTINCT plan,
+      // priceId: varias suscripciones iguales se fundían en una sola fila.
+      AdminService.mrrDeSuscripciones(prevTo),
 
       // MRR trend by month (normalizado: pagos anuales divididos entre 12)
       prisma.$queryRawUnsafe<{ month: string; premium: string; pro: string }[]>(`
@@ -866,12 +854,12 @@ export class AdminService {
           m.month::text as month,
           COALESCE(SUM(
             CASE WHEN s.plan = 'PREMIUM' THEN
-              CASE WHEN p.description ILIKE '%annual%' THEN p.amount / 12.0 ELSE p.amount END
+              CASE WHEN p.amount >= 40 THEN p.amount / 12.0 ELSE p.amount END
             ELSE 0 END
           ), 0)::text as premium,
           COALESCE(SUM(
             CASE WHEN s.plan = 'PRO' THEN
-              CASE WHEN p.description ILIKE '%annual%' THEN p.amount / 12.0 ELSE p.amount END
+              CASE WHEN p.amount >= 40 THEN p.amount / 12.0 ELSE p.amount END
             ELSE 0 END
           ), 0)::text as pro
         FROM months m
@@ -945,56 +933,11 @@ export class AdminService {
       reactivacionesChange: pctChange(contarPorTipo(cobrosDelPeriodo, 'reactivacion'), contarPorTipo(cobrosDelPeriodoAnterior, 'reactivacion')),
     };
 
-    // Calculate MRR from active subscriptions, normalized for billing period
-    let mrrCurrent = 0;
-    const currentMrrObj: Record<string, number> = { PREMIUM: 0, PRO: 0 };
-    const subscribersByPlan: Record<string, number> = { PREMIUM: 0, PRO: 0 };
-
-    currentMrrByPlan.forEach(sub => {
-      const planConfig = PLANS[sub.plan as keyof typeof PLANS];
-      if (!planConfig) return;
-
-      // Determine billing period from price ID
-      let billingPeriod: 'monthly' | 'yearly' = 'monthly';
-      if (sub.stripePriceId) {
-        const priceInfo = getPlanFromPriceId(sub.stripePriceId);
-        if (priceInfo?.billingPeriod === 'yearly') {
-          billingPeriod = 'yearly';
-        }
-      }
-
-      // Calculate monthly contribution (yearly / 12)
-      const monthlyPrice = billingPeriod === 'yearly'
-        ? planConfig.price.yearly / 12
-        : planConfig.price.monthly;
-
-      mrrCurrent += monthlyPrice;
-      if (sub.plan in currentMrrObj) {
-        currentMrrObj[sub.plan] += monthlyPrice;
-        subscribersByPlan[sub.plan] += 1;
-      }
-    });
-
-    // Calculate previous MRR similarly
-    let mrrPrevious = 0;
-    previousMrrByPlan.forEach(sub => {
-      const planConfig = PLANS[sub.plan as keyof typeof PLANS];
-      if (!planConfig) return;
-
-      let billingPeriod: 'monthly' | 'yearly' = 'monthly';
-      if (sub.stripePriceId) {
-        const priceInfo = getPlanFromPriceId(sub.stripePriceId);
-        if (priceInfo?.billingPeriod === 'yearly') {
-          billingPeriod = 'yearly';
-        }
-      }
-
-      const monthlyPrice = billingPeriod === 'yearly'
-        ? planConfig.price.yearly / 12
-        : planConfig.price.monthly;
-
-      mrrPrevious += monthlyPrice;
-    });
+    // MRR normalizado (anuales a 1/12): ver mrrDeSuscripciones
+    const mrrCurrent = currentMrrByPlan.total;
+    const currentMrrObj = currentMrrByPlan.porPlan;
+    const subscribersByPlan = currentMrrByPlan.suscriptoresPorPlan;
+    const mrrPrevious = previousMrrByPlan.total;
 
     // ARPU: dinero real / número de suscripciones pagadas
     const arpu = currentActiveSubs > 0 ? Math.round((mrrCurrent / currentActiveSubs) * 100) / 100 : 0;
@@ -1539,6 +1482,60 @@ export class AdminService {
     `, desde, hasta);
   }
 
+  /**
+   * MRR de las suscripciones de pago ACTIVE, con los anuales a 1/12.
+   *
+   * Antes el anual se detectaba SOLO por `stripePriceId`, y una suscripción de
+   * Apple no tiene: el Pro anual de Apple entraba como mensual (US$9.99 en vez de
+   * US$8.33). Ahora es anual si su precio de Stripe es anual O si su último cobro
+   * fue ≥ US$40 — la misma regla de clasificarCobros y de las comisiones; ningún
+   * mensual llega a US$40 y el Plus anual (US$49.99) sí.
+   *
+   * `hasta` (opcional) calcula el MRR a esa fecha: solo suscripciones creadas
+   * antes y su último cobro hasta entonces. El estado sigue siendo el de hoy
+   * (la tabla no guarda historia de estados), igual que antes.
+   */
+  private static async mrrDeSuscripciones(hasta?: Date): Promise<{
+    total: number;
+    porPlan: Record<string, number>;
+    suscriptoresPorPlan: Record<string, number>;
+  }> {
+    const filas = await prisma.$queryRawUnsafe<{
+      plan: string; stripePriceId: string | null; ultimoCobro: number | null;
+    }[]>(`
+      SELECT s.plan::text AS plan, s."stripePriceId",
+             (SELECT p.amount FROM payments p
+               WHERE p."userId" = s."userId" AND p.status = 'SUCCEEDED' AND p.amount > 0
+                 -- La regla de US$40 es en dólares: un mensual cobrado en otra moneda no puede pasar por anual
+                 AND p.currency ILIKE 'usd'
+                 AND ($1::timestamp IS NULL OR p."createdAt" <= $1)
+               ORDER BY p."createdAt" DESC LIMIT 1)::float8 AS "ultimoCobro"
+      FROM subscriptions s
+      WHERE s.status = 'ACTIVE' AND s.plan IN ('PREMIUM', 'PRO')
+        AND ($1::timestamp IS NULL OR s."createdAt" < $1)
+    `, hasta ?? null);
+
+    const porPlan: Record<string, number> = { PREMIUM: 0, PRO: 0 };
+    const suscriptoresPorPlan: Record<string, number> = { PREMIUM: 0, PRO: 0 };
+    let total = 0;
+    for (const s of filas) {
+      const planConfig = PLANS[s.plan as keyof typeof PLANS];
+      if (!planConfig) continue;
+      // Si Stripe reconoce el precio, manda su período (cubre bajar de anual a
+      // mensual antes del primer cobro mensual). El monto solo decide cuando no
+      // hay precio reconocido, que es el caso de Apple.
+      const periodoStripe = s.stripePriceId ? getPlanFromPriceId(s.stripePriceId)?.billingPeriod : undefined;
+      const anual = periodoStripe
+        ? periodoStripe === 'yearly'
+        : (s.ultimoCobro ?? 0) >= 40;
+      const mensual = anual ? planConfig.price.yearly / 12 : planConfig.price.monthly;
+      total += mensual;
+      porPlan[s.plan] += mensual;
+      suscriptoresPorPlan[s.plan] += 1;
+    }
+    return { total, porPlan, suscriptoresPorPlan };
+  }
+
   /** Apple cobra 15% desde la aprobación del Small Business Program (no hacia atrás). */
   private static tasaApple(fecha: Date): number {
     const desde = ENV.APPLE_SMALL_BUSINESS_SINCE;
@@ -1648,11 +1645,8 @@ export class AdminService {
         where: { status: 'ACTIVE', plan: { not: 'FREE' } },
       }),
 
-      // Active subs with priceId (for MRR calc)
-      prisma.subscription.findMany({
-        where: { status: 'ACTIVE', plan: { not: 'FREE' } },
-        select: { plan: true, stripePriceId: true },
-      }),
+      // MRR actual (anuales a 1/12, incluidos los de Apple)
+      AdminService.mrrDeSuscripciones(),
 
       // OpenAI cost in period
       prisma.openAIDailyUsage.aggregate({
@@ -1665,19 +1659,7 @@ export class AdminService {
     ]);
 
     // ── MRR del período (mensual recurrente actual) ────────────────
-    let mrrCurrent = 0;
-    currentMrrByPlan.forEach(sub => {
-      const planConfig = PLANS[sub.plan as keyof typeof PLANS];
-      if (!planConfig) return;
-      let billingPeriod: 'monthly' | 'yearly' = 'monthly';
-      if (sub.stripePriceId) {
-        const priceInfo = getPlanFromPriceId(sub.stripePriceId);
-        if (priceInfo?.billingPeriod === 'yearly') billingPeriod = 'yearly';
-      }
-      mrrCurrent += billingPeriod === 'yearly'
-        ? planConfig.price.yearly / 12
-        : planConfig.price.monthly;
-    });
+    const mrrCurrent = currentMrrByPlan.total;
 
     // ── Variable costs ─────────────────────────────────────────────
     // OpenAI se consume de a poco todos los días: lo del período escalado a mensual

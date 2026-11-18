@@ -33,6 +33,14 @@ export type LifecycleSegment = 'never_activated' | 'dormant' | 'active';
 //    en que se puede rescatar la conversión: cae a FREE al vencer.
 //  - near_paywall: FREE que roza la cuota: presupuestos activos ≥ límite-1 o
 //    metas ≥ límite. Zenio no entra: casi nadie se acerca a las 15/mes.
+//  - trial_expired_email / trial_expired_no_email: la prueba ya venció
+//    (`trialEndedAt`, que nunca se limpia) y sigue en FREE, partidos por si
+//    usó Gastos en automático durante la prueba. NO se mira email_connections:
+//    el TrialScheduler las borra al vencer, así que ahí ya no queda nadie. La
+//    huella sale de tres sitios que sí sobreviven (cualquiera basta):
+//    `trialImportedCount` (foto al vencer), transacciones con source EMAIL, o
+//    el evento 'email_sync'/'conecto' de feature_usage (desde 27-ago-2026).
+//    Elegir los dos = toda la gente con la prueba vencida sin pagar.
 export type AudienceSegment =
   | LifecycleSegment
   | 'budget_exceeded'
@@ -42,7 +50,9 @@ export type AudienceSegment =
   | 'payment_failed'
   | 'subscriber_inactive'
   | 'trial_no_activity'
-  | 'near_paywall';
+  | 'near_paywall'
+  | 'trial_expired_email'
+  | 'trial_expired_no_email';
 
 export interface AudienceFilters {
   plans: string[];               // ['FREE','PREMIUM','PRO']
@@ -130,6 +140,8 @@ export class BroadcastService {
       PLANS.FREE.limits.goals,                 // $21
       PLANS.FREE.limits.zenioQueries,          // $22
       f.segments.includes('near_paywall'),     // $23
+      f.segments.includes('trial_expired_email'),    // $24
+      f.segments.includes('trial_expired_no_email'), // $25
     ];
     const sql = `
       FROM users u
@@ -144,6 +156,23 @@ export class BroadcastService {
         ON bc.user_id = u.id
       LEFT JOIN (SELECT "userId", COUNT(*) AS n FROM goals GROUP BY "userId") gc
         ON gc."userId" = u.id
+      -- Huella de Gastos en automático en una prueba ya vencida (ver
+      -- trial_expired_*). Solo se calcula si se pidió alguno de los dos.
+      LEFT JOIN LATERAL (
+        SELECT (
+          COALESCE(s."trialImportedCount", 0) > 0
+          OR EXISTS (SELECT 1 FROM transactions t WHERE t."userId" = u.id AND t.source = 'EMAIL')
+          OR EXISTS (SELECT 1 FROM feature_usage fu WHERE fu."userId" = u.id
+                     AND fu.feature = 'email_sync' AND fu.action = 'conecto')
+        ) AS used
+        WHERE ($24::boolean OR $25::boolean)
+          AND s."trialEndedAt" IS NOT NULL AND s.plan::text = 'FREE'
+          -- "Sin pagar" de verdad: trialEndedAt nunca se limpia, así que sin
+          -- esto entraría quien pagó después del trial y luego se dio de baja.
+          AND s."canceledAt" IS NULL
+          AND NOT EXISTS (SELECT 1 FROM payments p WHERE p."userId" = u.id
+                          AND p.status = 'SUCCEEDED' AND p.amount > 0)
+      ) te ON true
       WHERE COALESCE(s.plan::text, 'FREE') = ANY($1::text[])
         AND d.platform::text = ANY($2::text[])
         AND ($3 = 'ALL' OR u.country = $3)
@@ -188,6 +217,8 @@ export class BroadcastService {
               AND COALESCE(s."zenioQueriesUsed", 0) <= $22::int)
           OR ($23::boolean AND COALESCE(s.plan::text, 'FREE') = 'FREE'
               AND (COALESCE(bc.n, 0) >= $20::int - 1 OR COALESCE(gc.n, 0) >= $21::int))
+          OR ($24::boolean AND te.used IS TRUE)
+          OR ($25::boolean AND te.used IS FALSE)
         )
         AND (
           NOT $9::boolean

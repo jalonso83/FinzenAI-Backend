@@ -431,7 +431,7 @@ const getPasswordResetTemplate = (name: string, resetCode: string) => {
 
             <p style="text-align: center; margin-top: 30px;">
                 Si tienes problemas, contáctanos en
-                <a href="mailto:support@finzenai.com" style="color: #204274;">support@finzenai.com</a>
+                <a href="mailto:info@finzenai.com" style="color: #204274;">info@finzenai.com</a>
             </p>
         </div>
 
