@@ -1528,7 +1528,12 @@ export class AdminService {
       const anual = periodoStripe
         ? periodoStripe === 'yearly'
         : (s.ultimoCobro ?? 0) >= 40;
-      const mensual = anual ? planConfig.price.yearly / 12 : planConfig.price.monthly;
+      // Anual: lo que de verdad pagó ÷ 12 (una oferta de 59.99 el primer año
+      // cuenta 5.00, no 8.33). Solo si ese último cobro es anual (≥ 40); si no
+      // hay cobro anual registrado, el precio de lista.
+      const mensual = anual
+        ? ((s.ultimoCobro ?? 0) >= 40 ? s.ultimoCobro! : planConfig.price.yearly) / 12
+        : planConfig.price.monthly;
       total += mensual;
       porPlan[s.plan] += mensual;
       suscriptoresPorPlan[s.plan] += 1;

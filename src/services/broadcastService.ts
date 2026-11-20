@@ -41,6 +41,9 @@ export type LifecycleSegment = 'never_activated' | 'dormant' | 'active';
 //    `trialImportedCount` (foto al vencer), transacciones con source EMAIL, o
 //    el evento 'email_sync'/'conecto' de feature_usage (desde 27-ago-2026).
 //    Elegir los dos = toda la gente con la prueba vencida sin pagar.
+//  - trial_active_email: sigue en prueba (TRIALING) y usó Gastos en automático
+//    (conexión de correo activa o la misma huella de arriba), sin ningún pago.
+//    Es la contraparte "en prueba" de trial_expired_email (oferta fundador, nov-2026).
 export type AudienceSegment =
   | LifecycleSegment
   | 'budget_exceeded'
@@ -52,7 +55,8 @@ export type AudienceSegment =
   | 'trial_no_activity'
   | 'near_paywall'
   | 'trial_expired_email'
-  | 'trial_expired_no_email';
+  | 'trial_expired_no_email'
+  | 'trial_active_email';
 
 export interface AudienceFilters {
   plans: string[];               // ['FREE','PREMIUM','PRO']
@@ -142,6 +146,7 @@ export class BroadcastService {
       f.segments.includes('near_paywall'),     // $23
       f.segments.includes('trial_expired_email'),    // $24
       f.segments.includes('trial_expired_no_email'), // $25
+      f.segments.includes('trial_active_email'),     // $26
     ];
     const sql = `
       FROM users u
@@ -219,6 +224,15 @@ export class BroadcastService {
               AND (COALESCE(bc.n, 0) >= $20::int - 1 OR COALESCE(gc.n, 0) >= $21::int))
           OR ($24::boolean AND te.used IS TRUE)
           OR ($25::boolean AND te.used IS FALSE)
+          OR ($26::boolean AND s.status::text = 'TRIALING'
+              AND (
+                EXISTS (SELECT 1 FROM email_connections ec WHERE ec."userId" = u.id AND ec."isActive" = true)
+                OR EXISTS (SELECT 1 FROM transactions t WHERE t."userId" = u.id AND t.source = 'EMAIL')
+                OR EXISTS (SELECT 1 FROM feature_usage fu WHERE fu."userId" = u.id
+                           AND fu.feature = 'email_sync' AND fu.action = 'conecto')
+              )
+              AND NOT EXISTS (SELECT 1 FROM payments p WHERE p."userId" = u.id
+                              AND p.status = 'SUCCEEDED' AND p.amount > 0))
         )
         AND (
           NOT $9::boolean

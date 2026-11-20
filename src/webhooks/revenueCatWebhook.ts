@@ -77,7 +77,26 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
         const productInfo = productId ? PRODUCT_TO_PLAN[productId] : null;
         const plan = productInfo?.plan || 'PRO';
         const period = productInfo?.period || 'monthly';
-        const amount = PLAN_PRICES[plan]?.[period] || 9.99;
+        // Monto REAL cobrado: RevenueCat manda `price` (en USD) en cada compra y
+        // renovación. Antes se usaba siempre el precio de lista, así que un código
+        // de oferta (p. ej. Pro anual a 59.99 el primer año, oferta fundador
+        // nov-2026) entraba como 99.99 e inflaba ingresos y MRR. La lista queda
+        // solo como respaldo si el evento no trae un precio válido.
+        // Un precio 0 es real (código de oferta gratis): se guarda 0, no la lista,
+        // para que no cuente como "pagó" (los segmentos miran amount > 0).
+        const rawPrice = event.event.price;
+        const rcPrice = rawPrice === null || rawPrice === undefined || rawPrice === ''
+          ? NaN
+          : Number(rawPrice);
+        const amount = Number.isFinite(rcPrice) && rcPrice >= 0
+          ? Math.round(rcPrice * 100) / 100
+          : PLAN_PRICES[plan]?.[period] || 9.99;
+        // Código de oferta de Apple canjeado (null si no hubo). Se guarda en la
+        // descripción para poder separar estas compras en el tablero.
+        const offerCode: string | null =
+          typeof event.event.offer_code === 'string' && event.event.offer_code.trim()
+            ? event.event.offer_code.trim().toUpperCase()
+            : null;
         const transactionId = event.event.transaction_id || event.event.original_transaction_id;
 
         // Obtener el ID de la suscripción en NUESTRA BD
@@ -108,7 +127,7 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
                 amount,
                 currency: 'usd',
                 status: 'SUCCEEDED',
-                description: `RevenueCat ${eventType} - ${plan} ${period}${transactionId ? ` (tx: ${transactionId})` : ''}`,
+                description: `RevenueCat ${eventType} - ${plan} ${period}${offerCode ? ` [oferta: ${offerCode}]` : ''}${transactionId ? ` (tx: ${transactionId})` : ''}`,
               },
             });
             logger.log(`✅ Pago registrado: $${amount} USD para usuario ${userId} (${plan} ${period}, subscriptionId: ${userSubscription.id})`);
@@ -150,6 +169,7 @@ export const handleRevenueCatWebhook = async (req: Request, res: Response) => {
                   provider: 'revenuecat',
                   plan,
                   period,
+                  ...(offerCode ? { offerCode } : {}),
                   ...(transactionId ? { transactionId } : {}),
                 },
               };

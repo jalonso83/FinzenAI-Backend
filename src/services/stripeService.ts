@@ -87,13 +87,12 @@ export class StripeService {
         phone_number_collection: { enabled: false },
       };
 
-      // Solo ofrecer trial en Stripe si el usuario NO ha usado su trial en la app
-      if (!user.hasUsedTrial) {
-        sessionConfig.subscription_data!.trial_period_days = 7;
-        logger.log(`[StripeService] Usuario ${userId} no ha usado trial, se incluyen 7 días gratis en Stripe`);
-      } else {
-        logger.log(`[StripeService] Usuario ${userId} ya usó su trial en la app, cobro inmediato`);
-      }
+      // Sin prueba en Stripe: el checkout SIEMPRE cobra de inmediato.
+      // Antes, quien tenía hasUsedTrial=false (FREE de antes del trial
+      // automático) recibía 7 días gratis CON tarjeta aquí, que contradecía la
+      // prueba real de 21 días de Pro sin tarjeta. Esa gente sigue pudiendo
+      // activar la prueba desde la app (botón en Suscripciones). Quitado el
+      // 2026-11-20.
 
       // Aplicar descuento de referido si existe.
       // Stripe rechaza si se envían `discounts` y `allow_promotion_codes` juntos

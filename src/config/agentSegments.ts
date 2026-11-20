@@ -211,6 +211,15 @@ AGENT_SEGMENTS.push(
     params: [...STANDARD_PARAMS],
     buildFilters: (p) => baseFilters('trial_expired_no_email', p),
   },
+  {
+    slug: 'trial_active_email',
+    name: 'En prueba, usó el correo',
+    description:
+      'Sigue en la prueba de Pro, nunca ha pagado y conectó su correo (Gastos en automático). Es quien ya vio lo que ' +
+      'Pro hace distinto antes de que la prueba venza.',
+    params: [...STANDARD_PARAMS],
+    buildFilters: (p) => baseFilters('trial_active_email', p),
+  },
 );
 
 export function getAgentSegment(slug: string): AgentSegmentDef | undefined {
