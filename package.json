@@ -3,6 +3,9 @@
   "version": "1.0.1",
   "description": "Backend para FinZen AI - Aplicación de finanzas personales con IA - Updated for Railway deployment",
   "main": "dist/app.js",
+  "engines": {
+    "node": ">=22.23.5 <23"
+  },
   "scripts": {
     "dev": "nodemon src/app.ts",
     "build": "prisma generate && tsc",
