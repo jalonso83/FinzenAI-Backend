@@ -853,6 +853,9 @@ model EmailConnection {
   lastSyncAt         DateTime?
   lastSyncStatus     EmailSyncStatus @default(PENDING)
   lastSyncError      String?
+  // Cuándo se avisó al usuario de que su correo lleva >24 h sin sincronizar
+  // bien. Evita repetir el push en cada fallo; se borra al volver a SUCCESS.
+  failureNotifiedAt  DateTime?
   syncFrequencyHours Int             @default(1)
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt

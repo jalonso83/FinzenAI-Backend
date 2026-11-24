@@ -987,6 +987,91 @@ export class AdminService {
     };
   }
 
+  // ─── USUARIOS ACTIVOS (definición desde 2026-11-24) ──────
+  // Ruptura de serie: antes "activo" = cualquier transacción con FECHA en el
+  // período (incluía recurrentes automáticos). No comparar con datos previos.
+  static readonly ACTIVOS_DEFINICION_DESDE = '2026-11-24';
+
+  /**
+   * Usuarios activos del período, en dos grupos excluyentes que suman el total
+   * (definición acordada con Junior, nov-2026). Se mide por CUÁNDO pasó la
+   * acción (createdAt/updatedAt), no por la fecha del gasto.
+   *
+   *  - conAccionPropia: hizo algo por sí mismo — anotó a mano o por Zenio, usó
+   *    Zenio, editó/recategorizó/confirmó un gasto importado del correo, o creó
+   *    un presupuesto o una meta.
+   *  - soloAutomatico: se le importó ≥1 movimiento del correo y no hizo nada más.
+   *  - Los recurrentes automáticos (source RECURRING) no cuentan en ningún grupo.
+   *
+   * Límites conocidos:
+   *  - Borrar una transacción no deja rastro: no cuenta como acción.
+   *  - "Editó un importado" = updatedAt > createdAt + 5 min. Hoy ningún proceso
+   *    automático toca transacciones del correo; un backfill masivo sobre ellas
+   *    inflaría este grupo en la ventana en que corra.
+   *  - Presupuestos y metas: solo la creación. Su updated_at lo mueve el sistema
+   *    (recalcular `spent`, aportes), así que no sirve como señal de la persona.
+   *    Las renovaciones automáticas de presupuestos se excluyen por continuidad
+   *    de fechas; quien borra uno y lo rehace igual a mano también queda fuera.
+   */
+  static async usuariosActivosDesglose(from: Date, to: Date): Promise<{
+    conAccionPropia: number; soloAutomatico: number; activos: number;
+  }> {
+    const rows = await prisma.$queryRawUnsafe<{ propia: bigint; auto: bigint }[]>(`
+      WITH propia AS (
+        SELECT "userId" FROM transactions
+         WHERE "createdAt" >= $1 AND "createdAt" <= $2
+           AND source IN ('MANUAL', 'ZENIO')
+        UNION
+        SELECT "userId" FROM transactions
+         WHERE source = 'EMAIL'
+           AND "updatedAt" >= $1 AND "updatedAt" <= $2
+           AND "updatedAt" > "createdAt" + interval '5 minutes'
+        UNION
+        -- openai_daily_usage."date" es un día (sin hora); from/to vienen anclados
+        -- a medianoche RD (04:00Z) y a las 23:59 RD (03:59Z del día siguiente).
+        -- Compararlos tal cual pierde el primer día y suma el siguiente al último,
+        -- así que se pasan a fecha RD.
+        SELECT "userId" FROM openai_daily_usage
+         WHERE "date" >= ($1::timestamptz AT TIME ZONE 'America/Santo_Domingo')::date
+           AND "date" <= ($2::timestamptz AT TIME ZONE 'America/Santo_Domingo')::date
+           AND (
+             COALESCE(("costByFeature" ->> 'zenio_v2')::float, 0) > 0
+             OR COALESCE(("costByFeature" ->> 'zenio_agents')::float, 0) > 0
+             OR COALESCE(("costByFeature" ->> 'zenio_transcription')::float, 0) > 0
+           )
+        UNION
+        SELECT b.user_id FROM budgets b
+         WHERE b.created_at >= $1 AND b.created_at <= $2
+           -- Fuera las renovaciones automáticas (budgetRenewalService): copia del
+           -- presupuesto anterior que empieza justo donde terminó aquel. No hay
+           -- columna que las marque, así que se reconocen por esa continuidad.
+           AND NOT EXISTS (
+             SELECT 1 FROM budgets prev
+              WHERE prev.user_id = b.user_id
+                AND prev.category_id = b.category_id
+                AND prev.type = b.type
+                AND prev.period = b.period
+                AND prev.id <> b.id
+                AND prev.created_at < b.created_at
+                AND prev.end_date BETWEEN b.start_date - interval '2 days' AND b.start_date + interval '1 day'
+           )
+        UNION
+        SELECT "userId" FROM goals WHERE "createdAt" >= $1 AND "createdAt" <= $2
+      ),
+      auto AS (
+        SELECT DISTINCT t."userId" FROM transactions t
+         WHERE t.source = 'EMAIL'
+           AND t."createdAt" >= $1 AND t."createdAt" <= $2
+           AND NOT EXISTS (SELECT 1 FROM propia p WHERE p."userId" = t."userId")
+      )
+      SELECT (SELECT COUNT(*) FROM propia)::bigint AS propia,
+             (SELECT COUNT(*) FROM auto)::bigint AS auto
+    `, from, to);
+    const conAccionPropia = Number(rows[0]?.propia ?? 0);
+    const soloAutomatico = Number(rows[0]?.auto ?? 0);
+    return { conAccionPropia, soloAutomatico, activos: conAccionPropia + soloAutomatico };
+  }
+
   // ─── ENGAGEMENT ──────────────────────────────────────────
   static async getEngagement(query: { from?: string; to?: string }) {
     const { from, to } = parseDateRange(query);
@@ -1010,12 +1095,8 @@ export class AdminService {
         where: { date: { gte: from, lte: to } },
       }),
 
-      // Active users (users with at least 1 transaction in period)
-      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT "userId")::bigint as cnt
-        FROM transactions
-        WHERE date >= $1 AND date <= $2
-      `, from, to),
+      // Usuarios activos (definición nueva, ver usuariosActivosDesglose)
+      AdminService.usuariosActivosDesglose(from, to),
 
       // Total users in period
       prisma.user.count({
@@ -1183,7 +1264,7 @@ export class AdminService {
       `, from, to),
     ]);
 
-    const activeUsers = Number(activeUsersWithTx[0]?.cnt ?? 0);
+    const activeUsers = activeUsersWithTx.activos;
     const transactionsPerActiveUser = activeUsers > 0
       ? Math.round((totalTransactions / activeUsers) * 100) / 100
       : 0;
@@ -1403,6 +1484,11 @@ export class AdminService {
       transactionsPerActiveUser,
       totalTransactions,
       activeUsers,
+      activeUsersBreakdown: {
+        conAccionPropia: activeUsersWithTx.conAccionPropia,
+        soloAutomatico: activeUsersWithTx.soloAutomatico,
+      },
+      activeUsersDefinitionSince: AdminService.ACTIVOS_DEFINICION_DESDE,
       zenioActiveUsers,
       zenioAdoptionRate,
       zenioRealAdoptionRate,
@@ -1635,12 +1721,8 @@ export class AdminService {
       openAICostInPeriod,
       comisiones,
     ] = await Promise.all([
-      // Users with ≥1 tx in period (active users denominator)
-      prisma.$queryRawUnsafe<{ cnt: bigint }[]>(`
-        SELECT COUNT(DISTINCT "userId")::bigint as cnt
-        FROM transactions
-        WHERE date >= $1 AND date <= $2
-      `, from, to),
+      // Usuarios activos (mismo número que Engagement; ver usuariosActivosDesglose)
+      AdminService.usuariosActivosDesglose(from, to),
 
       // Total users registered ever (for per-total-user metrics)
       prisma.user.count(),
@@ -1683,7 +1765,7 @@ export class AdminService {
     const totalCostMonthly = fixedMonthly + totalVariableMonthly;
 
     // ── Métricas derivadas ─────────────────────────────────────────
-    const activeUsers = Number(activeUsersWithTx[0]?.cnt ?? 0);
+    const activeUsers = activeUsersWithTx.activos;
     const totalUsers = totalRegisteredUsers;
     const arpu = totalActiveSubs > 0 ? mrrCurrent / totalActiveSubs : 0;
 

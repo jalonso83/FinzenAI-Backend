@@ -594,3 +594,38 @@ export const sendFeedbackNotification = async (input: FeedbackNotificationInput)
     logger.error('[Feedback] Error inesperado al notificar BUG:', error);
   }
 };
+
+/**
+ * Alerta técnica interna (p. ej. "la sincronización de correo se cayó") a los
+ * correos de ALERT_EMAILS. Best-effort: si no hay destinatarios o Resend falla,
+ * queda en el log y no rompe nada.
+ */
+export const sendInternalAlert = async (subject: string, lineas: string[]): Promise<void> => {
+  const destinatarios = ENV.ALERT_EMAILS.split(',').map((e) => e.trim()).filter(Boolean);
+  if (destinatarios.length === 0) {
+    logger.error(`[Alerta interna] ALERT_EMAILS vacío; no se envía: ${subject}`);
+    return;
+  }
+  try {
+    const html = `<!DOCTYPE html>
+<html lang="es"><body style="font-family:Arial,sans-serif; color:#333; padding:16px;">
+  <h2 style="margin:0 0 12px; color:#dc2626; font-size:18px;">${escapeHtml(subject)}</h2>
+  ${lineas.map((l) => `<p style="margin:6px 0; font-size:14px;">${escapeHtml(l)}</p>`).join('\n  ')}
+  <p style="margin:20px 0 0; font-size:12px; color:#888;">Alerta automática del backend de FinZen AI (${new Date().toISOString()}).</p>
+</body></html>`;
+
+    const { error } = await resend.emails.send({
+      from: 'FinZen AI <info@finzenai.com>',
+      to: destinatarios,
+      subject: `[FinZen alerta] ${subject}`,
+      html,
+    });
+    if (error) {
+      logger.error('[Alerta interna] Error de Resend:', error);
+      return;
+    }
+    logger.log(`[Alerta interna] ✅ Enviada: ${subject}`);
+  } catch (error) {
+    logger.error('[Alerta interna] Error inesperado:', error);
+  }
+};

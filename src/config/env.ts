@@ -91,6 +91,9 @@ export const ENV = {
 
   // === ADMIN ===
   ADMIN_EMAILS: getOptionalEnv('ADMIN_EMAILS', ''),
+  // Destinatarios (separados por coma) de las alertas técnicas internas, p. ej.
+  // "la sincronización de correo se cayó". Vacío = solo queda en el log.
+  ALERT_EMAILS: getOptionalEnv('ALERT_EMAILS', ''),
 
   // === ENCRYPTION ===
   ENCRYPTION_KEY: getRequiredInProduction('ENCRYPTION_KEY', ''),

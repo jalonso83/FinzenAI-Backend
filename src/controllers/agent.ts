@@ -43,6 +43,10 @@ export const getAgentKpis = async (req: Request, res: Response) => {
       AdminService.getTrialEval(query),
     ]);
 
+    // Usuarios activos (definición desde 2026-11-24): dos grupos excluyentes que
+    // suman `activos`. Mismo cálculo que el tablero (Engagement).
+    const activos = await AdminService.usuariosActivosDesglose(pulse.period.from, pulse.period.to);
+
     // Campañas enviadas dentro del período (últimas 20) con su medición causal.
     const sentBroadcasts = await prisma.broadcast.findMany({
       where: { status: 'SENT', sentAt: { gte: pulse.period.from, lte: pulse.period.to } },
@@ -84,6 +88,15 @@ export const getAgentKpis = async (req: Request, res: Response) => {
         retention_d1_pct: pulse.retentionD1,
         retention_d7_pct: pulse.retentionD7,
         retention_d30_pct: pulse.retentionD30,
+        // "Activos" es el único indicador oficial con ese nombre = suma de los dos
+        // grupos. Ruptura de serie: no comparar con cifras anteriores a
+        // `definicion_desde` (antes contaba cualquier transacción, recurrentes incluidos).
+        active_users: {
+          con_accion_propia: activos.conAccionPropia,
+          solo_automatico: activos.soloAutomatico,
+          activos: activos.activos,
+          definicion_desde: AdminService.ACTIVOS_DEFINICION_DESDE,
+        },
       },
       revenue: {
         mrr_usd: pulse.mrrEstimated,

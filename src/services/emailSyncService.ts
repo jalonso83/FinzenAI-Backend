@@ -28,7 +28,22 @@ export interface SyncResult {
   quedanMas?: boolean;
   /** No corrió: esa conexión ya se estaba sincronizando. */
   omitida?: boolean;
+  /**
+   * Por qué falló, para la alerta interna del scheduler:
+   * - `configuracion`: NUESTRO client id/secret está mal (invalid_client). Se cae
+   *   para todos a la vez, así que con uno solo ya hay que avisar.
+   * - `sinPlan`: el usuario ya no tiene Pro. No es una falla del sistema.
+   * - `normal`: cualquier otro error.
+   */
+  tipoFallo?: 'configuracion' | 'sinPlan' | 'normal';
+  /** Código y detalle del proveedor (p. ej. "401 invalid_client"), para la alerta. */
+  detalleFallo?: string;
 }
+
+/** Horas sin una sincronización buena antes de avisar al usuario. */
+const HORAS_SIN_SYNC_PARA_AVISAR = 24;
+/** Fallos seguidos mínimos, para no avisar por un solo tropiezo pasajero. */
+const FALLOS_MINIMOS_PARA_AVISAR = 3;
 
 /**
  * Tope de correos por lectura. Antes eran 100 en una sola página, y en la
@@ -997,6 +1012,20 @@ export class EmailSyncService {
       } else {
         await this.finalizeSyncLog(syncLog.id, result, 'FAILED', error.message);
         await this.updateConnectionStatus(connectionId, 'FAILED', error.message, !haciaAtras);
+
+        result.tipoFallo = this.isConfigError(error)
+          ? 'configuracion'
+          : /requires PRO/i.test(String(error?.message || '')) ? 'sinPlan' : 'normal';
+        result.detalleFallo = this.describeProviderError(error);
+
+        // Solo fallos "del usuario". Si el error es de configuración nuestra
+        // (secret mal) no se le pide nada: reconectar no lo arregla y nos llega
+        // la alerta interna. Sin Pro tampoco: no es que su correo falle.
+        if (!haciaAtras && result.tipoFallo === 'normal') {
+          await this.avisarSiLlevaMuchoSinSincronizar(connectionId).catch((e) =>
+            logger.error('[EmailSync] No se pudo evaluar el aviso de sync caída (no bloquea):', e)
+          );
+        }
       }
     } finally {
       // En `finally` y no al final del try: si la sincronización falla, la
@@ -1049,6 +1078,90 @@ export class EmailSyncService {
     if (/insufficient authentication scopes/i.test(String(err.message || ''))) return true;
     const razones = Array.isArray(err.errors) ? err.errors.map((e: any) => e?.reason) : [];
     return razones.includes('insufficientPermissions');
+  }
+
+  /**
+   * ¿El fallo es de NUESTRA configuración OAuth (client id/secret mal, rotado o
+   * vacío en Railway)? Google responde 401 `invalid_client` /
+   * `unauthorized_client`; Microsoft, AADSTS7000215/7000222 (secret inválido o
+   * vencido) o AADSTS700016 (app no encontrada).
+   */
+  private static isConfigError(error: any): boolean {
+    const data = error?.response?.data ?? {};
+    const codigo = String(data.error || '');
+    const detalle = String(data.error_description || '');
+    if (codigo === 'invalid_client' || codigo === 'unauthorized_client' || codigo === 'deleted_client') return true;
+    // Secret o client id VACÍO: Google responde invalid_request "client_secret is missing."
+    if (codigo === 'invalid_request' && /client_secret|client_id/i.test(detalle)) return true;
+    // Microsoft: 7000218 = falta el secret en la petición.
+    return /AADSTS(7000215|7000218|7000222|700016)/.test(detalle);
+  }
+
+  /** "401 invalid_client: <descripción>" o el mensaje del error, recortado. */
+  private static describeProviderError(error: any): string {
+    const status = error?.response?.status;
+    const data = error?.response?.data ?? {};
+    const codigo = typeof data.error === 'string' ? data.error : data.error?.message;
+    const detalle = typeof data.error_description === 'string' ? data.error_description : '';
+    const texto = [status, codigo].filter(Boolean).join(' ') + (detalle ? `: ${detalle}` : '');
+    return (texto || String(error?.message || 'Error desconocido')).slice(0, 300);
+  }
+
+  /**
+   * Avisa UNA vez al usuario cuyo correo lleva más de 24 h sin sincronizar bien.
+   * Los fallos FAILED se reintentan cada hora en silencio: sin esto alguien
+   * puede pasar días sin que le entre un consumo y no enterarse.
+   *
+   * La referencia es el último log SUCCESS y no `lastSyncAt`, porque
+   * `updateConnectionStatus` también mueve `lastSyncAt` cuando falla.
+   */
+  private static async avisarSiLlevaMuchoSinSincronizar(connectionId: string): Promise<void> {
+    const conexion = await prisma.emailConnection.findUnique({
+      where: { id: connectionId },
+      select: {
+        userId: true, email: true, createdAt: true, failureNotifiedAt: true, isActive: true,
+        user: { select: { country: true } }
+      }
+    });
+    if (!conexion || !conexion.isActive || conexion.failureNotifiedAt) return;
+
+    const ultimaBuena = await prisma.emailSyncLog.findFirst({
+      where: { emailConnectionId: connectionId, status: 'SUCCESS' },
+      orderBy: { startedAt: 'desc' },
+      select: { startedAt: true }
+    });
+    const desde = ultimaBuena?.startedAt ?? conexion.createdAt;
+    if (Date.now() - desde.getTime() < HORAS_SIN_SYNC_PARA_AVISAR * 60 * 60 * 1000) return;
+
+    const fallosDesde = await prisma.emailSyncLog.count({
+      where: { emailConnectionId: connectionId, status: 'FAILED', startedAt: { gt: desde } }
+    });
+    if (fallosDesde < FALLOS_MINIMOS_PARA_AVISAR) return;
+
+    // Reclamo atómico: si dos corridas llegan a la vez, solo una manda el push.
+    const reclamo = await prisma.emailConnection.updateMany({
+      where: { id: connectionId, failureNotifiedAt: null },
+      data: { failureNotifiedAt: new Date() }
+    });
+    if (reclamo.count === 0) return;
+
+    const fecha = desde.toLocaleDateString('es-DO', {
+      day: 'numeric',
+      month: 'long',
+      timeZone: getTimezoneByCountry(conexion.user?.country || 'República Dominicana')
+    });
+
+    logger.error(`[EmailSync] ${conexion.email} (user ${conexion.userId}) lleva desde ${desde.toISOString()} sin sincronizar bien: se avisa al usuario`);
+
+    try {
+      await NotificationService.sendToUser(conexion.userId, NotificationType.SYSTEM, {
+        title: 'Tu correo no se está sincronizando',
+        body: `No hemos podido revisar ${conexion.email} desde el ${fecha}. Entra para sincronizarlo de nuevo; si sigue fallando, desconéctalo y vuelve a conectarlo.`,
+        data: { screen: 'EmailSync' }
+      });
+    } catch (notifyError) {
+      logger.error('[EmailSync] No se pudo enviar el aviso de sync caída:', notifyError);
+    }
   }
 
   /**
@@ -1322,6 +1435,8 @@ export class EmailSyncService {
       where: { id: connectionId },
       data: {
         ...(tocarUltimaSync && { lastSyncAt: new Date() }),
+        // Volvió a funcionar: si se cae otra vez más adelante, se avisa de nuevo.
+        ...(status === 'SUCCESS' && { failureNotifiedAt: null }),
         lastSyncStatus: status,
         lastSyncError: error || null
       }

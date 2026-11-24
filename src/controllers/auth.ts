@@ -1320,16 +1320,19 @@ export const getProfile = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
     }
 
-    const user = await prisma.user.findUnique({
+    const found = await prisma.user.findUnique({
       where: { id: userId },
-      select: USER_PROFILE_SELECT
+      select: { ...USER_PROFILE_SELECT, authProvider: true, password: true }
     });
 
-    if (!user) {
+    if (!found) {
       return res.status(404).json({ error: 'User not found', message: 'Usuario no encontrado' });
     }
 
-    return res.json(user);
+    // La contraseña NUNCA sale; solo si existe. La app lo usa para pedir
+    // contraseña o "ELIMINAR" al borrar la cuenta (cuentas Google/Apple no tienen).
+    const { password, ...user } = found;
+    return res.json({ ...user, hasPassword: !!password });
   } catch (error) {
     logger.error('Get profile error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Error al obtener perfil' });
@@ -1413,9 +1416,16 @@ export const updateProfile = async (req: Request, res: Response) => {
 
 /**
  * DELETE /api/auth/account
- * Elimina la cuenta del usuario y todos sus datos
- * Requiere confirmación con contraseña
+ * Elimina la cuenta del usuario y todos sus datos.
+ * Confirmación:
+ *  - Cuenta con contraseña → body { password }.
+ *  - Cuenta Google/Apple sin contraseña → body { confirmation: "ELIMINAR" }.
+ * Los fallos de confirmación responden 400 (nunca 401): las apps toman
+ * cualquier 401 como sesión vencida y cierran la sesión. `error` y `message`
+ * llevan el mismo texto en español porque iOS muestra `error` y Android `message`.
  */
+const PALABRA_CONFIRMAR_ELIMINACION = 'ELIMINAR';
+
 export const deleteAccount = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
@@ -1423,10 +1433,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized', message: 'Usuario no autenticado' });
     }
 
-    const { password } = req.body;
-    if (!password) {
-      return res.status(400).json({ error: 'Validation error', message: 'La contraseña es requerida para eliminar la cuenta' });
-    }
+    const { password, confirmation } = req.body ?? {};
 
     // Verificar que el usuario existe
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -1434,19 +1441,31 @@ export const deleteAccount = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Not found', message: 'Usuario no encontrado' });
     }
 
-    // Para cuentas SSO sin password, el cliente debe usar un flujo alternativo
-    // (re-auth vía Apple/Google) — no implementado todavía, ver Fase 2 mobile.
-    if (!user.password) {
-      return res.status(400).json({
-        error: 'SSO account',
-        message: 'Esta cuenta se eliminará vía el flujo de cuenta SSO. Función pendiente de implementar.'
-      });
-    }
+    const rechazar = (code: string, texto: string) =>
+      res.status(400).json({ error: texto, message: texto, code });
 
-    // Verificar contraseña
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({ error: 'Invalid password', message: 'La contraseña es incorrecta' });
+    if (user.password) {
+      if (typeof password !== 'string' || !password) {
+        return rechazar('PASSWORD_REQUIRED', 'La contraseña es requerida para eliminar la cuenta');
+      }
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        return rechazar('INVALID_PASSWORD', 'La contraseña es incorrecta');
+      }
+    } else {
+      // Cuenta creada con Google/Apple: no hay contraseña que pedir.
+      if (confirmation === undefined) {
+        // Versión vieja de la app: solo sabe mandar contraseña.
+        return rechazar(
+          'SSO_UPDATE_REQUIRED',
+          'Tu cuenta usa Google o Apple y no tiene contraseña. Actualiza FinZen AI a la última versión para eliminarla, o escríbenos a info@finzenai.com.'
+        );
+      }
+      const ok = typeof confirmation === 'string'
+        && confirmation.trim().toUpperCase() === PALABRA_CONFIRMAR_ELIMINACION;
+      if (!ok) {
+        return rechazar('CONFIRMATION_REQUIRED', `Escribe ${PALABRA_CONFIRMAR_ELIMINACION} para confirmar.`);
+      }
     }
 
     logger.log(`🗑️ Iniciando eliminación de cuenta para: ${user.email}`);
